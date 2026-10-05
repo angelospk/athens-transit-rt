@@ -1,6 +1,7 @@
 package match
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -163,5 +164,19 @@ func TestRouteMapperBySimilarity(t *testing.T) {
 	}
 	if _, cached := rm.cache[[2]string{"L", "unknown"}]; cached {
 		t.Fatal("unknown answer was cached")
+	}
+}
+
+func TestAlongIsDistanceOnTheTripLine(t *testing.T) {
+	for _, kind := range []Kind{Greedy, Hungarian, Memory} {
+		m := newMatcher(t, kind)
+		r := m.MatchLine("L", []Obs{obs("v1", 2.5, at(10, 24, 30))})[0]
+		g := m.Geometry(m.Feed.Trip(r.Trip))
+		if want := (g.StopAlong[2] + g.StopAlong[3]) / 2; math.Abs(r.Along-want) > 1 {
+			t.Fatalf("kind %d: along %.1f, want %.1f", kind, r.Along, want)
+		}
+		if m.ShapeLine(m.Feed.Trip(r.Trip).Shape) != g.Line {
+			t.Fatalf("kind %d: ShapeLine is not the trip geometry's line", kind)
+		}
 	}
 }

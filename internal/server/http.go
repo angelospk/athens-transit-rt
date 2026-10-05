@@ -45,6 +45,7 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/lines/{id}", a.handleLine)
 	mux.HandleFunc("GET /v1/status", a.handleStatus)
+	mux.HandleFunc("GET /v1/vehicles", a.handleVehicles)
 	mux.HandleFunc("GET /v1/gtfs-rt/{name}", a.handleGTFSRT)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -61,7 +62,8 @@ func (a *App) Handler() http.Handler {
 			writeJSON(w, http.StatusNotFound, unknownMaxAge, map[string]string{"error": "not_found"})
 			return
 		}
-		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		if r.URL.Path == "/v1/vehicles" || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			// /v1/vehicles serves bytes compressed once per build.
 			mux.ServeHTTP(w, r)
 			return
 		}

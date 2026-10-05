@@ -17,6 +17,7 @@ import (
 	rt "github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
 
 	"github.com/angelospk/athens-transit-rt/internal/feed"
+	"github.com/angelospk/athens-transit-rt/internal/geo"
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/meta"
@@ -70,7 +71,8 @@ type App struct {
 	meta   *meta.Store
 	fetch  *release.Fetcher
 
-	matchMu sync.Mutex // serialises matching (matchers are not concurrency-safe)
+	matchMu sync.Mutex // serialises matching (matchers are not concurrency-safe) and motion
+	motion  *motion
 
 	mu           sync.RWMutex
 	w            *world
@@ -86,10 +88,14 @@ type App struct {
 	rtMu    sync.Mutex
 	rtBuilt time.Time
 	rtFeeds map[string][]byte
+
+	vehMu   sync.Mutex // lock order: vehMu, then mu
+	vehSnap *vehiclesSnapshot
 }
 
 func New(cfg Config, log *slog.Logger) *App {
-	a := &App{cfg: cfg, log: log, now: time.Now, lines: map[string]*lineData{}, known: map[string]bool{}}
+	a := &App{cfg: cfg, log: log, now: time.Now, lines: map[string]*lineData{}, known: map[string]bool{},
+		motion: newMotion()}
 	a.pacer = telematics.NewPacer(cfg.RPS)
 	a.client = telematics.New(cfg.TelematicsURL, nil) // the scheduler paces every request
 	a.client.MinGap = a.pacer.BaseInterval()
@@ -119,7 +125,11 @@ func (a *App) SetFeed(f *gtfs.Feed, m *release.Manifest) {
 	a.mu.Lock()
 	a.w = w
 	a.mu.Unlock()
+	a.motion = newMotion() // positions along the old feed's shapes mean nothing now
 	a.matchMu.Unlock()
+	a.vehMu.Lock()
+	a.vehSnap = nil
+	a.vehMu.Unlock()
 	a.log.Info("static GTFS loaded", "version", a.gtfsVersion(), "trips", len(f.Trips), "lines", len(f.Lines()))
 	a.warnExpiry(true)
 	a.refreshLines()
@@ -255,17 +265,19 @@ func (a *App) onLine(p sched.LinePoll) {
 
 // Vehicle is one entry of the /v1/lines/{id} response (docs/CONTRACT.md).
 type Vehicle struct {
-	ID         string   `json:"id"`
-	Lat        float64  `json:"lat"`
-	Lon        float64  `json:"lon"`
-	Bearing    *float64 `json:"bearing"`
-	PositionAt int64    `json:"position_at"`
-	RouteCode  string   `json:"route_code"`
-	Variant    *string  `json:"variant"`
-	TripID     *string  `json:"trip_id"`
-	TripLabel  *string  `json:"trip_label"`
-	DelayS     *int     `json:"delay_s"`
-	NextStopID *string  `json:"next_stop_id"`
+	ID         string       `json:"id"`
+	Lat        float64      `json:"lat"`
+	Lon        float64      `json:"lon"`
+	Bearing    *float64     `json:"bearing"`
+	PositionAt int64        `json:"position_at"`
+	RouteCode  string       `json:"route_code"`
+	Variant    *string      `json:"variant"`
+	TripID     *string      `json:"trip_id"`
+	TripLabel  *string      `json:"trip_label"`
+	DelayS     *int         `json:"delay_s"`
+	NextStopID *string      `json:"next_stop_id"`
+	Speed      *float64     `json:"speed"` // m/s along the route
+	Path       [][2]float64 `json:"path"`  // [lat, lon] of the route ahead
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -277,20 +289,56 @@ func (a *App) vehicleView(w *world, r *match.Result) Vehicle {
 		v.Bearing = ptr(r.Bearing)
 	}
 	if !r.Matched() {
-		if s := bestShape(f, w.mapper.ShapesFor(r.Line, r.RouteCode), r.Line); s >= 0 {
+		s := bestShape(f, w.mapper.ShapesFor(r.Line, r.RouteCode), r.Line)
+		if s >= 0 {
 			v.Variant = ptr(f.Shapes[s].ID)
 		}
+		v.Speed, v.Path = a.motionOf(w, r, s)
 		return v
 	}
 	t := f.Trip(r.Trip)
 	if t.Shape >= 0 {
 		v.Variant = ptr(f.Shapes[t.Shape].ID)
 	}
+	v.Speed, v.Path = a.motionOf(w, r, t.Shape)
 	v.TripID = ptr(t.ID)
 	v.TripLabel = ptr(TripLabel(f, t))
 	v.DelayS = ptr(r.Delay)
 	v.NextStopID = ptr(f.Stops[feed.NextStop(f, r).Stop].ID)
 	return v
+}
+
+// motionOf records the vehicle's position along its shape and returns its speed and the path
+// ahead. A matched trip whose stops fit its shape has its position from the matcher; others are
+// projected onto the shape when the pass is clear.
+func (a *App) motionOf(w *world, r *match.Result, shape int32) (*float64, [][2]float64) {
+	pos := geo.XY(r.Lat, r.Lon)
+	if r.Matched() {
+		if g := w.matcher.Geometry(w.feed.Trip(r.Trip)); g != nil && g.FromShape {
+			if geo.Dist(pos, g.Line.At(r.Along)) > motionMaxOffM {
+				return nil, nil
+			}
+			next := r.NextIndex
+			if r.Waiting {
+				next = 0
+			}
+			speed := a.motion.observe(r.VehicleID, g.Line, r.Along, r.Time)
+			return speed, pathAhead(g.Line, r.Along, speed, g.StopAlong[next])
+		}
+	}
+	if shape < 0 {
+		return nil, nil
+	}
+	line := w.matcher.ShapeLine(shape)
+	if len(line.XY) < 2 {
+		return nil, nil
+	}
+	s, ok := a.motion.pick(r.VehicleID, line, line.Candidates(pos[0], pos[1], motionMaxOffM, r.Bearing, r.Bearing != 0), r.Time)
+	if !ok {
+		return nil, nil
+	}
+	speed := a.motion.observe(r.VehicleID, line, s, r.Time)
+	return speed, pathAhead(line, s, speed, -1)
 }
 
 // bestShape picks the shape with the most trips of the line among a route code's shapes.
@@ -521,6 +569,7 @@ func (a *App) forget() {
 	if w := a.world(); w != nil {
 		w.matcher.Forget(now)
 	}
+	a.motion.forget(now)
 	a.matchMu.Unlock()
 	a.mu.Lock()
 	for id, d := range a.lines {

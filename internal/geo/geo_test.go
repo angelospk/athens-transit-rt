@@ -97,3 +97,48 @@ func TestLoopGivesTwoCandidates(t *testing.T) {
 		t.Fatalf("heading east fits the first pass only: %+v", c)
 	}
 }
+
+func TestLatLonInvertsXY(t *testing.T) {
+	for _, p := range [][2]float64{{37.98, 23.72}, {38.1, 23.5}, {37.9, 24.0}} {
+		lat, lon := LatLon(XY(p[0], p[1]))
+		if !near(lat, p[0]) || !near(lon, p[1]) {
+			t.Fatalf("LatLon(XY(%v)) = %v, %v", p, lat, lon)
+		}
+	}
+}
+
+func TestSlice(t *testing.T) {
+	line := NewPolyline([][2]float64{{0, 0}, {100, 0}, {100, 100}})
+	got := line.Slice(50, 150)
+	want := [][2]float64{{50, 0}, {100, 0}, {100, 50}}
+	if len(got) != len(want) {
+		t.Fatalf("Slice = %v", got)
+	}
+	for i := range want {
+		if Dist(got[i], want[i]) > 1e-9 {
+			t.Fatalf("Slice = %v, want %v", got, want)
+		}
+	}
+	if got := line.Slice(-10, 500); len(got) != 3 || got[0] != [2]float64{0, 0} || got[2] != [2]float64{100, 100} {
+		t.Fatalf("clamped Slice = %v", got)
+	}
+	if got := line.Slice(20, 30); len(got) != 2 || Dist(got[0], [2]float64{20, 0}) > 1e-9 || Dist(got[1], [2]float64{30, 0}) > 1e-9 {
+		t.Fatalf("Slice inside one segment = %v", got)
+	}
+}
+
+func TestSimplify(t *testing.T) {
+	// A straight street with GPS-sized wiggles keeps only its ends.
+	pts := [][2]float64{{0, 0}, {50, 2}, {100, -3}, {150, 1}, {200, 0}}
+	if got := Simplify(pts, 5); len(got) != 2 || got[0] != pts[0] || got[1] != pts[4] {
+		t.Fatalf("straight: %v", got)
+	}
+	// A corner stays.
+	corner := [][2]float64{{0, 0}, {50, 0}, {100, 0}, {100, 50}, {100, 100}}
+	if got := Simplify(corner, 5); len(got) != 3 || got[1] != [2]float64{100, 0} {
+		t.Fatalf("corner: %v", got)
+	}
+	if got := Simplify(pts[:1], 5); len(got) != 1 {
+		t.Fatalf("one point: %v", got)
+	}
+}

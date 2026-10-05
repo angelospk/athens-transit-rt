@@ -157,3 +157,80 @@ func (g *Geometry) Progress(along float64) float64 {
 	}
 	return float64(seg) + t
 }
+
+// LatLon is the inverse of XY.
+func LatLon(p [2]float64) (lat, lon float64) {
+	return p[1] / EarthRadius * 180 / math.Pi, p[0] / (EarthRadius * cosLat0) * 180 / math.Pi
+}
+
+// At is the point at distance along (clamped to the line).
+func (p *Polyline) At(along float64) [2]float64 {
+	if along <= 0 || len(p.XY) == 1 {
+		return p.XY[0]
+	}
+	i := sort.SearchFloat64s(p.Cum, along) // first vertex at or beyond along
+	if i >= len(p.Cum) {
+		return p.XY[len(p.XY)-1]
+	}
+	a, b := p.XY[i-1], p.XY[i]
+	span := p.Cum[i] - p.Cum[i-1]
+	if span == 0 {
+		return b
+	}
+	t := (along - p.Cum[i-1]) / span
+	return [2]float64{a[0] + t*(b[0]-a[0]), a[1] + t*(b[1]-a[1])}
+}
+
+// Slice is the part of the line between two distances along it (clamped), with interpolated ends.
+func (p *Polyline) Slice(from, to float64) [][2]float64 {
+	from, to = max(0, from), min(p.Length(), to)
+	out := [][2]float64{p.At(from)}
+	for i, c := range p.Cum {
+		if c > from && c < to {
+			out = append(out, p.XY[i])
+		}
+	}
+	return append(out, p.At(to))
+}
+
+// Simplify drops points closer than tol to the line through their neighbours (Douglas-Peucker).
+func Simplify(pts [][2]float64, tol float64) [][2]float64 {
+	if len(pts) < 3 {
+		return pts
+	}
+	keep := make([]bool, len(pts))
+	keep[0], keep[len(pts)-1] = true, true
+	var walk func(i, j int)
+	walk = func(i, j int) {
+		far, at := tol, -1
+		for k := i + 1; k < j; k++ {
+			if d := segDist(pts[k], pts[i], pts[j]); d > far {
+				far, at = d, k
+			}
+		}
+		if at >= 0 {
+			keep[at] = true
+			walk(i, at)
+			walk(at, j)
+		}
+	}
+	walk(0, len(pts)-1)
+	out := make([][2]float64, 0, len(pts))
+	for i, k := range keep {
+		if k {
+			out = append(out, pts[i])
+		}
+	}
+	return out
+}
+
+// segDist is the distance from p to the segment ab.
+func segDist(p, a, b [2]float64) float64 {
+	dx, dy := b[0]-a[0], b[1]-a[1]
+	l2 := dx*dx + dy*dy
+	t := 0.0
+	if l2 != 0 {
+		t = max(0, min(1, ((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l2))
+	}
+	return math.Hypot(p[0]-(a[0]+t*dx), p[1]-(a[1]+t*dy))
+}

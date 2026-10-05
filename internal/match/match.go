@@ -83,6 +83,7 @@ type Result struct {
 	Delay     int       // seconds, positive = late
 	NextIndex int       // index in the trip's stop times of the next stop
 	Waiting   bool      // waiting at the first stop
+	Along     float64   // metres along the trip's Geometry line (matched only)
 }
 
 func (r *Result) Matched() bool { return r.Trip >= 0 }
@@ -96,6 +97,7 @@ type candidate struct {
 	nextIndex     int
 	waiting       bool
 	progress      float64
+	along         float64
 	sticky        bool
 }
 
@@ -176,22 +178,28 @@ func (m *Matcher) buildGeometry(t *gtfs.Trip) *geo.Geometry {
 		stops[i] = m.stopXY(s)
 	}
 	if m.UseShapes && t.Shape >= 0 {
-		line := m.shapeLines[t.Shape]
-		if line == nil {
-			pts := f.Shapes[t.Shape].Points
-			xy := make([][2]float64, len(pts))
-			for i, p := range pts {
-				xy[i] = geo.XY(p[0], p[1])
-			}
-			line = geo.NewPolyline(xy)
-			m.shapeLines[t.Shape] = line
-		}
+		line := m.ShapeLine(t.Shape)
 		if along := geo.SnapStops(line, stops); along != nil {
 			return &geo.Geometry{Line: line, StopAlong: along, FromShape: true}
 		}
 	}
 	line := geo.NewPolyline(stops)
 	return &geo.Geometry{Line: line, StopAlong: slices.Clone(line.Cum), FromShape: false}
+}
+
+// ShapeLine is the (cached) projected line of a shape.
+func (m *Matcher) ShapeLine(shape int32) *geo.Polyline {
+	line := m.shapeLines[shape]
+	if line == nil {
+		pts := m.Feed.Shapes[shape].Points
+		xy := make([][2]float64, len(pts))
+		for i, p := range pts {
+			xy[i] = geo.XY(p[0], p[1])
+		}
+		line = geo.NewPolyline(xy)
+		m.shapeLines[shape] = line
+	}
+	return line
 }
 
 // routeIDFor is the GTFS route_id to report for a vehicle whose trip is unknown.
@@ -228,7 +236,7 @@ func (m *Matcher) MatchLine(line string, vehicles []Obs) []Result {
 	progress := map[string]float64{}
 	for _, c := range m.assign(cands) {
 		r := byID[c.vid]
-		r.Trip, r.Day, r.Delay, r.NextIndex, r.Waiting = c.trip, c.day, c.delay, c.nextIndex, c.waiting
+		r.Trip, r.Day, r.Delay, r.NextIndex, r.Waiting, r.Along = c.trip, c.day, c.delay, c.nextIndex, c.waiting, c.along
 		r.RouteID = m.Feed.Routes[m.Feed.Trips[c.trip].Route].ID
 		progress[c.vid] = c.progress
 	}
@@ -295,7 +303,7 @@ func (m *Matcher) baseCandidates(line string, r *Result) []candidate {
 			cost -= StickyBonus
 		}
 		out = append(out, candidate{cost: cost, rawCost: s.cost, vid: r.VehicleID, trip: ct.Trip, day: ct.Day,
-			delay: s.delay, nextIndex: s.nextIndex, waiting: s.waiting, progress: s.progress, sticky: sticky})
+			delay: s.delay, nextIndex: s.nextIndex, waiting: s.waiting, progress: s.progress, along: s.along, sticky: sticky})
 	}
 	return out
 }
@@ -306,6 +314,7 @@ type scored struct {
 	nextIndex int
 	waiting   bool
 	progress  float64
+	along     float64
 }
 
 // score is the cheapest way the vehicle at pos at ts can be running trip t.
@@ -348,7 +357,7 @@ func (m *Matcher) score(t *gtfs.Trip, midnight time.Time, g *geo.Geometry, posit
 			cost += WrongHeadingCost
 		}
 		if !found || cost < best.cost {
-			best = scored{cost, int(math.RoundToEven(delay)), seg + 1, waiting, progress}
+			best = scored{cost, int(math.RoundToEven(delay)), seg + 1, waiting, progress, c.Along}
 			found = true
 		}
 	}

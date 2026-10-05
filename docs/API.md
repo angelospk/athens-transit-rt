@@ -21,6 +21,7 @@ instance (see [Self-hosting](../README.md#self-hosting-docker)).
 | `GET /v1/gtfs-rt/trip_updates.pb` | GTFS-RT TripUpdates, whole network (protobuf) | 15 s |
 | `GET /v1/gtfs-rt/vehicle_positions.json`, `trip_updates.json` | the same feeds as JSON, for debugging | 15 s |
 | `GET /v1/lines/{line_id}` | vehicles of one line, simple JSON | until the next poll of the line (5-300 s) |
+| `GET /v1/vehicles` | all vehicles of all lines, compact JSON | until the next snapshot (5-30 s) |
 | `GET /v1/status` | service health and GTFS version | 10 s |
 
 Static data (line list, shapes, stops) is on GitHub Pages:
@@ -39,6 +40,9 @@ curl -s https://transit.haroldpoi.dev/v1/status
 
 # Vehicles of line 040
 curl -s https://transit.haroldpoi.dev/v1/lines/040
+
+# All vehicles, with speed (m/s) and the route ahead
+curl -s --compressed https://transit.haroldpoi.dev/v1/vehicles | jq '.vehicles | length'
 
 # Whole-network feeds
 curl -s --compressed -o vehicle_positions.pb https://transit.haroldpoi.dev/v1/gtfs-rt/vehicle_positions.pb
@@ -89,6 +93,17 @@ percent-encoded. Latin look-alikes also work (`A1` → `Α1`).
   matched to a scheduled trip. `bearing` and `variant` may be `null`.
 - Refetch at `next_update_at`, not earlier: until then the answer does not change.
 - Asking for a line raises its polling priority for about 10 minutes (about every 30 s).
+- `speed` is the speed along the route in m/s (0..20, `0` = standing, `null` = unknown).
+  `path` is the route ahead as `[lat, lon]` pairs, from the vehicle's point on its shape to
+  the next stop (or 300 m-1.5 km ahead), or `null`. See [`CONTRACT.md`](CONTRACT.md).
+
+## All vehicles
+
+`GET /v1/vehicles` returns every vehicle with a GPS fix from the last 5 minutes, one snapshot
+for everyone, rebuilt at most every 30 s. Each vehicle has `line`, `id`, `lat`, `lon`,
+`bearing`, `position_at`, `variant`, `delay_s`, `speed` and `path` (same meanings as above).
+It does not raise any line's polling priority, so lines nobody watches update about every
+150 s. Send `If-None-Match` with the last `ETag` to get `304` when nothing changed.
 
 ## GTFS-Realtime details
 

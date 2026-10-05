@@ -22,6 +22,8 @@ stream are not ported: the map lives in [athens-transit-map](https://github.com/
 - Maps OASA route codes to GTFS shapes by stop sequence, projects GPS fixes on the shapes and
   matches vehicles to trips one-to-one (Hungarian assignment plus upstream's memory matcher,
   with hysteresis). `internal/lsa` is a port of scipy's `linear_sum_assignment`.
+- Keeps the last 5 fixes of each vehicle as distance along its shape (forgotten after 10 min)
+  and derives a smoothed `speed` and the `path` ahead, so a map can move buses between updates.
 - Serves the live API of [`docs/CONTRACT.md`](docs/CONTRACT.md) and whole-network
   GTFS-Realtime VehiclePositions and TripUpdates (`.pb` and `.json`). Public instance and
   usage: [`docs/API.md`](docs/API.md). The feeds pass the MobilityData GTFS Realtime validator
@@ -54,6 +56,10 @@ Metadata refreshes (lines, routes, stops) get every 4th request slot while they 
 When a tier needs more than its share, its intervals stretch. A line response carries
 `Cache-Control: max-age` = seconds until its next expected poll (5..300), so the Cloudflare
 copy expires when fresh data exists.
+
+`/v1/vehicles` (all lines at once) reads only what the tiers above already polled: it never
+marks a line watched. Its body is built at most every 30 s, on the first request after the
+previous snapshot expired, and gzip-compressed once; every client gets the same bytes.
 
 `/v1/status` reports `ok: false` when no line poll succeeded in the last 5 minutes (while lines
 are scheduled). During an OASA outage the last good data stays served; `updated_at` shows its age.

@@ -135,6 +135,11 @@ func TestLineJSONMatchesFixture(t *testing.T) {
 	if got, want := keys(t, body), keys(t, fix); !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys %v, fixture %v", got, want)
 	}
+	_, body = get(t, a, "/v1/vehicles")
+	fix, _ = os.ReadFile("../../docs/fixtures/vehicles.json")
+	if got, want := keys(t, body), keys(t, fix); !reflect.DeepEqual(got, want) {
+		t.Fatalf("vehicles keys %v, fixture %v", got, want)
+	}
 	_, body = get(t, a, "/v1/status")
 	fix, _ = os.ReadFile("../../docs/fixtures/status.json")
 	if got, want := keys(t, body), keys(t, fix); !reflect.DeepEqual(got, want) {

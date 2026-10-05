@@ -1,0 +1,201 @@
+package server
+
+import (
+	"math"
+	"testing"
+	"time"
+
+	"github.com/angelospk/athens-transit-rt/internal/geo"
+)
+
+var t0 = time.Unix(1_790_000_000, 0)
+
+func straight() *geo.Polyline { return geo.NewPolyline([][2]float64{{0, 0}, {5000, 0}}) }
+
+// feedFixes observes (s, seconds after t0) pairs and returns the last speed.
+func feedFixes(m *motion, line *geo.Polyline, fixes ...[2]float64) *float64 {
+	var sp *float64
+	for _, f := range fixes {
+		sp = m.observe("v", line, f[0], t0.Add(time.Duration(f[1])*time.Second))
+	}
+	return sp
+}
+
+func speedIs(t *testing.T, got *float64, want float64) {
+	t.Helper()
+	if got == nil || math.Abs(*got-want) > 0.05 {
+		t.Fatalf("speed %v, want %.1f", deref(got), want)
+	}
+}
+
+func deref(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func TestSpeedSteady(t *testing.T) {
+	m := newMotion()
+	l := straight()
+	if sp := feedFixes(m, l, [2]float64{100, 0}); sp != nil {
+		t.Fatalf("one fix gave speed %v", *sp)
+	}
+	speedIs(t, feedFixes(m, l, [2]float64{400, 30}), 10)
+	speedIs(t, feedFixes(m, l, [2]float64{700, 60}, [2]float64{1000, 90}), 10)
+}
+
+func TestSpeedIgnoresOneOutlier(t *testing.T) {
+	m := newMotion()
+	// 8 m/s with one GPS fix 150 m ahead in the middle and one at the end.
+	speedIs(t, feedFixes(m, straight(), [2]float64{0, 0}, [2]float64{240, 30}, [2]float64{630, 60},
+		[2]float64{720, 90}, [2]float64{960, 120}), 8)
+	m = newMotion()
+	speedIs(t, feedFixes(m, straight(), [2]float64{0, 0}, [2]float64{240, 30}, [2]float64{480, 60},
+		[2]float64{720, 90}, [2]float64{1100, 120}), 8)
+}
+
+func TestSpeedStandingAndClamp(t *testing.T) {
+	m := newMotion()
+	speedIs(t, feedFixes(m, straight(), [2]float64{500, 0}, [2]float64{512, 30}, [2]float64{495, 60}), 0)
+	m = newMotion()
+	// 23 m/s is plausible enough to keep (< 20 m/s * dt + 100 m) but is clamped.
+	speedIs(t, feedFixes(m, straight(), [2]float64{0, 0}, [2]float64{690, 30}), 20)
+}
+
+func TestSpeedNeedsTimeSpan(t *testing.T) {
+	m := newMotion()
+	if sp := feedFixes(m, straight(), [2]float64{0, 0}, [2]float64{100, 5}); sp != nil {
+		t.Fatalf("5 s span gave speed %v", *sp)
+	}
+	// Fixes older than the window do not count.
+	m = newMotion()
+	if sp := feedFixes(m, straight(), [2]float64{0, 0}, [2]float64{3000, 400}); sp != nil {
+		t.Fatalf("400 s gap gave speed %v", *sp)
+	}
+}
+
+func TestResetOnNewLineAndJumps(t *testing.T) {
+	m := newMotion()
+	l := straight()
+	feedFixes(m, l, [2]float64{1000, 0}, [2]float64{1300, 30})
+	if sp := feedFixes(m, straight(), [2]float64{1600, 60}); sp != nil {
+		t.Fatal("new line kept history")
+	}
+	m = newMotion()
+	feedFixes(m, l, [2]float64{1000, 0}, [2]float64{1300, 30})
+	if sp := feedFixes(m, l, [2]float64{200, 60}); sp != nil {
+		t.Fatal("backward jump (new run) kept history")
+	}
+	speedIs(t, feedFixes(m, l, [2]float64{500, 90}), 10) // recovers from the new start
+	m = newMotion()
+	feedFixes(m, l, [2]float64{1000, 0}, [2]float64{1300, 30})
+	if sp := feedFixes(m, l, [2]float64{3000, 60}); sp != nil { // 1700 m in 30 s: another pass
+		t.Fatal("forward jump kept history")
+	}
+}
+
+func TestStaleFixIgnored(t *testing.T) {
+	m := newMotion()
+	l := straight()
+	feedFixes(m, l, [2]float64{1000, 0}, [2]float64{1300, 30})
+	// An older fix (e.g. from another line's slower poll) neither resets nor gets a speed.
+	if sp := m.observe("v", straight(), 50, t0.Add(10*time.Second)); sp != nil {
+		t.Fatal("stale fix got a speed")
+	}
+	// The same fix polled again keeps its speed.
+	speedIs(t, m.observe("v", l, 1300, t0.Add(30*time.Second)), 10)
+	speedIs(t, feedFixes(m, l, [2]float64{1600, 60}), 10)
+}
+
+func TestForgetBoundsMemory(t *testing.T) {
+	m := newMotion()
+	m.observe("a", straight(), 0, t0)
+	m.observe("b", straight(), 0, t0.Add(9*time.Minute))
+	m.forget(t0.Add(11 * time.Minute))
+	if _, ok := m.tracks["a"]; ok {
+		t.Fatal("a not forgotten")
+	}
+	if _, ok := m.tracks["b"]; !ok {
+		t.Fatal("b forgotten too early")
+	}
+	for i := 0; i < 20; i++ {
+		m.observe("b", straight(), float64(i*100), t0.Add(time.Duration(600+i*10)*time.Second))
+	}
+	if n := len(m.tracks["b"].fixes); n > motionFixes {
+		t.Fatalf("%d fixes kept", n)
+	}
+}
+
+func TestPickPass(t *testing.T) {
+	// Out and back on one street: every point has two passes, 2000 m apart.
+	l := geo.NewPolyline([][2]float64{{0, 0}, {1000, 0}, {1000, 1}, {0, 1}})
+	m := newMotion()
+	cands := l.Candidates(300, 0, 150, 0, false)
+	if len(cands) != 2 {
+		t.Fatalf("cands %v", cands)
+	}
+	if _, ok := m.pick("v", l, cands, t0); ok {
+		t.Fatal("no history: ambiguous pass picked")
+	}
+	// Heading tells the passes apart.
+	east := l.Candidates(300, 0, 150, 90, true)
+	if s, ok := m.pick("v", l, east, t0); !ok || math.Abs(s-300) > 1 {
+		t.Fatalf("eastbound: %v %v", s, ok)
+	}
+	// History tells them apart: 200 m along 30 s ago.
+	m.observe("v", l, 200, t0)
+	if s, ok := m.pick("v", l, cands, t0.Add(30*time.Second)); !ok || math.Abs(s-300) > 1 {
+		t.Fatalf("after 200 m: %v %v", s, ok)
+	}
+	// The same fix polled again keeps its pass.
+	m.observe("v", l, 300, t0.Add(30*time.Second))
+	if s, ok := m.pick("v", l, cands, t0.Add(30*time.Second)); !ok || math.Abs(s-300) > 1 {
+		t.Fatalf("repeated fix: %v %v", s, ok)
+	}
+	// Both passes plausible (long gap): ambiguous.
+	if _, ok := m.pick("v", l, cands, t0.Add(10*time.Minute)); ok {
+		t.Fatal("two plausible passes: picked one")
+	}
+}
+
+func TestPathAhead(t *testing.T) {
+	l := straight()
+	// Ends at the next stop when there is one, simplified to 2 points.
+	p := pathAhead(l, 1000, nil, 1600)
+	if len(p) != 2 || !nearLL(p[0], l.XY[0], 1000) || !nearLL(p[1], l.XY[0], 1600) {
+		t.Fatalf("to next stop: %v", p)
+	}
+	// Without a next stop: max(speed * 150 s, 300 m), at most 1500 m.
+	if p := pathAhead(l, 1000, nil, -1); !nearLL(p[1], l.XY[0], 1300) {
+		t.Fatalf("no speed: %v", p)
+	}
+	if p := pathAhead(l, 1000, ptr(4.0), -1); !nearLL(p[1], l.XY[0], 1600) {
+		t.Fatalf("4 m/s: %v", p)
+	}
+	if p := pathAhead(l, 1000, ptr(20.0), -1); !nearLL(p[1], l.XY[0], 2500) {
+		t.Fatalf("20 m/s: %v", p)
+	}
+	if p := pathAhead(l, 1000, nil, 4000); !nearLL(p[1], l.XY[0], 2500) {
+		t.Fatalf("far next stop: %v", p)
+	}
+	// Shape end, at the stop, past the stop: nothing to move along.
+	if p := pathAhead(l, 4900, nil, -1); !nearLL(p[1], l.XY[0], 5000) {
+		t.Fatalf("shape end: %v", p)
+	}
+	for _, c := range [][2]float64{{5000, -1}, {1000, 1000}, {1000, 900}, {1000, 1000.5}} {
+		if p := pathAhead(l, c[0], nil, c[1]); p != nil {
+			t.Fatalf("s %v next %v: %v", c[0], c[1], p)
+		}
+	}
+	// A corner keeps its vertex.
+	corner := geo.NewPolyline([][2]float64{{0, 0}, {100, 0}, {100, 1000}})
+	if p := pathAhead(corner, 50, nil, -1); len(p) != 3 {
+		t.Fatalf("corner: %v", p)
+	}
+}
+
+// nearLL: the [lat, lon] point is (within 1 m) `along` metres east of origin on a west-east line.
+func nearLL(p [2]float64, origin [2]float64, along float64) bool {
+	return geo.Dist(geo.XY(p[0], p[1]), [2]float64{origin[0] + along, origin[1]}) < 1
+}

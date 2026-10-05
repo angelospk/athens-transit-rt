@@ -14,7 +14,7 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 2 (2026-10-05)
+Revision: 3 (2026-10-06): `GET /v1/vehicles`; `speed` and `path` on vehicles
 
 ## Hosts
 
@@ -52,7 +52,9 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
       "trip_id": "12345-WINTER",
       "trip_label": "00:35 ΠΕΙΡΑΙΑΣ → ΣΥΝΤΑΓΜΑ",
       "delay_s": 140,
-      "next_stop_id": "400012"
+      "next_stop_id": "400012",
+      "speed": 6.4,
+      "path": [[37.9755, 23.7348], [37.97601, 23.73502], [37.9781, 23.7356]]
     }
   ]
 }
@@ -62,6 +64,20 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
   not matched to a scheduled trip. `bearing` may be `null`.
 - `variant` keys into `static/v1/lines/{line_id}.json` → `variants` (for shape + stops).
   It may be `null` if no static variant matches.
+- `speed` (rev 3): smoothed speed along the route in m/s, one decimal, 0..20. It is the
+  median slope over the vehicle's recent fixes (up to 5, within 300 s) as distance along
+  its shape; moving less than 20 m over them gives `0` (standing). `null` when unknown:
+  fewer than 2 fixes ≥ 20 s apart on the same shape (first sighting, new run, long gap
+  between polls), position on the shape ambiguous (a loop or out-and-back passes there
+  twice and history cannot tell which), more than 150 m from the shape, no shape.
+- `path` (rev 3): the route ahead as `[lat, lon]` pairs (5 decimals), from the vehicle's
+  projected point on its shape (at `position_at`) to its next stop when matched,
+  otherwise `max(speed × 150 s, 300 m)` ahead; at most 1.5 km and never past the
+  shape's end. Simplified (5 m), so a straight street has 2 points. `null` when there is
+  nothing to move along: no shape, > 150 m from it, ambiguous position, or already at the
+  next stop / the shape's end. Use: move the marker along `path` at `speed` from
+  `position_at`, stop at the last point and wait for the next update. The static
+  `shape` is not needed for this.
 - Headers: `Cache-Control: public, max-age=<seconds until next_update_at, min 5, max 300>`.
   The frontend refetches a line at `next_update_at + 1..3 s` (random jitter), never faster
   than every 5 s, and at most every 60 s while the tab is hidden.
@@ -70,6 +86,46 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
 - `404` `{"error":"unknown_line"}` for an unknown line. `503` `{"error":"warming_up"}`
   before the first poll of that line finished.
 - `429` may come from Cloudflare rate limiting (per IP). The frontend backs off ≥ 10 s.
+
+### `GET /v1/vehicles` (rev 3)
+
+Every vehicle the backend knows now, from all lines, for a citywide map. Data comes from
+the normal polling (watched lines ~30 s, busy ~60 s, others ~150 s); this endpoint does
+**not** mark any line watched and causes no OASA request, so positions here can be up
+to ~2.5 min staler than `/v1/lines/{id}` for lines nobody watches.
+
+```json
+{
+  "updated_at": 1791100000,
+  "next_update_at": 1791100030,
+  "vehicles": [
+    {
+      "line": "040",
+      "id": "52134",
+      "lat": 37.9755, "lon": 23.7348,
+      "bearing": 180,
+      "position_at": 1791099988,
+      "variant": "2045",
+      "delay_s": 140,
+      "speed": 6.4,
+      "path": [[37.9755, 23.7348], [37.9781, 23.7356]]
+    }
+  ]
+}
+```
+
+- Same field meanings as `/v1/lines/{id}`; `line` is the line id. Coordinates are rounded
+  to 5 decimals. No `route_code`, `trip_id`, `trip_label`, `next_stop_id`: fetch
+  `/v1/lines/{line}` when the user selects a vehicle.
+- Vehicles with a GPS fix older than 5 min are left out. A vehicle seen on two lines
+  appears once (newest fix). Sorted by `line`, then `id`. `vehicles` may be `[]`.
+- One snapshot for everyone, built at most every 30 s (`updated_at` = build time,
+  `next_update_at` = earliest next build). Refetch at `next_update_at + 1..3 s`.
+- Headers: `Cache-Control: public, max-age=<seconds until next_update_at, min 5, max 30>`
+  (the 5 s floor can keep a copy up to 5 s past `next_update_at`). `ETag`;
+  `If-None-Match` gives `304`. In a browser, let the HTTP cache revalidate (plain
+  `fetch`); do not set `If-None-Match` from JS: it is not a CORS-safelisted header and
+  there is no `OPTIONS` preflight support. gzip when asked (~50 KB for 1500 vehicles).
 
 ### `GET /v1/status`
 
@@ -131,5 +187,5 @@ Published by GitHub Actions in the backend repo when OASA publishes a new GTFS.
 ## Fixtures
 
 `docs/fixtures/` in the backend repo holds one example of every response above
-(`line-040.json`, `status.json`, `lines.json`, `lines-040.json`). The frontend
+(`line-040.json`, `vehicles.json`, `status.json`, `lines.json`, `lines-040.json`). The frontend
 develops against copies of these until the live API is up.
