@@ -114,6 +114,9 @@ docker compose up -d
 curl -s 127.0.0.1:8095/v1/status
 ```
 
+Without compose: `docker run -d -p 127.0.0.1:8095:8095 -v atrt-state:/var/lib/atrt
+ghcr.io/angelospk/athens-transit-rt` (the metrics endpoint then stays inside the container).
+
 The image is `ghcr.io/angelospk/athens-transit-rt` (linux/amd64 and arm64, so a Raspberry Pi
 works). It downloads the GTFS snapshot from this repo's release on first start and keeps it
 in the `atrt-state` volume. The API listens on `127.0.0.1:8095`; publishing it (Cloudflare

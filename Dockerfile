@@ -15,4 +15,6 @@ COPY --from=build --chown=65532:65532 /out/state /var/lib/atrt
 VOLUME /var/lib/atrt
 ENV GOMEMLIMIT=100MiB
 ENTRYPOINT ["/usr/local/bin/atrt"]
-CMD ["serve", "--listen", "127.0.0.1:8095", "--metrics-listen", "127.0.0.1:8096", "--state", "/var/lib/atrt"]
+# Default: API on all container interfaces (for `docker run -p 127.0.0.1:8095:8095`),
+# metrics on the container's loopback only. compose.yaml uses host networking instead.
+CMD ["serve", "--listen", "0.0.0.0:8095", "--metrics-listen", "127.0.0.1:8096", "--state", "/var/lib/atrt"]
