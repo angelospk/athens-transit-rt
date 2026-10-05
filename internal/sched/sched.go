@@ -491,3 +491,20 @@ func (s *Scheduler) lastPlanTime() time.Time {
 	defer s.mu.Unlock()
 	return s.lastPlan
 }
+
+// SetClock replaces the time source (tests).
+func (s *Scheduler) SetClock(now func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = now
+}
+
+// Tier returns a line's current tier (Inactive for unknown lines).
+func (s *Scheduler) Tier(line string) Tier {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if l := s.lines[line]; l != nil {
+		return l.tier
+	}
+	return Inactive
+}

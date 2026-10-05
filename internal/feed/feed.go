@@ -2,6 +2,8 @@
 package feed
 
 import (
+	"bytes"
+	"encoding/json"
 	"time"
 
 	rt "github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
@@ -105,6 +107,14 @@ func Encode(msg *rt.FeedMessage) (pb, js []byte, err error) {
 	if pb, err = proto.Marshal(msg); err != nil {
 		return nil, nil, err
 	}
-	js, err = protojson.MarshalOptions{Multiline: true, Indent: " "}.Marshal(msg)
-	return pb, js, err
+	// protojson randomises whitespace on purpose; re-indent for a stable output.
+	compact, err := protojson.Marshal(msg)
+	if err != nil {
+		return nil, nil, err
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, compact, "", " "); err != nil {
+		return nil, nil, err
+	}
+	return pb, buf.Bytes(), nil
 }
