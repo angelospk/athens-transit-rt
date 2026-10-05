@@ -1,0 +1,46 @@
+{
+ "line": "040",
+ "updated_at": 1791187852,
+ "next_update_at": 1791187882,
+ "vehicles": [
+  {
+   "id": "44548",
+   "lat": 37.970621,
+   "lon": 23.732689,
+   "bearing": 3,
+   "position_at": 1791187847,
+   "route_code": "3922",
+   "variant": "5512",
+   "trip_id": "938_day_1_1305_1030",
+   "trip_label": "10:30 ΠΕΙΡΑΙΑΣ → ΣΥΝΤΑΓΜΑ",
+   "delay_s": 140,
+   "next_stop_id": "60810"
+  },
+  {
+   "id": "44537",
+   "lat": 37.956144,
+   "lon": 23.716094,
+   "bearing": 52,
+   "position_at": 1791187838,
+   "route_code": "3922",
+   "variant": "5512",
+   "trip_id": "938_day_1_1306_1052",
+   "trip_label": "10:52 ΠΕΙΡΑΙΑΣ → ΣΥΝΤΑΓΜΑ",
+   "delay_s": -35,
+   "next_stop_id": "380107"
+  },
+  {
+   "id": "44549",
+   "lat": 37.938502,
+   "lon": 23.631061,
+   "bearing": null,
+   "position_at": 1791187843,
+   "route_code": "3922",
+   "variant": "5512",
+   "trip_id": null,
+   "trip_label": null,
+   "delay_s": null,
+   "next_stop_id": null
+  }
+ ]
+}

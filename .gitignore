@@ -1,0 +1,6 @@
+/atrt
+/data/
+/out/
+/site/
+*.sqlite
+*.tmp
