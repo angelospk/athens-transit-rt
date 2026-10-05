@@ -8,7 +8,7 @@ from oasa_rt.matcher import Matcher, HungarianMatcher, MemoryMatcher, RouteMappe
 rec = json.load(open("internal/match/testdata/cycles.json"))
 class FakeTel:
     def route_stops(self, rc): return rec["stops"].get(rc, [])
-gtfs = StaticGTFS("os.environ.get("GTFS_ZIP", "data/osy_gtfs.zip")", ["040", "Α1"])
+gtfs = StaticGTFS(os.environ.get("GTFS_ZIP", "data/osy_gtfs.zip"), ["040", "Α1"])
 mapper = RouteMapper(gtfs, FakeTel())
 methods = {"greedy": Matcher(gtfs, mapper), "hungarian": HungarianMatcher(gtfs, mapper), "memory": MemoryMatcher(gtfs, mapper)}
 out = {k: [] for k in methods}
