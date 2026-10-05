@@ -1,9 +1,12 @@
 package server
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/sched"
@@ -13,7 +16,7 @@ const (
 	minMaxAge        = 5
 	maxMaxAge        = 300
 	inactiveMaxAge   = 120
-	unknownMaxAge    = 300
+	unknownMaxAge    = 60
 	statusMaxAge     = 10
 	gtfsRTMaxAge     = 15
 	okRecentPollSecs = 5 * 60
@@ -50,9 +53,32 @@ func (a *App) Handler() http.Handler {
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		mux.ServeHTTP(w, r)
+		w.Header().Add("Vary", "Accept-Encoding")
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		zw := gzipPool.Get().(*gzip.Writer)
+		zw.Reset(w)
+		w.Header().Set("Content-Encoding", "gzip")
+		mux.ServeHTTP(&gzipWriter{ResponseWriter: w, zw: zw}, r)
+		zw.Close()
+		gzipPool.Put(zw)
 	})
 }
+
+var gzipPool = sync.Pool{New: func() any {
+	zw, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
+	return zw
+}}
+
+// gzipWriter compresses a response body (handlers never set Content-Length).
+type gzipWriter struct {
+	http.ResponseWriter
+	zw *gzip.Writer
+}
+
+func (g *gzipWriter) Write(b []byte) (int, error) { return g.zw.Write(b) }
 
 func writeJSON(w http.ResponseWriter, status, maxAge int, v any) {
 	b, err := json.Marshal(v)
@@ -138,7 +164,10 @@ func (a *App) handleGTFSRT(w http.ResponseWriter, r *http.Request) {
 	}
 	b, ok := a.gtfsRT(name)
 	if !ok {
-		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error":"feed_unavailable"}`))
 		return
 	}
 	if name[len(name)-3:] == ".pb" {

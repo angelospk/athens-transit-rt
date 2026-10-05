@@ -186,3 +186,59 @@ func TestPacerWaitHonoursContext(t *testing.T) {
 		t.Fatal("cancelled wait returned nil")
 	}
 }
+
+// Garbage from OASA never panics and never yields a vehicle with bad coordinates.
+func TestBusLocationsGarbage(t *testing.T) {
+	ok := `{"VEH_NO":"1","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"37.95","CS_LNG":"23.71","ROUTE_CODE":"1","VEH_HEADING":"5"}`
+	srv := fakeAPI(t, map[string]string{
+		"getBusLocation:html":    "<html><body>Service Unavailable</body></html>",
+		"getBusLocation:obj":     `{"foo":1}`,
+		"getBusLocation:nulls":   `[null,{},` + ok + `]`,
+		"getBusLocation:missing": `[{"VEH_NO":"2"},` + ok + `]`,
+		"getBusLocation:zero":    `[{"VEH_NO":"3","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"0","CS_LNG":"0","ROUTE_CODE":"1"},` + ok + `]`,
+		"getBusLocation:far":     `[{"VEH_NO":"4","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"NaN","CS_LNG":"23.7","ROUTE_CODE":"1"},{"VEH_NO":"5","CS_LAT":"51.5","CS_LNG":"-0.1"},` + ok + `]`,
+		"getBusLocation:baddate": `[{"VEH_NO":"6","CS_DATE":"yesterday","CS_LAT":"37.95","CS_LNG":"23.71","ROUTE_CODE":"1"}]`,
+	})
+	defer srv.Close()
+	c := New(srv.URL+"/", nil)
+	ctx := context.Background()
+	for _, code := range []string{"html", "obj"} {
+		if _, err := c.BusLocations(ctx, code); err == nil {
+			t.Errorf("%s: no error", code)
+		}
+	}
+	for _, code := range []string{"nulls", "missing", "zero", "far"} {
+		vs, err := c.BusLocations(ctx, code)
+		if err != nil || len(vs) != 1 || vs[0].VehNo != "1" {
+			t.Errorf("%s: %+v %v", code, vs, err)
+		}
+	}
+	// An unparseable time is kept but flagged; the scheduler drops it (TimeErr).
+	if vs, err := c.BusLocations(ctx, "baddate"); err != nil || len(vs) != 1 || vs[0].TimeErr == nil {
+		t.Errorf("baddate: %+v %v", vs, err)
+	}
+}
+
+func TestRequestLogWindows(t *testing.T) {
+	var l RequestLog
+	t0 := time.Unix(1_800_000_000, 0)
+	for i := 0; i < 40; i++ { // 4 per second for 10 s
+		l.Add(t0.Add(time.Duration(i) * 250 * time.Millisecond))
+	}
+	l.Add(t0.Add(3*time.Second + 900*time.Millisecond)) // a 5th request in second 3
+	per := l.PerSecond(t0.Add(9*time.Second), 10)
+	if len(per) != 10 || per[3] != 5 || per[0] != 4 || per[9] != 4 {
+		t.Fatalf("per second %v", per)
+	}
+	if got := MaxWindow(per, 1); got != 5 {
+		t.Fatalf("max 1 s %d", got)
+	}
+	if got := MaxWindow(per, 10); got != 41 {
+		t.Fatalf("max 10 s %d", got)
+	}
+	// Seconds older than the ring are forgotten, not double counted.
+	per = l.PerSecond(t0.Add(time.Duration(RequestLogSeconds+20)*time.Second), RequestLogSeconds)
+	if MaxWindow(per, RequestLogSeconds) != 0 {
+		t.Fatal("old seconds leaked into the window")
+	}
+}

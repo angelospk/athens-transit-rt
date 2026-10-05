@@ -241,6 +241,12 @@ func TestBackgroundGetsEveryFourthSlot(t *testing.T) {
 	if got := strings.Join(kinds, " "); got != want {
 		t.Fatalf("order %q, want %q", got, want)
 	}
+	if st := s.Stats(); st.Sent[Other] != 8 || st.SentBackground != 3 || st.Sent[Watched] != 0 {
+		t.Fatalf("sent %v background %d", st.Sent, st.SentBackground)
+	}
+	if ls := s.Lines(); len(ls) != 1 || ls[0].ID != "A" || ls[0].Tier != Other || !ls[0].Polling {
+		t.Fatalf("lines %+v", ls)
+	}
 }
 
 func TestBackgroundRuns(t *testing.T) {

@@ -132,6 +132,7 @@ type lineState struct {
 
 type request struct {
 	line  string
+	tier  Tier
 	route Route
 	bg    func(ctx context.Context) error
 }
@@ -150,6 +151,8 @@ type Scheduler struct {
 	stretch    [numTiers]float64
 	lastPlan   time.Time
 	sinceBG    int // line requests since the last background request
+	sent       [numTiers]int64
+	sentBG     int64
 }
 
 // bgEvery: while background work is queued, every bgEvery-th slot goes to it, so metadata
@@ -319,6 +322,7 @@ func (s *Scheduler) pick() *request {
 	}
 	if r := s.pickLine(); r != nil {
 		s.sinceBG++
+		s.sent[r.tier]++
 		return r
 	}
 	if len(s.background) > 0 {
@@ -331,6 +335,7 @@ func (s *Scheduler) popBackground() *request {
 	fn := s.background[0]
 	s.background = s.background[1:]
 	s.sinceBG = 0
+	s.sentBG++
 	return &request{bg: fn}
 }
 
@@ -366,7 +371,7 @@ func (s *Scheduler) pickLine() *request {
 			if l.tier != Watched && l.empty[r.Code] >= 2 && now.Sub(l.lastPoll[r.Code]) < s.cfg.EmptyRouteInterval {
 				continue
 			}
-			reqs = append(reqs, &request{line: l.spec.ID, route: r})
+			reqs = append(reqs, &request{line: l.spec.ID, tier: l.tier, route: r})
 		}
 		if len(reqs) == 0 {
 			l.nextDue = now.Add(l.interval)
@@ -458,10 +463,12 @@ func (s *Scheduler) NextUpdate(line string) (time.Time, bool) {
 	return start.Add(time.Duration(float64(n)/rps*float64(time.Second)) + 2*time.Second), true
 }
 
-// Stats summarises the plan for /v1/status and logs.
+// Stats summarises the plan for /v1/status, logs and metrics.
 type Stats struct {
-	LinesByTier [numTiers]int
-	Stretch     [numTiers]float64
+	LinesByTier    [numTiers]int
+	Stretch        [numTiers]float64
+	Sent           [numTiers]int64 // line requests handed out, by the line's tier at the time
+	SentBackground int64
 }
 
 func (s *Scheduler) Stats() Stats {
@@ -471,8 +478,30 @@ func (s *Scheduler) Stats() Stats {
 	for _, l := range s.lines {
 		st.LinesByTier[l.tier]++
 	}
-	st.Stretch = s.stretch
+	st.Stretch, st.Sent, st.SentBackground = s.stretch, s.sent, s.sentBG
 	return st
+}
+
+// LineInfo is the polling state of one line (metrics).
+type LineInfo struct {
+	ID        string
+	Tier      Tier
+	Interval  time.Duration
+	NextDue   time.Time
+	LastStart time.Time // zero before the first poll
+	Polling   bool
+}
+
+func (s *Scheduler) Lines() []LineInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]LineInfo, 0, len(s.lines))
+	for _, l := range s.lines {
+		out = append(out, LineInfo{ID: l.spec.ID, Tier: l.tier, Interval: l.interval, NextDue: l.nextDue,
+			LastStart: l.lastStart, Polling: l.polling})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // Run sends requests until ctx is cancelled: one per slot, at most MaxInFlight at once.

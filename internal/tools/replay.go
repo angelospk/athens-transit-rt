@@ -548,7 +548,7 @@ func departureProxy(f *gtfs.Feed, mapper *match.RouteMapper, tr *Truth, rec *Rec
 	proxy := map[cycleVeh]string{}
 	for _, d := range tr.departures {
 		shapes := mapper.ShapesFor(d.line, d.route)
-		day := gtfs.Midnight(time.Unix(int64(d.t), 0))
+		day := gtfs.ServiceDay(time.Unix(int64(d.t), 0))
 		found, bestScore, bestTrip, bestDur := false, 0.0, "", 0.0
 		for _, ti := range f.TripsForLine(d.line) {
 			t := &f.Trips[ti]
@@ -770,7 +770,7 @@ type depCand struct {
 // identifyDeparture: trips of this route that could have left at dep (5 min early to 15 min
 // late), best first.
 func identifyDeparture(f *gtfs.Feed, mapper *match.RouteMapper, line, route string, dep float64) []depCand {
-	day := gtfs.Midnight(time.Unix(int64(dep), 0))
+	day := gtfs.ServiceDay(time.Unix(int64(dep), 0))
 	shapes := mapper.ShapesFor(line, route)
 	var out []depCand
 	for _, ti := range f.TripsForLine(line) {
@@ -858,7 +858,7 @@ func Blocks(w io.Writer, rec *Recording, f *gtfs.Feed, stops match.StopsFunc) {
 					break
 				}
 			}
-			day := gtfs.Midnight(time.Unix(int64(b.t), 0))
+			day := gtfs.ServiceDay(time.Unix(int64(b.t), 0))
 			route := ""
 			for _, d := range tr.departures {
 				if d.veh == veh && d.t == b.t {

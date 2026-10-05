@@ -19,6 +19,7 @@ import (
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	listen := fs.String("listen", "127.0.0.1:8095", "HTTP listen address")
+	metricsListen := fs.String("metrics-listen", "127.0.0.1:8096", "loopback address for GET /metrics (empty = off)")
 	state := fs.String("state", "/var/lib/atrt", "state directory (snapshot, telematics metadata)")
 	rps := fs.Float64("rps", telematics.DefaultRPS, fmt.Sprintf("OASA requests per second, whole process (max %d)", telematics.MaxRPS))
 	matcher := fs.String("matcher", "memory", "trip matcher: memory, hungarian or greedy")
@@ -36,7 +37,7 @@ func serve(args []string) error {
 		return fmt.Errorf("--rps %.1f is above the maximum of %d", *rps, telematics.MaxRPS)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	app := server.New(server.Config{Listen: *listen, StateDir: *state, RPS: *rps, Matcher: kind,
+	app := server.New(server.Config{Listen: *listen, MetricsListen: *metricsListen, StateDir: *state, RPS: *rps, Matcher: kind,
 		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, TelematicsURL: *telURL, ReleaseCheck: *check,
 		Sched: sched.DefaultConfig()}, log)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

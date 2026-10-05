@@ -32,6 +32,7 @@ const (
 
 type Config struct {
 	Listen        string
+	MetricsListen string // loopback address for /metrics ("" = off)
 	StateDir      string
 	RPS           float64
 	Matcher       match.Kind
@@ -183,8 +184,9 @@ func (a *App) refreshLines() {
 	active := 0
 	warming := map[string]bool{}
 	bootstrapping := a.meta.Snapshot().FetchedAt == 0
+	plan := w.feed.PlanningTime(now) // which lines run now, even when the feed expired
 	for line := range known {
-		cands := w.feed.CandidateTrips(line, now, match.CandidateBefore, match.CandidateAfter)
+		cands := w.feed.CandidateTrips(line, plan, match.CandidateBefore, match.CandidateAfter)
 		shapesNow := map[int32]bool{}
 		for _, c := range cands {
 			shapesNow[w.feed.Trips[c.Trip].Shape] = true
@@ -381,15 +383,23 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second}
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 	go func() { errc <- srv.ListenAndServe() }()
+	var msrv *http.Server
+	if a.cfg.MetricsListen != "" {
+		msrv = &http.Server{Addr: a.cfg.MetricsListen, Handler: a.MetricsHandler(), ReadHeaderTimeout: 10 * time.Second}
+		go func() { errc <- msrv.ListenAndServe() }()
+	}
 	go a.sched.Run(ctx)
 	go a.housekeeping(ctx)
-	a.log.Info("listening", "addr", a.cfg.Listen, "rps", a.pacer.BaseRPS())
+	a.log.Info("listening", "addr", a.cfg.Listen, "metrics", a.cfg.MetricsListen, "rps", a.pacer.BaseRPS())
 	select {
 	case <-ctx.Done():
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if msrv != nil {
+			msrv.Shutdown(sctx)
+		}
 		return srv.Shutdown(sctx)
 	case err := <-errc:
 		return err

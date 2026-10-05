@@ -124,3 +124,44 @@ func TestLinesFilter(t *testing.T) {
 		t.Fatalf("filtered trips %d", len(f.Trips))
 	}
 }
+
+// GTFS stop times count from "noon minus 12 h" of the service day, so on DST change days a
+// 10:00:00 trip still runs at 10:00 on the wall clock (as upstream's wall-clock arithmetic does).
+func TestServiceDayAcrossDST(t *testing.T) {
+	f, err := LoadZip(writeZip(t, map[string]string{
+		"stops.txt":  "stop_id,stop_name,stop_lat,stop_lon\nA,A,37.94,23.64\nB,B,37.95,23.65\n",
+		"routes.txt": "route_id,route_short_name,route_long_name,route_type\nR,D,A - B,3\n",
+		"trips.txt":  "route_id,service_id,trip_id\nR,sun,d1\nR,sun,n1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"d1,10:00:00,10:00:00,A,1\nd1,10:10:00,10:10:00,B,2\n" +
+			"n1,23:50:00,23:50:00,A,1\nn1,24:20:00,24:20:00,B,2\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"sun,0,0,0,0,0,0,1,20260101,20271231\n",
+	}), LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		now      time.Time
+		trip     string
+		date     string
+		secsWant int
+	}{
+		{time.Date(2026, 10, 25, 10, 5, 0, 0, Athens), "d1", "20261025", 10*3600 + 300}, // EEST -> EET
+		{time.Date(2027, 3, 28, 10, 5, 0, 0, Athens), "d1", "20270328", 10*3600 + 300},  // EET -> EEST
+		{time.Date(2026, 10, 26, 0, 10, 0, 0, Athens), "n1", "20261025", 24*3600 + 600}, // after midnight
+		{time.Date(2027, 3, 29, 0, 10, 0, 0, Athens), "n1", "20270328", 24*3600 + 600},
+	} {
+		cands := f.CandidateTrips("D", tc.now, 15*60, 0)
+		if len(cands) != 1 || f.Trip(cands[0].Trip).ID != tc.trip {
+			t.Fatalf("%v: %d candidates", tc.now, len(cands))
+		}
+		c := cands[0]
+		if got := ServiceDate(c.Day); got != tc.date {
+			t.Errorf("%v: service date %s, want %s", tc.now, got, tc.date)
+		}
+		if secs := int(tc.now.Sub(c.Day) / time.Second); secs != tc.secsWant {
+			t.Errorf("%v: %d s into the service day, want %d", tc.now, secs, tc.secsWant)
+		}
+	}
+}

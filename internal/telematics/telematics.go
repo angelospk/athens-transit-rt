@@ -108,7 +108,9 @@ type Client struct {
 	BaseURL  string
 	HTTP     *http.Client
 	Pacer    *Pacer
+	Log      RequestLog // every request, per second
 	requests atomic.Int64
+	errors   atomic.Int64
 }
 
 func New(baseURL string, pacer *Pacer) *Client {
@@ -120,6 +122,9 @@ func New(baseURL string, pacer *Pacer) *Client {
 
 // Requests counts calls made since the client was created.
 func (c *Client) Requests() int64 { return c.requests.Load() }
+
+// Errors counts failed calls (transport, HTTP status, error answers, undecodable bodies).
+func (c *Client) Errors() int64 { return c.errors.Load() }
 
 // Call performs one request and decodes the JSON answer into out. "No data" answers (empty
 // body, "" or null) leave out untouched.
@@ -134,7 +139,11 @@ func (c *Client) Call(ctx context.Context, out any, act string, params ...string
 		q.Set(fmt.Sprintf("p%d", i+1), p)
 	}
 	start := time.Now()
+	c.Log.Add(start)
 	err := c.do(ctx, out, act, c.BaseURL+"?"+q.Encode())
+	if err != nil {
+		c.errors.Add(1)
+	}
 	if c.Pacer != nil {
 		c.Pacer.Report(time.Since(start), err)
 	}
@@ -240,8 +249,8 @@ func (c *Client) BusLocations(ctx context.Context, routeCode string) ([]Vehicle,
 	for _, r := range raw {
 		lat, err1 := strconv.ParseFloat(string(r.Lat), 64)
 		lon, err2 := strconv.ParseFloat(string(r.Lon), 64)
-		if err1 != nil || err2 != nil {
-			continue
+		if err1 != nil || err2 != nil || !inGreece(lat, lon) {
+			continue // also drops 0,0 and NaN
 		}
 		heading, _ := strconv.ParseFloat(string(r.Heading), 64)
 		ts, err := ParseCSDate(string(r.CSDate))
@@ -269,4 +278,9 @@ func (c *Client) StopArrivals(ctx context.Context, stopCode string) ([]Arrival, 
 		out = append(out, Arrival{string(r.Route), string(r.Veh), m})
 	}
 	return out, nil
+}
+
+// inGreece is a loose bounding box; OASA sends 0,0 (and worse) for vehicles without a fix.
+func inGreece(lat, lon float64) bool {
+	return lat >= 34 && lat <= 42 && lon >= 19 && lon <= 30
 }
