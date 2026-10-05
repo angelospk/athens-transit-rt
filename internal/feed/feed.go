@@ -55,10 +55,12 @@ func Build(f *gtfs.Feed, results []match.Result, now time.Time) (*rt.FeedMessage
 	for i := range results {
 		r := &results[i]
 		vp := &rt.VehiclePosition{
-			Vehicle: &rt.VehicleDescriptor{Id: proto.String(r.VehicleID), Label: proto.String(r.VehicleID)},
-			Position: &rt.Position{Latitude: proto.Float32(float32(r.Lat)), Longitude: proto.Float32(float32(r.Lon)),
-				Bearing: proto.Float32(float32(r.Bearing))},
+			Vehicle:   &rt.VehicleDescriptor{Id: proto.String(r.VehicleID), Label: proto.String(r.VehicleID)},
+			Position:  &rt.Position{Latitude: proto.Float32(float32(r.Lat)), Longitude: proto.Float32(float32(r.Lon))},
 			Timestamp: proto.Uint64(uint64(r.Time.Unix())),
+		}
+		if r.Bearing != 0 { // OASA sends 0 for "unknown" more often than for due north
+			vp.Position.Bearing = proto.Float32(float32(r.Bearing))
 		}
 		vehicles.Entity = append(vehicles.Entity, &rt.FeedEntity{Id: proto.String("vehicle-" + r.VehicleID), Vehicle: vp})
 		if !r.Matched() {

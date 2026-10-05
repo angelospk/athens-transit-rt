@@ -231,7 +231,7 @@ func TestCanonicalLine(t *testing.T) {
 
 func TestHostileLineIDs(t *testing.T) {
 	a := newApp(t, monday1020)
-	for _, p := range []string{"/v1/lines/..%2Fetc%2Fpasswd", "/v1/lines/%00", "/v1/lines/" + strings.Repeat("x", 2048),
+	for _, p := range []string{"/v1/lines/..%2Fetc%2Fpasswd", "/v1/lines/../etc/passwd", "/v1/lines/./040", "/v1//lines/040", "/v1/lines/%00", "/v1/lines/" + strings.Repeat("x", 2048),
 		"/v1/lines/%FF%FE", "/v1/nothing"} {
 		res, body := get(t, a, p)
 		if res.StatusCode != 404 || !json.Valid(body) {
@@ -413,5 +413,39 @@ func TestExpiredGTFSStillServesVehicles(t *testing.T) {
 	json.Unmarshal(body, &st)
 	if st.GTFSExpires != "2026-10-06" || !st.OK {
 		t.Fatalf("status %s", body)
+	}
+}
+
+// A vehicle that moved to another line within feedMaxAge appears once in the feeds (the
+// newest fix wins): duplicate entity ids are invalid GTFS-RT.
+func TestFeedHasEachVehicleOnce(t *testing.T) {
+	a := newApp(t, monday1020)
+	poll(a, monday1020.Add(-time.Minute))
+	a.onLine(sched.LinePoll{Line: "Α1", Started: monday1020, Done: monday1020, Routes: 1, Obs: []match.Obs{
+		{Vehicle: telematics.Vehicle{VehNo: "44548", RouteCode: "7701", Lat: 37.99, Lon: 23.73, Time: monday1020.Add(-5 * time.Second)}, LineCode: "77"},
+	}})
+	_, body := get(t, a, "/v1/gtfs-rt/vehicle_positions.pb")
+	var msg rt.FeedMessage
+	if err := proto.Unmarshal(body, &msg); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, e := range msg.Entity {
+		seen[e.GetId()]++
+		if e.GetId() == "vehicle-44548" && e.GetVehicle().GetPosition().GetLatitude() != 37.99 {
+			t.Fatalf("older fix kept: %v", e.GetVehicle().GetPosition())
+		}
+	}
+	if seen["vehicle-44548"] != 1 {
+		t.Fatalf("entities %v", seen)
+	}
+}
+
+func TestAcceptsGzip(t *testing.T) {
+	for h, want := range map[string]bool{"gzip": true, "br, gzip": true, "gzip;q=0.5": true, "GZIP": true,
+		"gzip;q=0": false, "gzip; q=0.0": false, "x-gzip2": false, "": false, "identity": false, "*": true, "*;q=0": false} {
+		if got := acceptsGzip(h); got != want {
+			t.Errorf("%q: %v, want %v", h, got, want)
+		}
 	}
 }

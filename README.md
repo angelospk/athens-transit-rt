@@ -80,7 +80,7 @@ atrt serve --gtfs osy_gtfs.zip --state ./state     # local, from a GTFS zip
 # Snapshot + static map data (what the gtfs workflow runs).
 atrt snapshot --gtfs osy_gtfs.zip --out dist --site site
 
-# Upstream tools (dev machine, 1 req/s by default).
+# Upstream tools (dev machine, 2 req/s by default).
 atrt compare --lines 040,550
 atrt record  --lines 040,A1 --end 2026-10-05T10:00 --db data/record.sqlite
 atrt replay  data/record.sqlite            # score the matchers

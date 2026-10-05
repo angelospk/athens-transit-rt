@@ -153,7 +153,18 @@ type Scheduler struct {
 	sinceBG    int // line requests since the last background request
 	sent       [numTiers]int64
 	sentBG     int64
+	// watchedCredit enforces WatchedShare per slot: +share each slot, -1 per watched request.
+	watchedCredit float64
 }
+
+// Slowest acceptable intervals: their rates are reserved before watched lines get extra.
+const (
+	MaxDenseInterval = 75 * time.Second
+	MaxOtherInterval = 300 * time.Second
+)
+
+// watchedBurst caps the saved-up credit of the watched tier, in requests.
+const watchedBurst = 4
 
 // bgEvery: while background work is queued, every bgEvery-th slot goes to it, so metadata
 // (first boot: ~500 requests) is not starved by line polls.
@@ -161,7 +172,7 @@ const bgEvery = 4
 
 func New(cfg Config, slots Slots, fetch Fetcher, onLine func(LinePoll)) *Scheduler {
 	return &Scheduler{cfg: cfg, slots: slots, fetch: fetch, onLine: onLine, now: time.Now,
-		lines: map[string]*lineState{}}
+		lines: map[string]*lineState{}, watchedCredit: watchedBurst}
 }
 
 func (c *Config) classify(l *lineState, now time.Time) Tier {
@@ -183,27 +194,37 @@ func allocate(budget float64, demand [numTiers]float64) [numTiers]float64 {
 }
 
 func allocateCfg(budget float64, demand [numTiers]float64, cfg Config) [numTiers]float64 {
+	// Floors: the rate that keeps each tier within its slowest acceptable interval.
+	floorOf := func(t Tier, slowest time.Duration) float64 {
+		return demand[t] * cfg.tier(t).Base.Seconds() / max(slowest, cfg.tier(t).Base).Seconds()
+	}
+	var got [numTiers]float64
+	fD, fO := floorOf(Dense, MaxDenseInterval), floorOf(Other, MaxOtherInterval)
+	if fD+fO > budget { // cannot keep both: share in proportion
+		got[Dense], got[Other] = budget*fD/(fD+fO), budget*fO/(fD+fO)
+	} else {
+		got[Dense], got[Other] = fD, fO
+	}
+	remaining := budget - got[Dense] - got[Other]
+	watchedCap := budget * cfg.WatchedShare
+	got[Watched] = min(demand[Watched], watchedCap, max(remaining, 0))
+	remaining -= got[Watched]
+	for _, t := range []Tier{Dense, Other} {
+		extra := min(demand[t]-got[t], max(remaining, 0))
+		got[t] += extra
+		remaining -= extra
+	}
 	var st [numTiers]float64
-	for i := range st {
-		st[i] = 1
-	}
-	remaining := budget
-	share := func(t Tier, allowance float64) {
-		d := demand[t]
-		if d <= 0 {
-			return
+	for t := range st {
+		st[t] = 1
+		if demand[t] > 0 {
+			if got[t] <= 0 {
+				st[t] = cfg.MaxStretch
+			} else {
+				st[t] = min(demand[t]/got[t], cfg.MaxStretch)
+			}
 		}
-		got := min(d, allowance)
-		if got <= 0 {
-			st[t] = cfg.MaxStretch
-		} else {
-			st[t] = min(d/got, cfg.MaxStretch)
-		}
-		remaining -= got
 	}
-	share(Watched, min(budget*cfg.WatchedShare, remaining))
-	share(Dense, remaining)
-	share(Other, remaining)
 	return st
 }
 
@@ -317,12 +338,16 @@ func (s *Scheduler) Submit(fn func(ctx context.Context) error) {
 func (s *Scheduler) pick() *request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.watchedCredit = min(s.watchedCredit+s.cfg.WatchedShare, watchedBurst)
 	if len(s.background) > 0 && s.sinceBG >= bgEvery-1 {
 		return s.popBackground()
 	}
 	if r := s.pickLine(); r != nil {
 		s.sinceBG++
 		s.sent[r.tier]++
+		if r.tier == Watched {
+			s.watchedCredit--
+		}
 		return r
 	}
 	if len(s.background) > 0 {
@@ -363,6 +388,9 @@ func (s *Scheduler) pickLine() *request {
 		return a.spec.ID < b.spec.ID
 	})
 	for _, l := range due {
+		if l.tier == Watched && s.watchedCredit < 1 {
+			continue // over the watched share; lower tiers go first
+		}
 		var reqs []*request
 		for _, r := range l.spec.Routes {
 			if !r.Active {

@@ -2,6 +2,7 @@ package sched
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -66,10 +67,41 @@ func TestAllocateWatchedCappedAtHalf(t *testing.T) {
 	if st[Watched] != 1 || st[Dense] != 1 || math.Abs(st[Other]-2/1.0) > 1e-9 {
 		t.Fatalf("stretch %v", st)
 	}
-	// Nothing left for "other": capped stretch instead of infinity.
-	st = allocate(3.6, [numTiers]float64{Watched: 1.8, Dense: 5, Other: 1})
-	if math.IsInf(st[Other], 0) || st[Other] < 10 {
-		t.Fatalf("other stretch %v", st[Other])
+	// Dense alone would eat the budget: "other" still gets its 5-minute floor (stretch 2),
+	// dense gets the rest, and watched only what is left.
+	// Floors: dense 3.5*60/75 = 2.8, other 1*150/300 = 0.5; 0.3 rps left for watched.
+	st = allocate(3.6, [numTiers]float64{Watched: 1.8, Dense: 3.5, Other: 1})
+	if math.Abs(st[Other]-2) > 1e-9 || math.Abs(st[Dense]-1.25) > 1e-9 || math.Abs(st[Watched]-6) > 1e-9 {
+		t.Fatalf("stretch %v", st)
+	}
+	// Infeasible floors (1.6 + 1 > 1): dense and other share the budget in proportion.
+	st = allocate(1, [numTiers]float64{Dense: 2, Other: 2})
+	if math.Abs(st[Dense]-3.25) > 1e-9 || math.Abs(st[Other]-5.2) > 1e-9 {
+		t.Fatalf("infeasible stretch %v", st)
+	}
+}
+
+// B5: with every line watched, watched requests stay within their share of the slots even
+// while non-watched lines are due.
+func TestWatchedShareEnforced(t *testing.T) {
+	c := &clock{t0}
+	s := newSched(4, &fakeFetch{}, c)
+	var specs []LineSpec
+	for i := 0; i < 40; i++ {
+		specs = append(specs, LineSpec{ID: fmt.Sprintf("W%02d", i), Active: true, Routes: routes("w1", "w2", "w3")})
+		specs = append(specs, LineSpec{ID: fmt.Sprintf("O%02d", i), Active: true, Routes: routes("o1", "o2")})
+	}
+	s.SetLines(specs)
+	for i := 0; i < 40; i++ {
+		s.Watch(fmt.Sprintf("W%02d", i))
+	}
+	for i := 0; i < 200; i++ {
+		s.pick()
+	}
+	st := s.Stats()
+	// 200 slots: watched gets at most half (+ the initial burst); all 80 "other" requests ran.
+	if st.Sent[Watched] > 100+watchedBurst || st.Sent[Other] != 80 {
+		t.Fatalf("sent %v", st.Sent)
 	}
 }
 

@@ -90,6 +90,7 @@ func New(cfg Config, log *slog.Logger) *App {
 	a := &App{cfg: cfg, log: log, now: time.Now, lines: map[string]*lineData{}, known: map[string]bool{}}
 	a.pacer = telematics.NewPacer(cfg.RPS)
 	a.client = telematics.New(cfg.TelematicsURL, nil) // the scheduler paces every request
+	a.client.MinGap = a.pacer.BaseInterval()
 	a.sched = sched.New(cfg.Sched, a.pacer, a.client, a.onLine)
 	a.meta = meta.Open(filepath.Join(cfg.StateDir, "telematics-meta.json"), a.client, a.sched.Submit,
 		func() { a.refreshLines() })
@@ -183,8 +184,8 @@ func (a *App) refreshLines() {
 	var specs []sched.LineSpec
 	active := 0
 	warming := map[string]bool{}
-	bootstrapping := a.meta.Snapshot().FetchedAt == 0
-	plan := w.feed.PlanningTime(now) // which lines run now, even when the feed expired
+	bootstrapping := a.meta.Incomplete() // routes of some lines are not known yet
+	plan := w.feed.PlanningTime(now)     // which lines run now, even when the feed expired
 	for line := range known {
 		cands := w.feed.CandidateTrips(line, plan, match.CandidateBefore, match.CandidateAfter)
 		shapesNow := map[int32]bool{}
@@ -344,14 +345,21 @@ func (a *App) buildRT(now time.Time) (map[string][]byte, error) {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	at := map[string]int{} // vehicle -> index in results: a vehicle that changed lines appears once
 	for _, id := range ids {
 		d := a.lines[id]
 		if w == nil || d.feed != w.feed {
 			continue
 		}
 		for _, r := range d.results {
-			if now.Sub(r.Time) <= feedMaxAge {
+			if now.Sub(r.Time) > feedMaxAge {
+				continue
+			}
+			if i, ok := at[r.VehicleID]; !ok {
+				at[r.VehicleID] = len(results)
 				results = append(results, r)
+			} else if r.Time.After(results[i].Time) {
+				results[i] = r
 			}
 		}
 	}

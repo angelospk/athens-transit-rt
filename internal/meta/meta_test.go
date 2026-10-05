@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/telematics"
 )
@@ -35,6 +36,9 @@ func (f *fakeAPI) Routes(_ context.Context, lc string) ([]telematics.Route, erro
 
 func (f *fakeAPI) Stops(_ context.Context, rc string) ([]telematics.RouteStop, error) {
 	f.calls++
+	if rc == "empty" {
+		return nil, nil
+	}
 	return []telematics.RouteStop{{StopCode: "1"}, {StopCode: "2"}}, nil
 }
 
@@ -91,6 +95,21 @@ func TestRouteRetriesAreBounded(t *testing.T) {
 	if api.calls != 1+maxAttempts+2 {
 		t.Fatalf("calls %d", api.calls)
 	}
+	// The failed LineCode is retried within IncompleteRetry, not after a day.
+	if !s.Incomplete() {
+		t.Fatal("incomplete refresh not reported")
+	}
+	now := time.Now().Add(IncompleteRetry)
+	s.now = func() time.Time { return now }
+	if !s.Due() {
+		t.Fatal("incomplete refresh not due again after IncompleteRetry")
+	}
+	api.failRoute["938"] = 0
+	s.Refresh()
+	q.drain()
+	if len(s.LineRoutes()["040"]) != 2 || s.Incomplete() || s.Due() {
+		t.Fatal("retry did not complete the metadata")
+	}
 }
 
 func TestStopsFetchedOnce(t *testing.T) {
@@ -106,5 +125,23 @@ func TestStopsFetchedOnce(t *testing.T) {
 	q.drain()
 	if st, ok := s.Stops("3922"); !ok || len(st) != 2 {
 		t.Fatalf("stops %v %v", st, ok)
+	}
+}
+
+// An empty stop list is not stored (OASA sometimes answers "" for a valid route) and is
+// retried only after EmptyStopsRetry.
+func TestEmptyStopsRetriedLater(t *testing.T) {
+	api, q := &fakeAPI{}, &queue{}
+	s := Open("", api, q.submit, nil)
+	now := time.Unix(1_800_000_000, 0)
+	s.now = func() time.Time { return now }
+	s.Stops("empty")
+	q.drain()
+	if _, ok := s.Stops("empty"); ok || len(q.fns) != 0 {
+		t.Fatalf("empty answer stored or retried at once (queued %d)", len(q.fns))
+	}
+	now = now.Add(EmptyStopsRetry)
+	if s.Stops("empty"); len(q.fns) != 1 {
+		t.Fatalf("not retried after %v", EmptyStopsRetry)
 	}
 }

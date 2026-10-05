@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -108,7 +110,10 @@ type Client struct {
 	BaseURL  string
 	HTTP     *http.Client
 	Pacer    *Pacer
-	Log      RequestLog // every request, per second
+	Log      RequestLog    // every request, per second
+	MinGap   time.Duration // never start two requests closer than this (0 = no limit)
+	gapMu    sync.Mutex
+	lastAt   time.Time
 	requests atomic.Int64
 	errors   atomic.Int64
 }
@@ -117,11 +122,32 @@ func New(baseURL string, pacer *Pacer) *Client {
 	if baseURL == "" {
 		baseURL = BaseURL
 	}
-	return &Client{BaseURL: baseURL, HTTP: &http.Client{Timeout: 20 * time.Second}, Pacer: pacer}
+	// Redirects are not followed: each request slot must be exactly one request.
+	hc := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	c := &Client{BaseURL: baseURL, HTTP: hc, Pacer: pacer}
+	if pacer != nil {
+		c.MinGap = pacer.BaseInterval()
+	}
+	return c
 }
 
 // Requests counts calls made since the client was created.
 func (c *Client) Requests() int64 { return c.requests.Load() }
+
+// startGap waits until MinGap after the previous request start and books this one. It is
+// the hard guarantee behind the budget: callers are paced already, this only absorbs jitter
+// between a pacer grant and the request.
+func (c *Client) startGap() time.Time {
+	c.gapMu.Lock()
+	defer c.gapMu.Unlock()
+	if wait := time.Until(c.lastAt.Add(c.MinGap)); c.MinGap > 0 && wait > 0 {
+		time.Sleep(wait)
+	}
+	c.lastAt = time.Now()
+	return c.lastAt
+}
 
 // Errors counts failed calls (transport, HTTP status, error answers, undecodable bodies).
 func (c *Client) Errors() int64 { return c.errors.Load() }
@@ -138,7 +164,7 @@ func (c *Client) Call(ctx context.Context, out any, act string, params ...string
 	for i, p := range params {
 		q.Set(fmt.Sprintf("p%d", i+1), p)
 	}
-	start := time.Now()
+	start := c.startGap()
 	c.Log.Add(start)
 	err := c.do(ctx, out, act, c.BaseURL+"?"+q.Encode())
 	if err != nil {
@@ -249,10 +275,13 @@ func (c *Client) BusLocations(ctx context.Context, routeCode string) ([]Vehicle,
 	for _, r := range raw {
 		lat, err1 := strconv.ParseFloat(string(r.Lat), 64)
 		lon, err2 := strconv.ParseFloat(string(r.Lon), 64)
-		if err1 != nil || err2 != nil || !inGreece(lat, lon) {
+		if err1 != nil || err2 != nil || !inGreece(lat, lon) || r.VehNo == "" || r.Route == "" {
 			continue // also drops 0,0 and NaN
 		}
-		heading, _ := strconv.ParseFloat(string(r.Heading), 64)
+		heading, err := strconv.ParseFloat(string(r.Heading), 64)
+		if err != nil || math.IsNaN(heading) || math.IsInf(heading, 0) {
+			heading = 0 // unknown
+		}
 		ts, err := ParseCSDate(string(r.CSDate))
 		out = append(out, Vehicle{VehNo: string(r.VehNo), RouteCode: string(r.Route), Lat: lat, Lon: lon,
 			Heading: heading, Time: ts, TimeErr: err})

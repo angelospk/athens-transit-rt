@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,20 +130,62 @@ func TestClientHTTPError(t *testing.T) {
 func TestPacerSpacing(t *testing.T) {
 	p := NewPacer(4)
 	t0 := time.Unix(1000, 0)
-	var slots []time.Time
-	for i := 0; i < 4; i++ {
-		slots = append(slots, p.reserve(t0))
+	if d := p.grant(t0); d != 0 {
+		t.Fatalf("first grant waits %v", d)
 	}
-	for i, s := range slots {
-		if want := t0.Add(time.Duration(i) * 250 * time.Millisecond); !s.Equal(want) {
-			t.Fatalf("slot %d = %v, want %v", i, s.Sub(t0), want.Sub(t0))
-		}
+	if d := p.grant(t0.Add(100 * time.Millisecond)); d != 150*time.Millisecond {
+		t.Fatalf("early caller waits %v, want 150ms", d)
+	}
+	// A late wake-up (timer fired 200 ms late) counts from the actual grant, so the next
+	// caller still waits a full interval after it.
+	late := t0.Add(450 * time.Millisecond)
+	if d := p.grant(late); d != 0 {
+		t.Fatalf("late grant waits %v", d)
+	}
+	if d := p.grant(late.Add(10 * time.Millisecond)); d != 240*time.Millisecond {
+		t.Fatalf("after a late grant: wait %v, want 240ms", d)
 	}
 	// Idle time does not accumulate into a burst.
 	later := t0.Add(time.Minute)
-	if a, b := p.reserve(later), p.reserve(later); !a.Equal(later) || b.Sub(a) != 250*time.Millisecond {
-		t.Fatalf("after idle: %v %v", a.Sub(later), b.Sub(later))
+	if a, b := p.grant(later), p.grant(later); a != 0 || b != 250*time.Millisecond {
+		t.Fatalf("after idle: %v %v", a, b)
 	}
+}
+
+// The client never starts two requests closer than MinGap, whatever the caller does.
+func TestClientMinGap(t *testing.T) {
+	srv := fakeAPI(t, map[string]string{"getBusLocation:1": "[]"})
+	defer srv.Close()
+	c := New(srv.URL+"/", nil)
+	c.MinGap = 50 * time.Millisecond
+	rec := &startRecorder{next: http.DefaultTransport}
+	c.HTTP.Transport = rec
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); c.BusLocations(context.Background(), "1") }()
+	}
+	wg.Wait()
+	starts := rec.starts
+	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+	for i := 1; i < len(starts); i++ {
+		if gap := starts[i].Sub(starts[i-1]); gap < c.MinGap {
+			t.Fatalf("starts %d and %d only %v apart", i-1, i, gap)
+		}
+	}
+}
+
+type startRecorder struct {
+	mu     sync.Mutex
+	starts []time.Time
+	next   http.RoundTripper
+}
+
+func (r *startRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.starts = append(r.starts, time.Now())
+	r.mu.Unlock()
+	return r.next.RoundTrip(req)
 }
 
 func TestPacerBackoff(t *testing.T) {
@@ -191,13 +235,16 @@ func TestPacerWaitHonoursContext(t *testing.T) {
 func TestBusLocationsGarbage(t *testing.T) {
 	ok := `{"VEH_NO":"1","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"37.95","CS_LNG":"23.71","ROUTE_CODE":"1","VEH_HEADING":"5"}`
 	srv := fakeAPI(t, map[string]string{
-		"getBusLocation:html":    "<html><body>Service Unavailable</body></html>",
-		"getBusLocation:obj":     `{"foo":1}`,
-		"getBusLocation:nulls":   `[null,{},` + ok + `]`,
-		"getBusLocation:missing": `[{"VEH_NO":"2"},` + ok + `]`,
-		"getBusLocation:zero":    `[{"VEH_NO":"3","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"0","CS_LNG":"0","ROUTE_CODE":"1"},` + ok + `]`,
-		"getBusLocation:far":     `[{"VEH_NO":"4","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"NaN","CS_LNG":"23.7","ROUTE_CODE":"1"},{"VEH_NO":"5","CS_LAT":"51.5","CS_LNG":"-0.1"},` + ok + `]`,
-		"getBusLocation:baddate": `[{"VEH_NO":"6","CS_DATE":"yesterday","CS_LAT":"37.95","CS_LNG":"23.71","ROUTE_CODE":"1"}]`,
+		"getBusLocation:html":     "<html><body>Service Unavailable</body></html>",
+		"getBusLocation:obj":      `{"foo":1}`,
+		"getBusLocation:nulls":    `[null,{},` + ok + `]`,
+		"getBusLocation:missing":  `[{"VEH_NO":"2"},` + ok + `]`,
+		"getBusLocation:zero":     `[{"VEH_NO":"3","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"0","CS_LNG":"0","ROUTE_CODE":"1"},` + ok + `]`,
+		"getBusLocation:far":      `[{"VEH_NO":"4","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"NaN","CS_LNG":"23.7","ROUTE_CODE":"1"},{"VEH_NO":"5","CS_LAT":"51.5","CS_LNG":"-0.1"},` + ok + `]`,
+		"getBusLocation:noid":     `[{"VEH_NO":"","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"37.95","CS_LNG":"23.71","ROUTE_CODE":"1"},{"VEH_NO":"7","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"37.95","CS_LNG":"23.71"},` + ok + `]`,
+		"getBusLocation:nanhead":  `[{"VEH_NO":"1","CS_DATE":"Oct  5 2026 11:10:38:000AM","CS_LAT":"37.95","CS_LNG":"23.71","ROUTE_CODE":"1","VEH_HEADING":"NaN"}]`,
+		"getBusLocation:redirect": "",
+		"getBusLocation:baddate":  `[{"VEH_NO":"6","CS_DATE":"yesterday","CS_LAT":"37.95","CS_LNG":"23.71","ROUTE_CODE":"1"}]`,
 	})
 	defer srv.Close()
 	c := New(srv.URL+"/", nil)
@@ -207,11 +254,14 @@ func TestBusLocationsGarbage(t *testing.T) {
 			t.Errorf("%s: no error", code)
 		}
 	}
-	for _, code := range []string{"nulls", "missing", "zero", "far"} {
+	for _, code := range []string{"nulls", "missing", "zero", "far", "noid"} {
 		vs, err := c.BusLocations(ctx, code)
 		if err != nil || len(vs) != 1 || vs[0].VehNo != "1" {
 			t.Errorf("%s: %+v %v", code, vs, err)
 		}
+	}
+	if vs, err := c.BusLocations(ctx, "nanhead"); err != nil || len(vs) != 1 || vs[0].Heading != 0 {
+		t.Errorf("nanhead: %+v %v", vs, err)
 	}
 	// An unparseable time is kept but flagged; the scheduler drops it (TimeErr).
 	if vs, err := c.BusLocations(ctx, "baddate"); err != nil || len(vs) != 1 || vs[0].TimeErr == nil {
@@ -240,5 +290,19 @@ func TestRequestLogWindows(t *testing.T) {
 	per = l.PerSecond(t0.Add(time.Duration(RequestLogSeconds+20)*time.Second), RequestLogSeconds)
 	if MaxWindow(per, RequestLogSeconds) != 0 {
 		t.Fatal("old seconds leaked into the window")
+	}
+}
+
+// A redirect is not followed: one request slot must be one request.
+func TestClientDoesNotFollowRedirects(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	}))
+	defer srv.Close()
+	c := New(srv.URL+"/", nil)
+	if _, err := c.BusLocations(context.Background(), "1"); err == nil || hits != 1 || c.Requests() != 1 || c.Errors() != 1 {
+		t.Fatalf("err %v hits %d requests %d errors %d", err, hits, c.Requests(), c.Errors())
 	}
 }

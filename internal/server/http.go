@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,7 +56,12 @@ func (a *App) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Add("Vary", "Accept-Encoding")
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		if path.Clean(r.URL.Path) != r.URL.Path {
+			// ServeMux would answer 301 with the cleaned path; such ids are never valid.
+			writeJSON(w, http.StatusNotFound, unknownMaxAge, map[string]string{"error": "not_found"})
+			return
+		}
+		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			mux.ServeHTTP(w, r)
 			return
 		}
@@ -65,6 +72,28 @@ func (a *App) Handler() http.Handler {
 		zw.Close()
 		gzipPool.Put(zw)
 	})
+}
+
+// acceptsGzip reports whether an Accept-Encoding header allows gzip (q > 0 for gzip or *).
+func acceptsGzip(header string) bool {
+	star := false
+	for _, part := range strings.Split(header, ",") {
+		name, params, _ := strings.Cut(part, ";")
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "gzip" && name != "*" {
+			continue
+		}
+		ok := true
+		if k, v, found := strings.Cut(strings.TrimSpace(params), "="); found && strings.TrimSpace(k) == "q" {
+			q, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+			ok = err == nil && q > 0
+		}
+		if name == "gzip" {
+			return ok
+		}
+		star = ok
+	}
+	return star
 }
 
 var gzipPool = sync.Pool{New: func() any {
@@ -137,11 +166,14 @@ func (a *App) handleLine(w http.ResponseWriter, r *http.Request) {
 func (a *App) Status() StatusResponse {
 	now := a.now()
 	a.mu.RLock()
-	lastOK, lastPublish, active, loaded := a.lastOK, a.lastPublish, a.active, a.w != nil
+	lastOK, lastPublish, active, loaded, warming := a.lastOK, a.lastPublish, a.active, a.w != nil, len(a.warming)
 	a.mu.RUnlock()
 	st := a.sched.Stats()
 	polledLines := st.LinesByTier[sched.Watched] + st.LinesByTier[sched.Dense] + st.LinesByTier[sched.Other]
-	ok := loaded && (polledLines == 0 || (!lastOK.IsZero() && now.Sub(lastOK) <= okRecentPollSecs*time.Second))
+	// Not ok: no good poll for 5 minutes while lines are polled, or scheduled lines whose
+	// routes OASA has not given us yet while nothing is polled.
+	ok := loaded && (polledLines > 0 || warming == 0) &&
+		(polledLines == 0 || (!lastOK.IsZero() && now.Sub(lastOK) <= okRecentPollSecs*time.Second))
 	var updated int64
 	if !lastPublish.IsZero() {
 		updated = lastPublish.Unix()

@@ -758,8 +758,13 @@ func paired(w io.Writer, f *gtfs.Feed, rec *Recording, tr *Truth, res map[cycleV
 // ---------------------------------------------------------------- --blocks
 
 // blockOf: OASA encodes the vehicle block in the trip id: {route}_{service}_{block}_{HHMM}.
+// Other ids get a block of their own (the trip id), so they never pair with another trip.
 func blockOf(f *gtfs.Feed, t *gtfs.Trip) [2]string {
-	return [2]string{f.Services[t.Service].ID, strings.Split(t.ID, "_")[3]}
+	parts := strings.Split(t.ID, "_")
+	if len(parts) < 4 {
+		return [2]string{f.Services[t.Service].ID, "trip:" + t.ID}
+	}
+	return [2]string{f.Services[t.Service].ID, parts[3]}
 }
 
 type depCand struct {

@@ -17,11 +17,16 @@ import (
 
 const RefreshEvery = 24 * time.Hour
 
+// IncompleteRetry: a refresh that left some LineCodes without routes is repeated this soon.
+const IncompleteRetry = 5 * time.Minute
+
 type Data struct {
 	FetchedAt int64                         `json:"fetched_at"` // when Lines and Routes were complete
 	Lines     []telematics.Line             `json:"lines"`
 	Routes    map[string][]telematics.Route `json:"routes"` // by LineCode
 	Stops     map[string][]string           `json:"stops"`  // by RouteCode
+	// Incomplete: some LineCodes failed every attempt and have no routes yet.
+	Incomplete bool `json:"incomplete,omitempty"`
 }
 
 // API is the part of the telematics client the store uses.
@@ -46,14 +51,14 @@ type Store struct {
 	refreshing bool
 	next       *Data // refresh in progress
 	pendingLC  int
-	stopsAsked map[string]bool
+	stopsAsked map[string]time.Time // route code -> do not ask again before
 	onChange   func()
 }
 
 // Open loads the persisted metadata (if any). onChange is called after routes change.
 func Open(path string, api API, submit Submitter, onChange func()) *Store {
 	s := &Store{path: path, api: api, submit: submit, now: time.Now, onChange: onChange,
-		stopsAsked: map[string]bool{}}
+		stopsAsked: map[string]time.Time{}}
 	s.data = Data{Routes: map[string][]telematics.Route{}, Stops: map[string][]string{}}
 	if b, err := os.ReadFile(path); err == nil {
 		var d Data
@@ -102,6 +107,9 @@ func (s *Store) LineIDs() []string {
 	return out
 }
 
+// EmptyStopsRetry: a route whose stop list came back empty is asked again after this long.
+const EmptyStopsRetry = 30 * time.Minute
+
 // Stops returns a route's stop codes. When unknown it queues a fetch and returns ok=false.
 func (s *Store) Stops(routeCode string) ([]string, bool) {
 	s.mu.Lock()
@@ -109,8 +117,8 @@ func (s *Store) Stops(routeCode string) ([]string, bool) {
 	if st, ok := s.data.Stops[routeCode]; ok {
 		return st, true
 	}
-	if !s.stopsAsked[routeCode] {
-		s.stopsAsked[routeCode] = true
+	if !s.now().Before(s.stopsAsked[routeCode]) {
+		s.stopsAsked[routeCode] = time.Unix(1<<40, 0) // in flight
 		s.submit(func(ctx context.Context) error {
 			stops, err := s.api.Stops(ctx, routeCode)
 			s.mu.Lock()
@@ -118,6 +126,10 @@ func (s *Store) Stops(routeCode string) ([]string, bool) {
 			if err != nil {
 				delete(s.stopsAsked, routeCode) // retry on a later call
 				return err
+			}
+			if len(stops) == 0 {
+				s.stopsAsked[routeCode] = s.now().Add(EmptyStopsRetry)
+				return nil
 			}
 			codes := make([]string, len(stops))
 			for i, st := range stops {
@@ -135,7 +147,11 @@ func (s *Store) Stops(routeCode string) ([]string, bool) {
 func (s *Store) Due() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return !s.refreshing && s.now().Sub(time.Unix(s.data.FetchedAt, 0)) >= RefreshEvery
+	every := RefreshEvery
+	if s.data.Incomplete {
+		every = IncompleteRetry
+	}
+	return !s.refreshing && s.now().Sub(time.Unix(s.data.FetchedAt, 0)) >= every
 }
 
 // Refresh re-fetches lines and routes through the submitter. While it runs the old data stays
@@ -185,8 +201,12 @@ func (s *Store) fetchRoutes(lineCode string, bootstrap bool, attempt int) func(c
 			return err
 		}
 		s.mu.Lock()
-		if err != nil && s.data.Routes[lineCode] != nil {
-			routes = s.data.Routes[lineCode] // keep what we had
+		if err != nil {
+			if s.data.Routes[lineCode] != nil {
+				routes = s.data.Routes[lineCode] // keep what we had
+			} else {
+				s.next.Incomplete = true
+			}
 		}
 		s.next.Routes[lineCode] = routes
 		if bootstrap {
@@ -225,6 +245,14 @@ func (s *Store) saveLocked() {
 	if os.WriteFile(tmp, b, 0o644) == nil {
 		os.Rename(tmp, s.path)
 	}
+}
+
+// Incomplete reports whether some LineCodes have no routes because OASA failed (a retry
+// is due within IncompleteRetry).
+func (s *Store) Incomplete() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.Incomplete || s.data.FetchedAt == 0
 }
 
 // Snapshot returns a copy of the current data (for tests and status).

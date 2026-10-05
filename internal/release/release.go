@@ -61,12 +61,14 @@ func (r *Fetcher) LoadLocal() (*gtfs.Feed, *Manifest, error) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, nil, err
 	}
-	in, err := os.Open(filepath.Join(r.Dir, SnapshotName))
+	data, err := os.ReadFile(filepath.Join(r.Dir, localName(m)))
 	if err != nil {
 		return nil, nil, err
 	}
-	defer in.Close()
-	f, err := gtfs.ReadSnapshot(in)
+	if err := verify(data, m); err != nil {
+		return nil, nil, fmt.Errorf("local %w", err)
+	}
+	f, err := gtfs.ReadSnapshot(bytes.NewReader(data))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -143,28 +145,67 @@ func (r *Fetcher) download(ctx context.Context, m Manifest) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(data)
-	if hex.EncodeToString(sum[:]) != m.SHA256 || int64(len(data)) != m.Size {
-		// The manifest may be uploaded before the snapshot finished replacing; retry later.
-		return nil, fmt.Errorf("snapshot: checksum mismatch")
+	// The manifest may be uploaded before the snapshot finished replacing; retry later.
+	if err := verify(data, m); err != nil {
+		return nil, err
 	}
 	return data, nil
+}
+
+func verify(data []byte, m Manifest) error {
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != m.SHA256 || int64(len(data)) != m.Size {
+		return fmt.Errorf("snapshot: checksum mismatch")
+	}
+	return nil
+}
+
+// localName: each snapshot generation has its own file, so the manifest (written last,
+// atomically) always names a complete file; a crash leaves the old pair in place.
+func localName(m Manifest) string {
+	if len(m.SHA256) < 16 {
+		return SnapshotName
+	}
+	return "snapshot-" + m.SHA256[:16] + ".bin"
 }
 
 func (r *Fetcher) save(data []byte, m Manifest) error {
 	if err := os.MkdirAll(r.Dir, 0o755); err != nil {
 		return err
 	}
-	if err := writeAtomic(filepath.Join(r.Dir, SnapshotName), data); err != nil {
+	keep := localName(m)
+	if err := writeAtomic(filepath.Join(r.Dir, keep), data); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(m)
-	return writeAtomic(filepath.Join(r.Dir, ManifestName), b)
+	if err := writeAtomic(filepath.Join(r.Dir, ManifestName), b); err != nil {
+		return err
+	}
+	old, _ := filepath.Glob(filepath.Join(r.Dir, "snapshot*.bin"))
+	for _, p := range old {
+		if filepath.Base(p) != keep {
+			os.Remove(p)
+		}
+	}
+	return nil
 }
 
+// writeAtomic writes via a synced temp file and a rename.
 func writeAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, path)

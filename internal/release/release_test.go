@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
@@ -80,5 +82,21 @@ func TestCheckDownloadsVerifiesAndCaches(t *testing.T) {
 	}
 	if snapHits != 2 {
 		t.Fatalf("snapshot downloads %d", snapHits)
+	}
+
+	// A tampered local snapshot is rejected at startup (and then downloaded again).
+	files, _ := filepath.Glob(filepath.Join(dir, "snapshot-*.bin"))
+	if len(files) != 1 {
+		t.Fatalf("local snapshot files %v", files)
+	}
+	b, _ := os.ReadFile(files[0])
+	b[len(b)/2] ^= 0xff
+	os.WriteFile(files[0], b, 0o644)
+	r3 := &Fetcher{BaseURL: srv.URL + "/", Dir: dir, HTTP: srv.Client()}
+	if f, _, err := r3.LoadLocal(); err == nil || f != nil {
+		t.Fatal("tampered local snapshot loaded")
+	}
+	if got, _, err := r3.Check(ctx); err != nil || got == nil {
+		t.Fatalf("re-download after tampering: %v %v", got, err)
 	}
 }
