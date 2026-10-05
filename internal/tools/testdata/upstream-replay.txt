@@ -1,0 +1,67 @@
+8 cycles, 122 GPS fixes, 18 vehicles, 2 lines
+ground truth: 28 stop passages, 2 observed departures
+
+TRIP IDENTITY
+  greedy (now)  matched 100.0%   mid-run trip changes    7   agrees with departure-based trip  25.0% (n=12)
+  hungarian     matched 100.0%   mid-run trip changes    3   agrees with departure-based trip   0.0% (n=12)
+  memory        matched 100.0%   mid-run trip changes    5   agrees with departure-based trip  91.7% (n=12)
+  memory: 8.3% of its matches come from an observed departure
+  mid-run trip changes by line: 040 6/2/4, Α1 1/1/1
+  greedy vs memory disagree on 60 of 144 vehicle-cycles (41.7%)
+
+OVERTAKES (same route, order swapped by >150 m, sustained)
+  0 found
+  greedy (now)  kept their trips   0   swapped trips   0   other   0
+  hungarian     kept their trips   0   swapped trips   0   other   0
+  memory        kept their trips   0   swapped trips   0   other   0
+
+ARRIVAL PREDICTIONS vs ACTUAL PASSAGES (from GPS)
+
+greedy (now): scheduled time + current delay
+  minutes ahead       N  median |err|  p90 |err|  median err
+            0-5      89         0.5 m      1.3 m      -0.5 m
+           5-10       0
+          10-20       0
+          20-30       0
+
+hungarian: scheduled time + current delay
+  minutes ahead       N  median |err|  p90 |err|  median err
+            0-5      90         0.5 m      1.4 m      -0.5 m
+           5-10       0
+          10-20       0
+          20-30       0
+
+memory: scheduled time + current delay
+  minutes ahead       N  median |err|  p90 |err|  median err
+            0-5      90         0.5 m      1.4 m      -0.5 m
+           5-10       0
+          10-20       0
+          20-30       0
+
+schedule only (memory's trips, no delay) = what Google Maps shows today
+  minutes ahead       N  median |err|  p90 |err|  median err
+            0-5      90         5.4 m     17.9 m      -5.4 m
+           5-10       0
+          10-20       0
+          20-30       0
+
+OASA's own prediction (getStopArrivals)
+  minutes ahead       N  median |err|  p90 |err|  median err
+            0-5       0
+           5-10       0
+          10-20       0
+          20-30       0
+
+PAIRED, identical samples: OASA
+  minutes ahead       N  median |err|  p90 |err|  median err
+            0-5       0
+           5-10       0
+          10-20       0
+          20-30       0
+
+PAIRED, identical samples: ours (memory)
+  minutes ahead       N  median |err|  p90 |err|  median err
+            0-5       0
+           5-10       0
+          10-20       0
+          20-30       0
