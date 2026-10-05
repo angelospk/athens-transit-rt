@@ -1,6 +1,6 @@
 # athens-transit contract v1
 
-Shared interface between the backend (`athens-transit-rt`, Go, on the Oracle VPS)
+Shared interface between the backend (`athens-transit-rt`, Go, on a home machine)
 and the frontend (`athens-transit-map`, Svelte, on GitHub Pages).
 Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy.
 
@@ -14,13 +14,13 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 1 (2026-10-05)
+Revision: 2 (2026-10-05)
 
 ## Hosts
 
 | Host | Served by | Content |
 |---|---|---|
-| `https://transit.haroldpoi.dev` | VPS → Cloudflare Tunnel → Cloudflare cache | Live data (small, changes every ~30 s) |
+| `https://transit.haroldpoi.dev` | Home machine → Cloudflare Tunnel → Cloudflare cache | Live data (small, changes every ~30 s) |
 | `https://angelospk.github.io/athens-transit-rt/static/v1/` | GitHub Pages of the backend repo | Static map data (changes only when OASA publishes a new GTFS) |
 | `https://bus.haroldpoi.dev` | GitHub Pages of the frontend repo | The map app |
 

@@ -23,7 +23,9 @@ stream are not ported: the map lives in [athens-transit-map](https://github.com/
   matches vehicles to trips one-to-one (Hungarian assignment plus upstream's memory matcher,
   with hysteresis). `internal/lsa` is a port of scipy's `linear_sum_assignment`.
 - Serves the live API of [`docs/CONTRACT.md`](docs/CONTRACT.md) and whole-network
-  GTFS-Realtime VehiclePositions and TripUpdates (`.pb` and `.json`).
+  GTFS-Realtime VehiclePositions and TripUpdates (`.pb` and `.json`). Public instance and
+  usage: [`docs/API.md`](docs/API.md). The feeds pass the MobilityData GTFS Realtime validator
+  with 0 errors ([details](docs/API.md#validation)).
 - Tools from upstream as subcommands: `compare`, `record` (SQLite, upstream schema), `replay`
   (including `--blocks`).
 
@@ -73,7 +75,7 @@ the old snapshot.
 ```bash
 go build -o atrt ./cmd/atrt
 
-# Live service (VPS). Downloads the snapshot from this repo's release into --state.
+# Live service. Downloads the snapshot from this repo's release into --state.
 atrt serve --listen 127.0.0.1:8095 --metrics-listen 127.0.0.1:8096 --state /var/lib/atrt --rps 4
 atrt serve --gtfs osy_gtfs.zip --state ./state     # local, from a GTFS zip
 
