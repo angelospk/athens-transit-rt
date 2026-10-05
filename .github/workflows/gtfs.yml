@@ -1,0 +1,69 @@
+# Checks data.gov.gr for a new OASA GTFS every 6 h. On change it builds the snapshot
+# (release asset, downloaded by the server) and the static map data (GitHub Pages).
+name: gtfs
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: rebuild even if the GTFS did not change
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: gtfs
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.snap.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o atrt ./cmd/atrt
+      - id: snap
+        run: ./atrt snapshot --if-changed=${{ inputs.force != true }} --work work --out dist --site site
+      - name: Publish release assets
+        if: steps.snap.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view gtfs-snapshot >/dev/null 2>&1 || \
+            gh release create gtfs-snapshot --title "GTFS snapshot" --notes "Rolling snapshot of the OASA static GTFS, rebuilt by the gtfs workflow." --latest=false
+          # Snapshot first, manifest last: the server only trusts a manifest whose checksum matches.
+          gh release upload gtfs-snapshot dist/snapshot.bin --clobber
+          gh release upload gtfs-snapshot dist/manifest.json --clobber
+          cat dist/manifest.json
+      - name: Prepare Pages
+        if: steps.snap.outputs.changed == 'true'
+        run: |
+          cp dist/manifest.json site/static/v1/manifest.json
+          cat > site/index.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>athens-transit-rt static data</title>
+          <p>Static map data: <a href="static/v1/lines.json">static/v1/lines.json</a>.
+          See <a href="https://github.com/angelospk/athens-transit-rt">the repository</a>.</p>
+          HTML
+          touch site/.nojekyll
+      - uses: actions/configure-pages@v5
+        if: steps.snap.outputs.changed == 'true'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.snap.outputs.changed == 'true'
+        with:
+          path: site
+  deploy:
+    needs: build
+    if: needs.build.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
