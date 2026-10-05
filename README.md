@@ -1,5 +1,146 @@
 # athens-transit-rt
 
-Go port of [foivospro/athens-gtfs-realtime](https://github.com/foivospro/athens-gtfs-realtime)
-(MIT): GTFS-Realtime and a small JSON API for OASA buses and trolleys in Athens.
-Work in progress; see `docs/CONTRACT.md` and `docs/superpowers/plans/`.
+Live positions and GTFS-Realtime for OASA buses and trolleys in Athens, in Go.
+
+This is a Go port of [foivospro/athens-gtfs-realtime](https://github.com/foivospro/athens-gtfs-realtime)
+by Foivos Proestakis (MIT). The matching logic, constants and tools follow upstream; the last
+ported upstream commit is in [`UPSTREAM.md`](UPSTREAM.md). Upstream's HTML viewer and `/events`
+stream are not ported: the map lives in [athens-transit-map](https://github.com/angelospk/athens-transit-map).
+
+> **Ελληνικά, σύντομα.** Ένα Go binary (`atrt`) ρωτά το API τηλεματικής του ΟΑΣΑ για όλο το
+> δίκτυο, με ένα κοινό όριο αιτημάτων (4/s, max 5), αντιστοιχίζει κάθε όχημα σε δρομολόγιο του
+> GTFS και δίνει JSON ανά γραμμή (`/v1/lines/040`) και GTFS-Realtime. Οι χρήστες δεν φτάνουν
+> ποτέ στον ΟΑΣΑ: το Cloudflare κρατά κάθε απάντηση ακριβώς μέχρι την επόμενη ανανέωση της
+> γραμμής. Η βαριά δουλειά (το GTFS των 225 MB) γίνεται στο GitHub Actions. Ο server κατεβάζει
+> μόνο ένα έτοιμο snapshot.
+
+## What it does
+
+- Loads the static GTFS as a compact snapshot and swaps in new ones without a restart.
+- Polls `getBusLocation` for every route with scheduled service now, under one global request
+  budget (default 4 req/s, max 5), evenly spaced, with backoff on errors and slow answers.
+- Maps OASA route codes to GTFS shapes by stop sequence, projects GPS fixes on the shapes and
+  matches vehicles to trips one-to-one (Hungarian assignment plus upstream's memory matcher,
+  with hysteresis). `internal/lsa` is a port of scipy's `linear_sum_assignment`.
+- Serves the live API of [`docs/CONTRACT.md`](docs/CONTRACT.md) and whole-network
+  GTFS-Realtime VehiclePositions and TripUpdates (`.pb` and `.json`).
+- Tools from upstream as subcommands: `compare`, `record` (SQLite, upstream schema), `replay`
+  (including `--blocks`).
+
+## Architecture
+
+```
+data.gov.gr GTFS zip ──(GitHub Actions, every 6 h, only on change)──► atrt snapshot
+      │                                                     ├─► Release "gtfs-snapshot": snapshot.bin + manifest.json
+      │                                                     └─► GitHub Pages: static/v1/lines.json, lines/{id}.json
+      ▼
+VPS: atrt serve ── downloads snapshot (sha256-checked), polls OASA ──► 127.0.0.1:8095
+      └─► cloudflared tunnel ─► Cloudflare cache ─► https://transit.haroldpoi.dev/v1/...
+```
+
+### Polling tiers
+
+| Tier | Which lines | Target interval |
+|---|---|---|
+| watched | requested through `/v1/lines/{id}` in the last 10 min | 30 s, at most 50% of the budget |
+| dense | ≥ 5 fresh vehicles in the last poll | 60 s |
+| other | scheduled service now | 150 s (stretched up to 5 min under load) |
+| inactive | no scheduled service now | not polled |
+
+Routes that came back empty twice are re-polled only every 5 min (except for watched lines).
+Metadata refreshes (lines, routes, stops) get every 4th request slot while they are queued.
+When a tier needs more than its share, its intervals stretch. A line response carries
+`Cache-Control: max-age` = seconds until its next expected poll (5..300), so the Cloudflare
+copy expires when fresh data exists.
+
+`/v1/status` reports `ok: false` when no line poll succeeded in the last 5 minutes (while lines
+are scheduled). During an OASA outage the last good data stays served; `updated_at` shows its age.
+
+When the static GTFS has expired, line activity is planned from the same weekday in the feed's
+last valid week, so vehicles still appear (position and route, `trip_id: null`). A warning is
+logged daily from 7 days before expiry.
+
+### Snapshot format
+
+`snapshot.bin` = gzip("ATRTSNAP" + format version byte + gob(`gtfs.Feed`)). Stop times are
+deduplicated into stop patterns and time profiles (integer ids, seconds after the service
+day start). `manifest.json` holds the GTFS version, source ETag/Last-Modified/size and the
+snapshot sha256. The server rejects a download whose sha256 or format does not match and keeps
+the old snapshot.
+
+## Commands
+
+```bash
+go build -o atrt ./cmd/atrt
+
+# Live service (VPS). Downloads the snapshot from this repo's release into --state.
+atrt serve --listen 127.0.0.1:8095 --metrics-listen 127.0.0.1:8096 --state /var/lib/atrt --rps 4
+atrt serve --gtfs osy_gtfs.zip --state ./state     # local, from a GTFS zip
+
+# Snapshot + static map data (what the gtfs workflow runs).
+atrt snapshot --gtfs osy_gtfs.zip --out dist --site site
+
+# Upstream tools (dev machine, 1 req/s by default).
+atrt compare --lines 040,550
+atrt record  --lines 040,A1 --end 2026-10-05T10:00 --db data/record.sqlite
+atrt replay  data/record.sqlite            # score the matchers
+atrt replay  --blocks data/record.sqlite   # check GTFS vehicle blocks
+```
+
+`atrt <command> -h` lists all flags. `scripts/parity/upstream_match.py` runs the upstream
+Python matchers on recorded cycles; `internal/match/parity_test.go` checks that the Go
+matchers give the same assignments.
+
+### Local metrics
+
+`GET http://127.0.0.1:8096/metrics` (loopback only, not behind the tunnel) returns JSON: OASA
+requests per second for the last hour, the maximum over any 1 s and 10 s window, requests by
+tier, lines by tier, per-line interval and last poll, error count and RSS. Use it to check the
+budget:
+
+```bash
+curl -s 127.0.0.1:8096/metrics | jq '{max_1s, max_10s, sent_by_tier, lines_by_tier, rss_mb: (.rss_bytes/1048576)}'
+```
+
+## Deployment
+
+### VPS (systemd)
+
+`deploy/install.sh oracle-vm` builds a static linux/amd64 binary, installs it to
+`/usr/local/bin/atrt` and `deploy/atrt.service`, and restarts the service. The unit runs as the
+system user `atrt`, keeps state in `/var/lib/atrt`, restarts always (at most 10 starts per
+10 min), sets `GOMEMLIMIT=100MiB`, `MemoryHigh=150M`, `MemoryMax=200M` and the usual sandboxing.
+Both listeners are on 127.0.0.1 only.
+
+### Cloudflare
+
+- Tunnel ingress in `/etc/cloudflared/config.yml`:
+  `transit.haroldpoi.dev → http://127.0.0.1:8095`, DNS via
+  `cloudflared tunnel route dns <tunnel> transit.haroldpoi.dev`.
+- Cache rule (Caching → Cache Rules): when hostname is `transit.haroldpoi.dev` and URI path
+  starts with `/v1/` → *Eligible for cache*, Edge TTL *Use cache-control header if present*,
+  Browser TTL *Respect origin*. Without it Cloudflare does not cache JSON (`cf-cache-status: DYNAMIC`).
+- Rate limiting rule (Security → WAF → Rate limiting): hostname `transit.haroldpoi.dev`,
+  per IP, 30 requests / 10 s, block for 10 s.
+
+### GitHub Actions
+
+| Workflow | When | What |
+|---|---|---|
+| `ci` | push, PR | gofmt, `go vet`, `go test -race`, build |
+| `gtfs` | every 6 h at :17, manual | HEAD data.gov.gr; if ETag/Last-Modified/size changed (or forced), build the snapshot, upload release assets, deploy Pages |
+| `upstream-watch` | daily | compare `UPSTREAM.md` with upstream `main`; open one issue per new upstream head |
+
+Static data: <https://angelospk.github.io/athens-transit-rt/static/v1/lines.json>.
+
+## Development
+
+```bash
+go test -race ./...          # includes a fake-OASA outage test (~20 s); -short skips it
+```
+
+Tests never call the live OASA API; recorded answers are in `internal/*/testdata`.
+
+## License
+
+MIT, see [`LICENSE`](LICENSE). Upstream: Copyright (c) 2026 Foivos Proestakis, MIT.

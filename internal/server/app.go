@@ -490,7 +490,7 @@ func (a *App) logStats() {
 	}
 	a.mu.RUnlock()
 	reqs := a.client.Requests()
-	a.log.Info("stats", "requests", reqs, "requests_last_min", reqs-a.lastRequests,
+	a.log.Info("stats", "requests", reqs, "requests_last_min", reqs-a.lastRequests, "errors", a.client.Errors(),
 		"watched", st.LinesByTier[sched.Watched], "dense", st.LinesByTier[sched.Dense], "other", st.LinesByTier[sched.Other],
 		"stretch_other", fmt.Sprintf("%.2f", st.Stretch[sched.Other]), "rps_now", fmt.Sprintf("%.2f", a.pacer.RPS()),
 		"vehicles", vehicles, "matched", matched)

@@ -1,0 +1,30 @@
+[Unit]
+Description=athens-transit-rt (OASA live API + GTFS-Realtime)
+After=network-online.target
+Wants=network-online.target
+# Bounded restart loop: at most 10 starts per 10 minutes.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+User=atrt
+Group=atrt
+ExecStart=/usr/local/bin/atrt serve --listen 127.0.0.1:8095 --state /var/lib/atrt --rps 4
+Restart=always
+RestartSec=5
+Environment=GOMEMLIMIT=100MiB
+MemoryHigh=150M
+MemoryMax=200M
+StateDirectory=atrt
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+ReadWritePaths=/var/lib/atrt
+
+[Install]
+WantedBy=multi-user.target
