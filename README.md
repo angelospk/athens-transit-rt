@@ -102,6 +102,24 @@ budget:
 curl -s 127.0.0.1:8096/metrics | jq '{max_1s, max_10s, sent_by_tier, lines_by_tier, rss_mb: (.rss_bytes/1048576)}'
 ```
 
+## Self-hosting (Docker)
+
+**OASA answers only home (residential) internet connections in Greece.** Requests from
+data-centre and cloud addresses time out (tested: Oracle Cloud, Google Apps Script, Cloudflare
+WARP, Webshare proxies, a Greek hosting provider). Run the container on a machine at home.
+
+```bash
+curl -O https://raw.githubusercontent.com/angelospk/athens-transit-rt/main/compose.yaml
+docker compose up -d
+curl -s 127.0.0.1:8095/v1/status
+```
+
+The image is `ghcr.io/angelospk/athens-transit-rt` (linux/amd64 and arm64, so a Raspberry Pi
+works). It downloads the GTFS snapshot from this repo's release on first start and keeps it
+in the `atrt-state` volume. The API listens on `127.0.0.1:8095`; publishing it (Cloudflare
+Tunnel, Caddy, nginx, ...) and its cache and rate-limit rules are up to you. Keep the OASA
+budget at 4 req/s or lower (`--rps`), and do not run two instances behind one address.
+
 ## Deployment
 
 ### VPS (systemd)

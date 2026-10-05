@@ -1,0 +1,23 @@
+# Self-hosting: docker compose up -d
+# OASA answers only home (residential) Greek internet connections; data-centre and cloud
+# addresses time out. Run this on a machine at home in Greece.
+services:
+  atrt:
+    image: ghcr.io/angelospk/athens-transit-rt:latest
+    restart: unless-stopped
+    # Host networking keeps both listeners on the host's loopback (the /metrics endpoint
+    # answers loopback clients only). Publish the API with your own reverse proxy or tunnel.
+    network_mode: host
+    command: ["serve", "--listen", "127.0.0.1:8095", "--metrics-listen", "127.0.0.1:8096",
+              "--state", "/var/lib/atrt", "--rps", "4"]
+    volumes:
+      - atrt-state:/var/lib/atrt
+    mem_limit: 200m
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  atrt-state:

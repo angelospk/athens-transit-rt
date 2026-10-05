@@ -1,0 +1,10 @@
+.git
+.github
+data
+out
+site
+dist
+work
+*.sqlite
+docs
+deploy
