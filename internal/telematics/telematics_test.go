@@ -159,7 +159,7 @@ func TestClientMinGap(t *testing.T) {
 	c := New(srv.URL+"/", nil)
 	c.MinGap = 50 * time.Millisecond
 	rec := &startRecorder{next: http.DefaultTransport}
-	c.HTTP.Transport = rec
+	c.SetTransport(rec) // the gap is enforced in front of the real sender
 	var wg sync.WaitGroup
 	for i := 0; i < 6; i++ {
 		wg.Add(1)
@@ -168,10 +168,36 @@ func TestClientMinGap(t *testing.T) {
 	wg.Wait()
 	starts := rec.starts
 	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+	if len(starts) != 6 {
+		t.Fatalf("%d sends", len(starts))
+	}
 	for i := 1; i < len(starts); i++ {
 		if gap := starts[i].Sub(starts[i-1]); gap < c.MinGap {
 			t.Fatalf("starts %d and %d only %v apart", i-1, i, gap)
 		}
+	}
+	if got := MaxWindow(c.Log.PerSecond(time.Now(), 5), 5); got != 6 {
+		t.Fatalf("request log counted %d sends", got)
+	}
+}
+
+// A caller cancelled while waiting for its gap returns at once and books no send.
+func TestClientGapHonoursCancel(t *testing.T) {
+	srv := fakeAPI(t, map[string]string{"getBusLocation:1": "[]"})
+	defer srv.Close()
+	c := New(srv.URL+"/", nil)
+	c.MinGap = time.Hour
+	rec := &startRecorder{next: http.DefaultTransport}
+	c.SetTransport(rec)
+	c.BusLocations(context.Background(), "1") // takes the first gap
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	t0 := time.Now()
+	if _, err := c.BusLocations(ctx, "1"); err == nil || time.Since(t0) > 5*time.Second {
+		t.Fatalf("err %v after %v", err, time.Since(t0))
+	}
+	if len(rec.starts) != 1 {
+		t.Fatalf("%d sends", len(rec.starts))
 	}
 }
 

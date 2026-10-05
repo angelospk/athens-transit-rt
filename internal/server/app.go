@@ -96,8 +96,8 @@ func New(cfg Config, log *slog.Logger) *App {
 	if cfg.Proxy != "" {
 		// Validated by the serve command; the Transport dials socks5/socks5h and http proxies.
 		if u, err := url.Parse(cfg.Proxy); err == nil {
-			a.client.HTTP.Transport = &http.Transport{Proxy: http.ProxyURL(u), MaxIdleConnsPerHost: 8,
-				IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second}
+			a.client.SetTransport(&http.Transport{Proxy: http.ProxyURL(u), MaxIdleConnsPerHost: 8,
+				IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second})
 		}
 	}
 	a.sched = sched.New(cfg.Sched, a.pacer, a.client, a.onLine)

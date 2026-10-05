@@ -74,6 +74,12 @@ func TestAllocateWatchedCappedAtHalf(t *testing.T) {
 	if math.Abs(st[Other]-2) > 1e-9 || math.Abs(st[Dense]-1.25) > 1e-9 || math.Abs(st[Watched]-6) > 1e-9 {
 		t.Fatalf("stretch %v", st)
 	}
+	// Codex example: watched still gets a small reserved rate, and the plan never exceeds
+	// the budget.
+	st = allocate(1, [numTiers]float64{Watched: 1, Dense: 2, Other: 2})
+	if planned := 1/st[Watched] + 2/st[Dense] + 2/st[Other]; planned > 1+1e-9 {
+		t.Fatalf("planned %.3f rps over a budget of 1 (stretch %v)", planned, st)
+	}
 	// Infeasible floors (1.6 + 1 > 1): dense and other share the budget in proportion.
 	st = allocate(1, [numTiers]float64{Dense: 2, Other: 2})
 	if math.Abs(st[Dense]-3.25) > 1e-9 || math.Abs(st[Other]-5.2) > 1e-9 {
@@ -335,3 +341,26 @@ func (c *countingSlots) Wait(ctx context.Context) error {
 }
 func (c *countingSlots) Report(time.Duration, error) {}
 func (c *countingSlots) RPS() float64                { return 4 }
+
+// A watched line with many routes: its queued routes also respect the watched share, and
+// other lines get the slots in between.
+func TestWatchedPendingRoutesRespectShare(t *testing.T) {
+	c := &clock{t0}
+	s := newSched(4, &fakeFetch{}, c)
+	var many []string
+	for i := 0; i < 20; i++ {
+		many = append(many, fmt.Sprintf("w%d", i))
+	}
+	specs := []LineSpec{{ID: "W", Active: true, Routes: routes(many...)}}
+	for i := 0; i < 20; i++ {
+		specs = append(specs, LineSpec{ID: fmt.Sprintf("O%02d", i), Active: true, Routes: routes("o")})
+	}
+	s.SetLines(specs)
+	s.Watch("W")
+	for i := 0; i < 20; i++ {
+		s.pick()
+	}
+	if st := s.Stats(); st.Sent[Watched] > 10+watchedBurst || st.Sent[Other] < 20-10-watchedBurst {
+		t.Fatalf("sent %v", st.Sent)
+	}
+}

@@ -100,3 +100,27 @@ func TestCheckDownloadsVerifiesAndCaches(t *testing.T) {
 		t.Fatalf("re-download after tampering: %v %v", got, err)
 	}
 }
+
+// A state dir from before snapshot generations (plain snapshot.bin) still loads offline and
+// is migrated to the generation name.
+func TestLoadLocalLegacyLayout(t *testing.T) {
+	f := gtfstest.StraightLine{Stops: 3, Trips: 2, First: 36000, Headway: 10, Leg: 5}.Feed(t)
+	var snap bytes.Buffer
+	if err := gtfs.WriteSnapshot(&snap, f); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(snap.Bytes())
+	m := Manifest{GTFSVersion: "v", SHA256: hex.EncodeToString(sum[:]), Size: int64(snap.Len()), Snapshot: SnapshotName}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, SnapshotName), snap.Bytes(), 0o644)
+	b, _ := json.Marshal(m)
+	os.WriteFile(filepath.Join(dir, ManifestName), b, 0o644)
+	r := &Fetcher{Dir: dir}
+	got, _, err := r.LoadLocal()
+	if err != nil || got == nil || len(got.Trips) != 2 {
+		t.Fatalf("legacy load: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, localName(m))); err != nil {
+		t.Fatalf("not migrated: %v", err)
+	}
+}

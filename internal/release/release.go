@@ -61,7 +61,17 @@ func (r *Fetcher) LoadLocal() (*gtfs.Feed, *Manifest, error) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil, nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(r.Dir, localName(m)))
+	name := filepath.Join(r.Dir, localName(m))
+	data, err := os.ReadFile(name)
+	if os.IsNotExist(err) {
+		// State dir from before snapshot generations: plain snapshot.bin.
+		legacy := filepath.Join(r.Dir, SnapshotName)
+		if data, err = os.ReadFile(legacy); err == nil && verify(data, m) == nil && legacy != name {
+			if os.Rename(legacy, name) == nil {
+				syncDir(r.Dir)
+			}
+		}
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -181,6 +191,7 @@ func (r *Fetcher) save(data []byte, m Manifest) error {
 	if err := writeAtomic(filepath.Join(r.Dir, ManifestName), b); err != nil {
 		return err
 	}
+	// The manifest rename is durable (writeAtomic synced the dir); only now drop old files.
 	old, _ := filepath.Glob(filepath.Join(r.Dir, "snapshot*.bin"))
 	for _, p := range old {
 		if filepath.Base(p) != keep {
@@ -208,7 +219,20 @@ func writeAtomic(path string, data []byte) error {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir makes renames inside dir durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // Build writes the snapshot and its manifest for a feed into dir (used by the pipeline).

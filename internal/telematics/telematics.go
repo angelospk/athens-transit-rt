@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -111,9 +110,9 @@ type Client struct {
 	HTTP     *http.Client
 	Pacer    *Pacer
 	Log      RequestLog    // every request, per second
-	MinGap   time.Duration // never start two requests closer than this (0 = no limit)
-	gapMu    sync.Mutex
-	lastAt   time.Time
+	MinGap   time.Duration // never send two requests closer than this (0 = no limit)
+	gapMu    chan struct{} // 1-slot lock that a waiter can abandon on cancel
+	lastAt   time.Time     // last send, guarded by gapMu
 	requests atomic.Int64
 	errors   atomic.Int64
 }
@@ -126,7 +125,8 @@ func New(baseURL string, pacer *Pacer) *Client {
 	hc := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	c := &Client{BaseURL: baseURL, HTTP: hc, Pacer: pacer}
+	c := &Client{BaseURL: baseURL, HTTP: hc, Pacer: pacer, gapMu: make(chan struct{}, 1)}
+	c.SetTransport(http.DefaultTransport)
 	if pacer != nil {
 		c.MinGap = pacer.BaseInterval()
 	}
@@ -136,17 +136,38 @@ func New(baseURL string, pacer *Pacer) *Client {
 // Requests counts calls made since the client was created.
 func (c *Client) Requests() int64 { return c.requests.Load() }
 
-// startGap waits until MinGap after the previous request start and books this one. It is
-// the hard guarantee behind the budget: callers are paced already, this only absorbs jitter
-// between a pacer grant and the request.
-func (c *Client) startGap() time.Time {
-	c.gapMu.Lock()
-	defer c.gapMu.Unlock()
+// SetTransport sets the round tripper that sends requests (e.g. one with a proxy). The
+// client wraps it: MinGap and the request log apply right before each send.
+func (c *Client) SetTransport(rt http.RoundTripper) { c.HTTP.Transport = &gapTransport{c: c, next: rt} }
+
+// gapTransport is the hard guarantee behind the request budget: callers are paced already,
+// this absorbs the jitter between a pacer grant and the actual send.
+type gapTransport struct {
+	c    *Client
+	next http.RoundTripper
+}
+
+func (g *gapTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	c, ctx := g.c, req.Context()
+	select {
+	case c.gapMu <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	if wait := time.Until(c.lastAt.Add(c.MinGap)); c.MinGap > 0 && wait > 0 {
-		time.Sleep(wait)
+		t := time.NewTimer(wait)
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			<-c.gapMu
+			return nil, ctx.Err()
+		}
 	}
 	c.lastAt = time.Now()
-	return c.lastAt
+	c.Log.Add(c.lastAt)
+	<-c.gapMu
+	return g.next.RoundTrip(req)
 }
 
 // Errors counts failed calls (transport, HTTP status, error answers, undecodable bodies).
@@ -164,8 +185,7 @@ func (c *Client) Call(ctx context.Context, out any, act string, params ...string
 	for i, p := range params {
 		q.Set(fmt.Sprintf("p%d", i+1), p)
 	}
-	start := c.startGap()
-	c.Log.Add(start)
+	start := time.Now()
 	err := c.do(ctx, out, act, c.BaseURL+"?"+q.Encode())
 	if err != nil {
 		c.errors.Add(1)

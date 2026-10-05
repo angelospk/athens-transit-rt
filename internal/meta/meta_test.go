@@ -3,6 +3,7 @@ package meta
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 type fakeAPI struct {
 	calls     int
 	failRoute map[string]int // remaining failures per line code
+	empty     map[string]int // remaining empty answers per line code
 }
 
 func (f *fakeAPI) Lines(context.Context) ([]telematics.Line, error) {
@@ -26,6 +28,10 @@ func (f *fakeAPI) Routes(_ context.Context, lc string) ([]telematics.Route, erro
 	if f.failRoute[lc] > 0 {
 		f.failRoute[lc]--
 		return nil, errors.New("boom")
+	}
+	if f.empty[lc] > 0 {
+		f.empty[lc]--
+		return nil, nil
 	}
 	return map[string][]telematics.Route{
 		"938":  {{RouteCode: "3922"}, {RouteCode: "3923"}},
@@ -105,10 +111,56 @@ func TestRouteRetriesAreBounded(t *testing.T) {
 		t.Fatal("incomplete refresh not due again after IncompleteRetry")
 	}
 	api.failRoute["938"] = 0
+	before := api.calls
 	s.Refresh()
 	q.drain()
 	if len(s.LineRoutes()["040"]) != 2 || s.Incomplete() || s.Due() {
 		t.Fatal("retry did not complete the metadata")
+	}
+	if api.calls != before+1 {
+		t.Fatalf("retry asked %d times, want only the missing LineCode", api.calls-before)
+	}
+}
+
+// Empty route answers count as missing; retries are bounded; a full refresh resets them.
+func TestEmptyRoutesRetriedAndBounded(t *testing.T) {
+	api, q := &fakeAPI{empty: map[string]int{"938": 100}}, &queue{}
+	s := Open("", api, q.submit, nil)
+	now := time.Unix(1_800_000_000, 0)
+	s.now = func() time.Time { return now }
+	s.Refresh()
+	q.drain()
+	if !s.Incomplete() || len(s.LineRoutes()["040"]) != 0 {
+		t.Fatal("empty routes not treated as missing")
+	}
+	for i := 0; i < MaxMissingRetries; i++ {
+		now = now.Add(IncompleteRetry)
+		if !s.Due() {
+			t.Fatalf("retry %d not due", i)
+		}
+		s.Refresh()
+		q.drain()
+	}
+	now = now.Add(IncompleteRetry)
+	if s.Due() || s.Incomplete() {
+		t.Fatal("retries not bounded")
+	}
+	now = now.Add(RefreshEvery)
+	api.empty["938"] = 0
+	s.Refresh()
+	q.drain()
+	if len(s.LineRoutes()["040"]) != 2 || s.Incomplete() {
+		t.Fatal("full refresh did not fill the routes")
+	}
+}
+
+func TestEmptyCachedStopsAskedAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.json")
+	os.WriteFile(path, []byte(`{"fetched_at":1,"lines":[],"routes":{},"stops":{"3922":[]}}`), 0o644)
+	api, q := &fakeAPI{}, &queue{}
+	s := Open(path, api, q.submit, nil)
+	if _, ok := s.Stops("3922"); ok || len(q.fns) != 1 {
+		t.Fatalf("cached empty stop list trusted (queued %d)", len(q.fns))
 	}
 }
 

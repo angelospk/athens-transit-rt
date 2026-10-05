@@ -17,16 +17,18 @@ import (
 
 const RefreshEvery = 24 * time.Hour
 
-// IncompleteRetry: a refresh that left some LineCodes without routes is repeated this soon.
-const IncompleteRetry = 5 * time.Minute
+// LineCodes left without routes (OASA failed or answered empty) are asked again after
+// IncompleteRetry, at most MaxMissingRetries times per daily refresh; only those LineCodes.
+const (
+	IncompleteRetry   = 5 * time.Minute
+	MaxMissingRetries = 6
+)
 
 type Data struct {
 	FetchedAt int64                         `json:"fetched_at"` // when Lines and Routes were complete
 	Lines     []telematics.Line             `json:"lines"`
 	Routes    map[string][]telematics.Route `json:"routes"` // by LineCode
 	Stops     map[string][]string           `json:"stops"`  // by RouteCode
-	// Incomplete: some LineCodes failed every attempt and have no routes yet.
-	Incomplete bool `json:"incomplete,omitempty"`
 }
 
 // API is the part of the telematics client the store uses.
@@ -51,6 +53,9 @@ type Store struct {
 	refreshing bool
 	next       *Data // refresh in progress
 	pendingLC  int
+	partial    bool                 // the refresh in progress only re-asks missing LineCodes
+	missTries  int                  // missing-LineCode retries since the last full refresh
+	missAt     time.Time            // last missing-LineCode retry
 	stopsAsked map[string]time.Time // route code -> do not ask again before
 	onChange   func()
 }
@@ -65,6 +70,11 @@ func Open(path string, api API, submit Submitter, onChange func()) *Store {
 		if json.Unmarshal(b, &d) == nil && d.Routes != nil {
 			if d.Stops == nil {
 				d.Stops = map[string][]string{}
+			}
+			for rc, st := range d.Stops {
+				if len(st) == 0 {
+					delete(d.Stops, rc) // older caches stored empty answers; ask again
+				}
 			}
 			s.data = d
 		}
@@ -114,7 +124,7 @@ const EmptyStopsRetry = 30 * time.Minute
 func (s *Store) Stops(routeCode string) ([]string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, ok := s.data.Stops[routeCode]; ok {
+	if st := s.data.Stops[routeCode]; len(st) > 0 {
 		return st, true
 	}
 	if !s.now().Before(s.stopsAsked[routeCode]) {
@@ -143,26 +153,82 @@ func (s *Store) Stops(routeCode string) ([]string, bool) {
 	return nil, false
 }
 
-// Due reports whether a refresh should start.
+// Due reports whether a refresh should start: the daily full one, or a retry of LineCodes
+// that have no routes yet.
 func (s *Store) Due() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	every := RefreshEvery
-	if s.data.Incomplete {
-		every = IncompleteRetry
+	if s.refreshing {
+		return false
 	}
-	return !s.refreshing && s.now().Sub(time.Unix(s.data.FetchedAt, 0)) >= every
+	return s.fullDueLocked() || s.missingDueLocked()
 }
 
-// Refresh re-fetches lines and routes through the submitter. While it runs the old data stays
-// in use; on first boot (no data) routes become usable line by line.
+func (s *Store) fullDueLocked() bool {
+	return s.now().Sub(time.Unix(s.data.FetchedAt, 0)) >= RefreshEvery
+}
+
+func (s *Store) missingDueLocked() bool {
+	last := time.Unix(s.data.FetchedAt, 0)
+	if s.missAt.After(last) {
+		last = s.missAt
+	}
+	return s.missTries < MaxMissingRetries && len(s.missingLocked()) > 0 && s.now().Sub(last) >= IncompleteRetry
+}
+
+// missingLocked lists LineCodes without routes.
+func (s *Store) missingLocked() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, l := range s.data.Lines {
+		if !seen[l.LineCode] && len(s.data.Routes[l.LineCode]) == 0 {
+			out = append(out, l.LineCode)
+		}
+		seen[l.LineCode] = true
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Incomplete reports whether the routes of some lines are not known yet and are still being
+// asked for (first boot, or LineCodes that OASA failed for).
+func (s *Store) Incomplete() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.FetchedAt == 0 || (s.missTries < MaxMissingRetries && len(s.missingLocked()) > 0)
+}
+
+// Refresh re-fetches lines and routes through the submitter (or, when only that is due, the
+// routes of LineCodes that have none). While it runs the old data stays in use; on first boot
+// (no data) routes become usable line by line.
 func (s *Store) Refresh() {
 	s.mu.Lock()
 	if s.refreshing {
 		s.mu.Unlock()
 		return
 	}
-	s.refreshing = true
+	if !s.fullDueLocked() {
+		missing := s.missingLocked()
+		if len(missing) == 0 {
+			s.mu.Unlock()
+			return
+		}
+		s.refreshing, s.partial = true, true
+		s.missTries++
+		s.missAt = s.now()
+		routes := make(map[string][]telematics.Route, len(s.data.Routes))
+		for k, v := range s.data.Routes {
+			routes[k] = v
+		}
+		s.next = &Data{FetchedAt: s.data.FetchedAt, Lines: s.data.Lines, Routes: routes, Stops: s.data.Stops}
+		s.pendingLC = len(missing)
+		s.mu.Unlock()
+		for _, code := range missing {
+			s.submit(s.fetchRoutes(code, true, 1))
+		}
+		return
+	}
+	s.refreshing, s.partial = true, false
 	s.mu.Unlock()
 	s.submit(func(ctx context.Context) error {
 		lines, err := s.api.Lines(ctx)
@@ -201,21 +267,20 @@ func (s *Store) fetchRoutes(lineCode string, bootstrap bool, attempt int) func(c
 			return err
 		}
 		s.mu.Lock()
-		if err != nil {
-			if s.data.Routes[lineCode] != nil {
-				routes = s.data.Routes[lineCode] // keep what we had
-			} else {
-				s.next.Incomplete = true
-			}
+		if (err != nil || len(routes) == 0) && len(s.data.Routes[lineCode]) > 0 {
+			routes = s.data.Routes[lineCode] // keep what we had
 		}
 		s.next.Routes[lineCode] = routes
-		if bootstrap {
+		if bootstrap && len(routes) > 0 {
 			s.data.Routes[lineCode] = routes
 		}
 		s.pendingLC--
 		done := s.pendingLC == 0
 		if done {
-			s.next.FetchedAt = s.now().Unix()
+			if !s.partial {
+				s.next.FetchedAt = s.now().Unix()
+				s.missTries = 0
+			}
 			s.data = *s.next
 			s.next = nil
 			s.refreshing = false
@@ -245,14 +310,6 @@ func (s *Store) saveLocked() {
 	if os.WriteFile(tmp, b, 0o644) == nil {
 		os.Rename(tmp, s.path)
 	}
-}
-
-// Incomplete reports whether some LineCodes have no routes because OASA failed (a retry
-// is due within IncompleteRetry).
-func (s *Store) Incomplete() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.data.Incomplete || s.data.FetchedAt == 0
 }
 
 // Snapshot returns a copy of the current data (for tests and status).

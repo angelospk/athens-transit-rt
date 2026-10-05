@@ -194,34 +194,42 @@ func allocate(budget float64, demand [numTiers]float64) [numTiers]float64 {
 }
 
 func allocateCfg(budget float64, demand [numTiers]float64, cfg Config) [numTiers]float64 {
-	// Floors: the rate that keeps each tier within its slowest acceptable interval.
+	var got [numTiers]float64
+	remaining := budget
+	take := func(t Tier, want float64) {
+		g := min(max(want, 0), max(remaining, 0))
+		got[t] += g
+		remaining -= g
+	}
+	watchedCap := budget * cfg.WatchedShare
+	// 1. A small reserve so watched lines never get nothing (their interval is then at most
+	//    MaxStretch x base).
+	take(Watched, min(demand[Watched]/cfg.MaxStretch, watchedCap))
+	// 2. Floors: the rate that keeps dense and other lines within their slowest acceptable
+	//    interval. If both do not fit, they share what is left in proportion.
 	floorOf := func(t Tier, slowest time.Duration) float64 {
 		return demand[t] * cfg.tier(t).Base.Seconds() / max(slowest, cfg.tier(t).Base).Seconds()
 	}
-	var got [numTiers]float64
 	fD, fO := floorOf(Dense, MaxDenseInterval), floorOf(Other, MaxOtherInterval)
-	if fD+fO > budget { // cannot keep both: share in proportion
-		got[Dense], got[Other] = budget*fD/(fD+fO), budget*fO/(fD+fO)
+	if fD+fO > remaining && fD+fO > 0 {
+		r := max(remaining, 0)
+		got[Dense], got[Other], remaining = r*fD/(fD+fO), r*fO/(fD+fO), 0
 	} else {
-		got[Dense], got[Other] = fD, fO
+		take(Dense, fD)
+		take(Other, fO)
 	}
-	remaining := budget - got[Dense] - got[Other]
-	watchedCap := budget * cfg.WatchedShare
-	got[Watched] = min(demand[Watched], watchedCap, max(remaining, 0))
-	remaining -= got[Watched]
-	for _, t := range []Tier{Dense, Other} {
-		extra := min(demand[t]-got[t], max(remaining, 0))
-		got[t] += extra
-		remaining -= extra
-	}
+	// 3. Watched up to its share, then the rest to dense and other.
+	take(Watched, min(demand[Watched], watchedCap)-got[Watched])
+	take(Dense, demand[Dense]-got[Dense])
+	take(Other, demand[Other]-got[Other])
 	var st [numTiers]float64
 	for t := range st {
 		st[t] = 1
 		if demand[t] > 0 {
-			if got[t] <= 0 {
+			if got[t] <= 0 { // only with no budget at all
 				st[t] = cfg.MaxStretch
 			} else {
-				st[t] = min(demand[t]/got[t], cfg.MaxStretch)
+				st[t] = max(demand[t]/got[t], 1)
 			}
 		}
 	}
@@ -365,10 +373,13 @@ func (s *Scheduler) popBackground() *request {
 }
 
 func (s *Scheduler) pickLine() *request {
-	if len(s.pending) > 0 {
-		r := s.pending[0]
-		s.pending = s.pending[1:]
-		return r
+	// Queued routes of lines already being polled go first; watched ones only within the
+	// watched share (the rest of their line waits while other lines use the slot).
+	for i, r := range s.pending {
+		if r.tier != Watched || s.watchedCredit >= 1 {
+			s.pending = slices.Delete(s.pending, i, i+1)
+			return r
+		}
 	}
 	now := s.now()
 	due := make([]*lineState, 0)
