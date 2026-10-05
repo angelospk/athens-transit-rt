@@ -72,7 +72,7 @@ func (a *App) handleLine(w http.ResponseWriter, r *http.Request) {
 	line := CanonicalLine(r.PathValue("id"))
 	now := a.now()
 	a.mu.RLock()
-	known := a.known[line]
+	known, warming := a.known[line], a.warming[line]
 	d := a.lines[line]
 	a.mu.RUnlock()
 	if !known {
@@ -81,6 +81,10 @@ func (a *App) handleLine(w http.ResponseWriter, r *http.Request) {
 	}
 	a.sched.Watch(line)
 	next, polled := a.sched.NextUpdate(line)
+	if warming {
+		writeJSON(w, http.StatusServiceUnavailable, minMaxAge, map[string]string{"error": "warming_up"})
+		return
+	}
 	if !polled {
 		// No scheduled service now: not polled. Recent results (a run ending) still show.
 		resp := LineResponse{Line: line, UpdatedAt: now.Unix(), NextUpdateAt: now.Unix() + inactiveMaxAge, Vehicles: []Vehicle{}}

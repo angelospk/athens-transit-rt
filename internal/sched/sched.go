@@ -149,7 +149,12 @@ type Scheduler struct {
 	background []func(ctx context.Context) error
 	stretch    [numTiers]float64
 	lastPlan   time.Time
+	sinceBG    int // line requests since the last background request
 }
+
+// bgEvery: while background work is queued, every bgEvery-th slot goes to it, so metadata
+// (first boot: ~500 requests) is not starved by line polls.
+const bgEvery = 4
 
 func New(cfg Config, slots Slots, fetch Fetcher, onLine func(LinePoll)) *Scheduler {
 	return &Scheduler{cfg: cfg, slots: slots, fetch: fetch, onLine: onLine, now: time.Now,
@@ -309,6 +314,27 @@ func (s *Scheduler) Submit(fn func(ctx context.Context) error) {
 func (s *Scheduler) pick() *request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.background) > 0 && s.sinceBG >= bgEvery-1 {
+		return s.popBackground()
+	}
+	if r := s.pickLine(); r != nil {
+		s.sinceBG++
+		return r
+	}
+	if len(s.background) > 0 {
+		return s.popBackground()
+	}
+	return nil
+}
+
+func (s *Scheduler) popBackground() *request {
+	fn := s.background[0]
+	s.background = s.background[1:]
+	s.sinceBG = 0
+	return &request{bg: fn}
+}
+
+func (s *Scheduler) pickLine() *request {
 	if len(s.pending) > 0 {
 		r := s.pending[0]
 		s.pending = s.pending[1:]
@@ -350,11 +376,6 @@ func (s *Scheduler) pick() *request {
 		l.obs, l.routes, l.failed = nil, len(reqs), 0
 		s.pending = append(s.pending, reqs[1:]...)
 		return reqs[0]
-	}
-	if len(s.background) > 0 {
-		fn := s.background[0]
-		s.background = s.background[1:]
-		return &request{bg: fn}
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package sched
 import (
 	"context"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -220,7 +221,29 @@ func TestInactiveLinesNotPolled(t *testing.T) {
 	}
 }
 
-func TestBackgroundOnlyWhenIdle(t *testing.T) {
+func TestBackgroundGetsEveryFourthSlot(t *testing.T) {
+	c := &clock{t0}
+	s := newSched(4, &fakeFetch{}, c)
+	s.SetLines([]LineSpec{{ID: "A", Active: true, Routes: routes("a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8")}})
+	s.replan()
+	for i := 0; i < 3; i++ {
+		s.Submit(func(context.Context) error { return nil })
+	}
+	var kinds []string
+	for r := s.pick(); r != nil; r = s.pick() {
+		if r.bg != nil {
+			kinds = append(kinds, "bg")
+		} else {
+			kinds = append(kinds, "line")
+		}
+	}
+	want := "line line line bg line line line bg line line bg"
+	if got := strings.Join(kinds, " "); got != want {
+		t.Fatalf("order %q, want %q", got, want)
+	}
+}
+
+func TestBackgroundRuns(t *testing.T) {
 	c := &clock{t0}
 	s := newSched(4, &fakeFetch{}, c)
 	s.SetLines([]LineSpec{{ID: "A", Active: true, Routes: routes("a1")}})
@@ -228,7 +251,7 @@ func TestBackgroundOnlyWhenIdle(t *testing.T) {
 	ran := false
 	s.Submit(func(context.Context) error { ran = true; return nil })
 	if r := s.pick(); r == nil || r.bg != nil {
-		t.Fatal("line poll should go before background work")
+		t.Fatal("a due line poll should go first")
 	}
 	r := s.pick()
 	if r == nil || r.bg == nil {

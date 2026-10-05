@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -162,6 +163,20 @@ func TestUnknownAndLatinLines(t *testing.T) {
 		if res.StatusCode != 200 || !strings.Contains(string(body), `"line":"Α1"`) || maxAge(t, res) != 120 {
 			t.Fatalf("%s: %d %s", p, res.StatusCode, body)
 		}
+	}
+}
+
+func TestWarmingWhileRoutesUnknown(t *testing.T) {
+	a := newApp(t, monday1020)
+	// First boot: no metadata at all yet.
+	a.meta = meta.Open(filepath.Join(t.TempDir(), "none.json"), a.client, func(func(context.Context) error) {}, nil)
+	a.refreshLines()
+	a.mu.Lock()
+	a.known["L"] = true // known from the GTFS, routes unknown
+	a.mu.Unlock()
+	res, body := get(t, a, "/v1/lines/L")
+	if res.StatusCode != 503 || !strings.Contains(string(body), "warming_up") {
+		t.Fatalf("%d %s", res.StatusCode, body)
 	}
 }
 

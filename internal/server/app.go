@@ -69,14 +69,16 @@ type App struct {
 
 	matchMu sync.Mutex // serialises matching (matchers are not concurrency-safe)
 
-	mu          sync.RWMutex
-	w           *world
-	lines       map[string]*lineData
-	known       map[string]bool
-	active      int
-	lastPublish time.Time
-	lastOK      time.Time
-	warnedDay   string
+	mu           sync.RWMutex
+	w            *world
+	lines        map[string]*lineData
+	known        map[string]bool
+	warming      map[string]bool // scheduled now, but its route codes are not known yet
+	active       int
+	lastPublish  time.Time
+	lastOK       time.Time
+	warnedDay    string
+	lastRequests int64
 
 	rtMu    sync.Mutex
 	rtBuilt time.Time
@@ -179,6 +181,8 @@ func (a *App) refreshLines() {
 	}
 	var specs []sched.LineSpec
 	active := 0
+	warming := map[string]bool{}
+	bootstrapping := a.meta.Snapshot().FetchedAt == 0
 	for line := range known {
 		cands := w.feed.CandidateTrips(line, now, match.CandidateBefore, match.CandidateAfter)
 		shapesNow := map[int32]bool{}
@@ -186,6 +190,9 @@ func (a *App) refreshLines() {
 			shapesNow[w.feed.Trips[c.Trip].Shape] = true
 		}
 		spec := sched.LineSpec{ID: line, Active: len(cands) > 0 && len(routes[line]) > 0}
+		if len(cands) > 0 && len(routes[line]) == 0 && bootstrapping {
+			warming[line] = true
+		}
 		for _, r := range routes[line] {
 			on := spec.Active
 			if on {
@@ -206,7 +213,7 @@ func (a *App) refreshLines() {
 	sort.Slice(specs, func(i, j int) bool { return specs[i].ID < specs[j].ID })
 	a.sched.SetLines(specs)
 	a.mu.Lock()
-	a.known, a.active = known, active
+	a.known, a.active, a.warming = known, active, warming
 	a.mu.Unlock()
 }
 
@@ -439,6 +446,7 @@ func (a *App) housekeeping(ctx context.Context) {
 			}
 			a.warnExpiry(false)
 			a.forget()
+			a.logStats()
 		case <-release.C:
 			if a.cfg.GTFSZip != "" {
 				continue
@@ -452,6 +460,31 @@ func (a *App) housekeeping(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// logStats writes one line a minute about the polling plan and its cost.
+func (a *App) logStats() {
+	st := a.sched.Stats()
+	a.mu.RLock()
+	vehicles, matched := 0, 0
+	for _, d := range a.lines {
+		if a.now().Sub(d.updated) > feedMaxAge {
+			continue
+		}
+		for i := range d.results {
+			vehicles++
+			if d.results[i].Matched() {
+				matched++
+			}
+		}
+	}
+	a.mu.RUnlock()
+	reqs := a.client.Requests()
+	a.log.Info("stats", "requests", reqs, "requests_last_min", reqs-a.lastRequests,
+		"watched", st.LinesByTier[sched.Watched], "dense", st.LinesByTier[sched.Dense], "other", st.LinesByTier[sched.Other],
+		"stretch_other", fmt.Sprintf("%.2f", st.Stretch[sched.Other]), "rps_now", fmt.Sprintf("%.2f", a.pacer.RPS()),
+		"vehicles", vehicles, "matched", matched)
+	a.lastRequests = reqs
 }
 
 // forget drops lines not polled for a while and old matcher state.
