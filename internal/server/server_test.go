@@ -449,3 +449,21 @@ func TestAcceptsGzip(t *testing.T) {
 		}
 	}
 }
+
+// --proxy: every OASA request goes through the proxy (OASA blocks datacenter addresses).
+func TestTelematicsThroughProxy(t *testing.T) {
+	var proxied atomic.Int64
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host == "oasa.invalid" {
+			proxied.Add(1)
+		}
+		w.Write([]byte("[]"))
+	}))
+	defer proxy.Close()
+	dir := t.TempDir()
+	a := New(Config{StateDir: dir, RPS: 4, Matcher: match.Memory, Sched: sched.DefaultConfig(),
+		TelematicsURL: "http://oasa.invalid/api/", Proxy: proxy.URL}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := a.client.BusLocations(context.Background(), "1"); err != nil || proxied.Load() != 1 {
+		t.Fatalf("err %v proxied %d", err, proxied.Load())
+	}
+}

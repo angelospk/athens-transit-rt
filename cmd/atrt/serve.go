@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,6 +27,7 @@ func serve(args []string) error {
 	releaseURL := fs.String("release-url", "", "snapshot release base URL (default: this repo's gtfs-snapshot release)")
 	gtfsZip := fs.String("gtfs", "", "load this GTFS zip instead of the release snapshot (local use)")
 	telURL := fs.String("telematics-url", "", "OASA telematics API base URL")
+	proxy := fs.String("proxy", "", "proxy for OASA requests, e.g. socks5h://127.0.0.1:40001 (empty = direct)")
 	check := fs.Duration("release-check", 30*time.Minute, "how often to look for a new snapshot")
 	fs.Parse(args)
 
@@ -33,12 +35,18 @@ func serve(args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown matcher %q", *matcher)
 	}
+	if *proxy != "" {
+		u, err := url.Parse(*proxy)
+		if err != nil || u.Host == "" || (u.Scheme != "socks5" && u.Scheme != "socks5h" && u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("bad --proxy %q", *proxy)
+		}
+	}
 	if *rps > telematics.MaxRPS {
 		return fmt.Errorf("--rps %.1f is above the maximum of %d", *rps, telematics.MaxRPS)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	app := server.New(server.Config{Listen: *listen, MetricsListen: *metricsListen, StateDir: *state, RPS: *rps, Matcher: kind,
-		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, TelematicsURL: *telURL, ReleaseCheck: *check,
+		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, TelematicsURL: *telURL, Proxy: *proxy, ReleaseCheck: *check,
 		Sched: sched.DefaultConfig()}, log)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

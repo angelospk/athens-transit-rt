@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -39,6 +40,7 @@ type Config struct {
 	ReleaseURL    string        // snapshot release base URL ("" = release.DefaultBaseURL)
 	GTFSZip       string        // load this zip instead of the release snapshot (local use)
 	TelematicsURL string        // "" = telematics.BaseURL
+	Proxy         string        // proxy URL for OASA requests, e.g. socks5h://127.0.0.1:40001 ("" = direct)
 	ReleaseCheck  time.Duration // how often to look for a new snapshot
 	Sched         sched.Config
 }
@@ -91,6 +93,13 @@ func New(cfg Config, log *slog.Logger) *App {
 	a.pacer = telematics.NewPacer(cfg.RPS)
 	a.client = telematics.New(cfg.TelematicsURL, nil) // the scheduler paces every request
 	a.client.MinGap = a.pacer.BaseInterval()
+	if cfg.Proxy != "" {
+		// Validated by the serve command; the Transport dials socks5/socks5h and http proxies.
+		if u, err := url.Parse(cfg.Proxy); err == nil {
+			a.client.HTTP.Transport = &http.Transport{Proxy: http.ProxyURL(u), MaxIdleConnsPerHost: 8,
+				IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second}
+		}
+	}
 	a.sched = sched.New(cfg.Sched, a.pacer, a.client, a.onLine)
 	a.meta = meta.Open(filepath.Join(cfg.StateDir, "telematics-meta.json"), a.client, a.sched.Submit,
 		func() { a.refreshLines() })
