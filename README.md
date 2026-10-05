@@ -34,7 +34,7 @@ data.gov.gr GTFS zip ──(GitHub Actions, every 6 h, only on change)──► 
       │                                                     ├─► Release "gtfs-snapshot": snapshot.bin + manifest.json
       │                                                     └─► GitHub Pages: static/v1/lines.json, lines/{id}.json
       ▼
-VPS: atrt serve ── downloads snapshot (sha256-checked), polls OASA ──► 127.0.0.1:8095
+home machine (Docker): atrt serve ── downloads snapshot (sha256-checked), polls OASA ──► 127.0.0.1:8095
       └─► cloudflared tunnel ─► Cloudflare cache ─► https://transit.haroldpoi.dev/v1/...
 ```
 
@@ -122,24 +122,27 @@ budget at 4 req/s or lower (`--rps`), and do not run two instances behind one ad
 
 ## Deployment
 
-### VPS (systemd)
+The public instance runs the Docker image from [Self-hosting](#self-hosting-docker) on a
+machine at home (OASA does not answer data-centre addresses), with `mem_limit: 200m` and
+`restart: unless-stopped`.
 
-`deploy/install.sh oracle-vm` builds a static linux/amd64 binary, installs it to
-`/usr/local/bin/atrt` and `deploy/atrt.service`, and restarts the service. The unit runs as the
-system user `atrt`, keeps state in `/var/lib/atrt`, restarts always (at most 10 starts per
-10 min), sets `GOMEMLIMIT=100MiB`, `MemoryHigh=150M`, `MemoryMax=200M` and the usual sandboxing.
-Both listeners are on 127.0.0.1 only.
+`deploy/install.sh <ssh-host>` and `deploy/atrt.service` install the plain binary under
+systemd instead (system user `atrt`, state in `/var/lib/atrt`, `Restart=always` with at most
+10 starts per 10 min, `GOMEMLIMIT=100MiB`, `MemoryHigh=150M`, `MemoryMax=200M`, sandboxing).
+Use it only on a host that can reach OASA. Both listeners are on 127.0.0.1 only.
 
 ### Cloudflare
 
-- Tunnel ingress in `/etc/cloudflared/config.yml`:
-  `transit.haroldpoi.dev → http://127.0.0.1:8095`, DNS via
+- Tunnel ingress in the cloudflared config:
+  `transit.haroldpoi.dev → http://127.0.0.1:<port>`, DNS via
   `cloudflared tunnel route dns <tunnel> transit.haroldpoi.dev`.
 - Cache rule (Caching → Cache Rules): when hostname is `transit.haroldpoi.dev` and URI path
   starts with `/v1/` → *Eligible for cache*, Edge TTL *Use cache-control header if present*,
   Browser TTL *Respect origin*. Without it Cloudflare does not cache JSON (`cf-cache-status: DYNAMIC`).
-- Rate limiting rule (Security → WAF → Rate limiting): hostname `transit.haroldpoi.dev`,
-  per IP, 30 requests / 10 s, block for 10 s.
+- Rate limiting rule (Security → WAF → Rate limiting): URI path starts with `/v1/` (the
+  free plan offers no hostname field), per IP, 30 requests / 10 s, block for 10 s. It also
+  counts cache hits (the free plan cannot exclude them). Measured: blocking starts after
+  roughly 30-60 requests, since Cloudflare counts approximately; the 429 comes from Cloudflare.
 
 ### GitHub Actions
 

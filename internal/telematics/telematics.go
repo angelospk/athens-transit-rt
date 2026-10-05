@@ -11,10 +11,12 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -164,10 +166,22 @@ func (g *gapTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, ctx.Err()
 		}
 	}
-	c.lastAt = time.Now()
-	c.Log.Add(c.lastAt)
-	<-c.gapMu
-	return g.next.RoundTrip(req)
+	// Hold the gate until the request is written (or fails), so a slow connect cannot let
+	// the next request go out right behind it. The gap counts from the write.
+	var once sync.Once
+	release := func(sent bool) {
+		once.Do(func() {
+			if sent {
+				c.lastAt = time.Now()
+				c.Log.Add(c.lastAt)
+			}
+			<-c.gapMu
+		})
+	}
+	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { release(true) }}
+	resp, err := g.next.RoundTrip(req.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	release(err == nil) // no-op when WroteRequest already released
+	return resp, err
 }
 
 // Errors counts failed calls (transport, HTTP status, error answers, undecodable bodies).

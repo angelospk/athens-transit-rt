@@ -226,7 +226,10 @@ func allocateCfg(budget float64, demand [numTiers]float64, cfg Config) [numTiers
 	for t := range st {
 		st[t] = 1
 		if demand[t] > 0 {
-			if got[t] <= 0 { // only with no budget at all
+			// No budget at all cannot happen in practice (budget = pacer rate x Headroom, and
+			// the pacer never drops below 1/8 of its base rate). The plan is advisory either way:
+			// every request still waits for a pacer slot.
+			if got[t] <= 0 {
 				st[t] = cfg.MaxStretch
 			} else {
 				st[t] = max(demand[t]/got[t], 1)

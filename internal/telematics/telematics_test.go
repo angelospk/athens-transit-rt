@@ -3,6 +3,7 @@ package telematics
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -331,4 +332,50 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 	if _, err := c.BusLocations(context.Background(), "1"); err == nil || hits != 1 || c.Requests() != 1 || c.Errors() != 1 {
 		t.Fatalf("err %v hits %d requests %d errors %d", err, hits, c.Requests(), c.Errors())
 	}
+}
+
+// The gap counts from when a request was actually written: a send that is slow to go out
+// (e.g. a new connection) holds the next one back.
+func TestClientGapCountsFromWrite(t *testing.T) {
+	var mu sync.Mutex
+	var arrived []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		arrived = append(arrived, time.Now())
+		mu.Unlock()
+		w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+	c := New(srv.URL+"/", nil)
+	c.MinGap = 50 * time.Millisecond
+	// The first connection takes 100 ms to open, later ones are instant.
+	c.SetTransport(delayedFirstDial(100 * time.Millisecond))
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); c.BusLocations(context.Background(), "1") }()
+		time.Sleep(5 * time.Millisecond)
+	}
+	wg.Wait()
+	if len(arrived) != 2 {
+		t.Fatalf("%d arrivals", len(arrived))
+	}
+	sort.Slice(arrived, func(i, j int) bool { return arrived[i].Before(arrived[j]) })
+	// 40 ms of slack for scheduling between the write and the handler.
+	if gap := arrived[1].Sub(arrived[0]); gap < c.MinGap-40*time.Millisecond {
+		t.Fatalf("requests arrived %v apart", gap)
+	}
+}
+
+// delayedFirstDial is a transport (no keep-alive) whose first connection takes d to open.
+func delayedFirstDial(d time.Duration) http.RoundTripper {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DisableKeepAlives = true
+	var first sync.Once
+	dial := (&net.Dialer{}).DialContext
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		first.Do(func() { time.Sleep(d) })
+		return dial(ctx, network, addr)
+	}
+	return tr
 }
