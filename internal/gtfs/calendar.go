@@ -1,6 +1,9 @@
 package gtfs
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 func yyyymmdd(d time.Time) int32 { return int32(d.Year()*10000 + int(d.Month())*100 + d.Day()) }
 
@@ -67,8 +70,9 @@ func (f *Feed) CandidateTrips(line string, now time.Time, before, after int32) [
 	var out []Candidate
 	today := Midnight(now)
 	for _, day := range []time.Time{today, Midnight(today.Add(-12 * time.Hour))} {
+		first := len(out)
 		secs := int32(now.Sub(day) / time.Second)
-		for _, ti := range f.byLine[line] {
+		for _, ti := range f.byStart[line] {
 			t := &f.Trips[ti]
 			start := f.Start(t)
 			if start-before > secs {
@@ -78,6 +82,8 @@ func (f *Feed) CandidateTrips(line string, now time.Time, before, after int32) [
 				out = append(out, Candidate{Trip: ti, Day: day})
 			}
 		}
+		// Report in file order within a day, as upstream does (it decides ties later).
+		slices.SortFunc(out[first:], func(a, b Candidate) int { return int(a.Trip - b.Trip) })
 	}
 	return out
 }

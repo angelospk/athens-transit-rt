@@ -4,6 +4,7 @@
 package gtfs
 
 import (
+	"slices"
 	"sort"
 	"time"
 	_ "time/tzdata" // the VPS may lack a system zoneinfo database
@@ -94,7 +95,8 @@ type Feed struct {
 	stopIdx  map[string]int32
 	shapeIdx map[string]int32
 	tripIdx  map[string]int32
-	byLine   map[string][]int32 // trip indices, sorted by start
+	byLine   map[string][]int32 // trip indices in file order (upstream iteration order)
+	byStart  map[string][]int32 // the same, sorted by start
 }
 
 // StopTime is one stop of a trip, in absolute seconds after midnight of the service day.
@@ -122,8 +124,11 @@ func (f *Feed) index() {
 		line := f.Routes[t.Route].ShortName
 		f.byLine[line] = append(f.byLine[line], int32(i))
 	}
-	for _, trips := range f.byLine {
-		sort.Slice(trips, func(a, b int) bool { return f.Start(&f.Trips[trips[a]]) < f.Start(&f.Trips[trips[b]]) })
+	f.byStart = make(map[string][]int32, len(f.byLine))
+	for line, trips := range f.byLine {
+		sorted := slices.Clone(trips)
+		sort.SliceStable(sorted, func(a, b int) bool { return f.Start(&f.Trips[sorted[a]]) < f.Start(&f.Trips[sorted[b]]) })
+		f.byStart[line] = sorted
 	}
 }
 
@@ -173,10 +178,18 @@ func (f *Feed) ShapeID(t *Trip) string {
 	return f.Shapes[t.Shape].ID
 }
 
+// ShapeIDOf returns the id of a shape index, "" for -1.
+func (f *Feed) ShapeIDOf(shape int32) string {
+	if shape < 0 {
+		return ""
+	}
+	return f.Shapes[shape].ID
+}
+
 // Line is the line number (route_short_name) of a trip.
 func (f *Feed) Line(t *Trip) string { return f.Routes[t.Route].ShortName }
 
-// TripsForLine returns trip indices of one line number, sorted by start.
+// TripsForLine returns trip indices of one line number, in GTFS file order.
 func (f *Feed) TripsForLine(line string) []int32 { return f.byLine[line] }
 
 // Lines returns every line number with at least one trip, sorted.
