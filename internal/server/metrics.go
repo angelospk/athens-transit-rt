@@ -30,6 +30,7 @@ type Metrics struct {
 	RSSBytes          int64            `json:"rss_bytes"`
 	HistoryRows       int64            `json:"history_rows"`    // fixes written since start (fix history on)
 	HistoryDropped    int64            `json:"history_dropped"` // fixes dropped: the writer fell behind
+	HistoryLost       int64            `json:"history_lost"`    // fixes a disk error lost
 	Lines             []MetricsLine    `json:"lines"`
 }
 
@@ -54,7 +55,7 @@ func (a *App) Metrics() Metrics {
 		RSSBytes: rss()}
 	a.matchMu.Lock()
 	if h := a.hist; h != nil {
-		m.HistoryRows, m.HistoryDropped = h.Written(), h.Dropped()
+		m.HistoryRows, m.HistoryDropped, m.HistoryLost = h.Written(), h.Dropped(), h.Lost()
 	}
 	a.matchMu.Unlock()
 	for _, t := range []sched.Tier{sched.Inactive, sched.Other, sched.Dense, sched.Watched} {

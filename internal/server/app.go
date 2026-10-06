@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -373,7 +372,7 @@ func historyRow(w *world, line string, r *match.Result, ver string) history.Row 
 		row.ShapeID = w.feed.Shapes[t.Shape].ID
 	}
 	if g := w.matcher.Geometry(t); g != nil && g.FromShape {
-		row.SM = int32(math.Round(r.Along))
+		row.SM = history.SM(r.Along)
 	}
 	return row
 }
