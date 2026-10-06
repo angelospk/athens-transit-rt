@@ -224,34 +224,28 @@ func pathAhead(line *geo.Polyline, s float64, speed *float64, stops []float64) (
 }
 
 // simplified is the line from `from` to `to` as rounded [lat, lon] points (5 m simplification)
-// and, for a position along the line in that range, the metres along those points (nil, nil
+// and, for a position along the line in that range, the metres along the points sent (nil, nil
 // when fewer than 2 points remain).
 func simplified(line *geo.Polyline, from, to float64) ([][2]float64, func(float64) float64) {
 	sl := line.Slice(from, to)
-	pts := geo.Simplify(sl, pathSimplifyM)
-	// Simplify keeps a subset of sl: the original along and the simplified along of each kept point.
-	orig, cum := make([]float64, 0, len(pts)), make([]float64, 0, len(pts))
-	a, j := from, 0
-	for k, p := range pts {
-		for ; j < len(sl) && sl[j] != p; j++ {
-			if j+1 < len(sl) {
-				a += geo.Dist(sl[j], sl[j+1])
-			}
-		}
-		orig = append(orig, a)
-		if k == 0 {
-			cum = append(cum, 0)
-		} else {
-			cum = append(cum, cum[k-1]+geo.Dist(pts[k-1], p))
-		}
+	along := make([]float64, len(sl)) // original distance along the line of each slice point
+	along[0] = from
+	for i := 1; i < len(sl); i++ {
+		along[i] = along[i-1] + geo.Dist(sl[i-1], sl[i])
 	}
-	out := make([][2]float64, 0, len(pts))
-	for _, p := range pts {
-		lat, lon := geo.LatLon(p)
+	var out [][2]float64
+	var orig, cum []float64 // per point sent: original along, metres along the points sent
+	for _, i := range geo.SimplifyIndex(sl, pathSimplifyM) {
+		lat, lon := geo.LatLon(sl[i])
 		ll := [2]float64{round5(lat), round5(lon)}
-		if len(out) == 0 || out[len(out)-1] != ll {
-			out = append(out, ll)
+		if n := len(out); n > 0 && out[n-1] == ll {
+			continue
 		}
+		c := 0.0
+		if n := len(out); n > 0 {
+			c = cum[n-1] + geo.Dist(geo.XY(out[n-1][0], out[n-1][1]), geo.XY(ll[0], ll[1]))
+		}
+		out, orig, cum = append(out, ll), append(orig, along[i]), append(cum, c)
 	}
 	if len(out) < 2 {
 		return nil, nil

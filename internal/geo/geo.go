@@ -195,8 +195,22 @@ func (p *Polyline) Slice(from, to float64) [][2]float64 {
 
 // Simplify drops points closer than tol to the line through their neighbours (Douglas-Peucker).
 func Simplify(pts [][2]float64, tol float64) [][2]float64 {
+	idx := SimplifyIndex(pts, tol)
+	out := make([][2]float64, len(idx))
+	for k, i := range idx {
+		out[k] = pts[i]
+	}
+	return out
+}
+
+// SimplifyIndex is Simplify as the indexes of the points it keeps, ascending.
+func SimplifyIndex(pts [][2]float64, tol float64) []int {
 	if len(pts) < 3 {
-		return pts
+		out := make([]int, len(pts))
+		for i := range out {
+			out[i] = i
+		}
+		return out
 	}
 	keep := make([]bool, len(pts))
 	keep[0], keep[len(pts)-1] = true, true
@@ -215,10 +229,10 @@ func Simplify(pts [][2]float64, tol float64) [][2]float64 {
 		}
 	}
 	walk(0, len(pts)-1)
-	out := make([][2]float64, 0, len(pts))
+	out := make([]int, 0, len(pts))
 	for i, k := range keep {
 		if k {
-			out = append(out, pts[i])
+			out = append(out, i)
 		}
 	}
 	return out

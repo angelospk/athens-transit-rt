@@ -242,3 +242,32 @@ func TestPathStopsOnSimplifiedPath(t *testing.T) {
 func nearLL(p [2]float64, origin [2]float64, along float64) bool {
 	return geo.Dist(geo.XY(p[0], p[1]), [2]float64{origin[0] + along, origin[1]}) < 1
 }
+
+// TestSimplifiedOffsets: offsets follow the points sent, also where the shape passes the same
+// point twice and where rounding merges points.
+func TestSimplifiedOffsets(t *testing.T) {
+	loop := geo.NewPolyline([][2]float64{{0, 0}, {100, 0}, {100, 100}, {0, 100}, {0, 0}, {-100, 0}})
+	pts, off := simplified(loop, 0, 500)
+	if len(pts) != 6 {
+		t.Fatalf("loop points %v", pts)
+	}
+	for _, x := range []float64{50, 250, 400, 450} {
+		if math.Abs(off(x)-x) > 1 {
+			t.Fatalf("loop: %v m along gives %v", x, off(x))
+		}
+	}
+	// 0.4 m steps with 0.3 m jitter: rounding to 5 decimals (~1 m) merges points.
+	var xy [][2]float64
+	for i := 0; i <= 2000; i++ {
+		xy = append(xy, [2]float64{float64(i) * 0.4, float64(i%2) * 0.3})
+	}
+	fine := geo.NewPolyline(xy)
+	pts, off = simplified(fine, 0, fine.Length())
+	sent := 0.0
+	for i := 1; i < len(pts); i++ {
+		sent += geo.Dist(geo.XY(pts[i-1][0], pts[i-1][1]), geo.XY(pts[i][0], pts[i][1]))
+	}
+	if math.Abs(off(fine.Length())-sent) > 0.5 {
+		t.Fatalf("end offset %v, points sent %v m", off(fine.Length()), sent)
+	}
+}
