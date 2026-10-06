@@ -92,7 +92,9 @@ percent-encoded. Latin look-alikes also work (`A1` → `Α1`).
 - `trip_id`, `trip_label`, `delay_s` and `next_stop_id` are `null` when the vehicle is not
   matched to a scheduled trip. `bearing` and `variant` may be `null`.
 - Refetch at `next_update_at`, not earlier: until then the answer does not change.
-- Asking for a line raises its polling priority for about 10 minutes (about every 30 s).
+- Asking for a line raises its polling priority for about 10 minutes (about every 30 s). If
+  nobody asked for it recently, it is polled at once: `next_update_at` is then a few seconds
+  away.
 - `speed` is the speed along the route in m/s (0..20, `0` = standing, `null` = unknown).
   `path` is the route ahead as `[lat, lon]` pairs, from the vehicle's point on its shape to
   the next stop (or 300 m-1.5 km ahead), or `null`. See [`CONTRACT.md`](CONTRACT.md).

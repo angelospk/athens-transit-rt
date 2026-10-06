@@ -364,3 +364,146 @@ func TestWatchedPendingRoutesRespectShare(t *testing.T) {
 		t.Fatalf("sent %v", st.Sent)
 	}
 }
+
+// pollAll runs every request that is due now.
+func pollAll(s *Scheduler) {
+	for r := s.pick(); r != nil; r = s.pick() {
+		s.execute(context.Background(), r)
+	}
+}
+
+// twoPolled returns a scheduler with lines A and B, both polled at t0, the clock at t0+d and
+// B overdue by 50 s. Both routes always answer with a vehicle (no empty-route slowdown).
+func twoPolled(c *clock, d time.Duration) *Scheduler {
+	v := []telematics.Vehicle{{VehNo: "1", Time: t0}}
+	s := newSched(4, &fakeFetch{rows: map[string][]telematics.Vehicle{"a1": v, "b1": v}}, c)
+	s.SetLines([]LineSpec{
+		{ID: "A", Active: true, Routes: routes("a1")},
+		{ID: "B", Active: true, Routes: routes("b1")},
+	})
+	pollAll(s)
+	c.t = t0.Add(d)
+	s.lines["B"].nextDue = c.t.Add(-50 * time.Second)
+	return s
+}
+
+// A user opens a line that was polled a while ago while another line is overdue: the opened
+// line is polled at once, ahead of the overdue one, not after its watched interval.
+func TestWatchPollsAtOnceAndJumpsQueue(t *testing.T) {
+	c := &clock{t0}
+	s := twoPolled(c, 20*time.Second)
+	s.Watch("A")
+	next, _ := s.NextUpdate("A")
+	if limit := c.t.Add(time.Second/4 + 3*time.Second); next.After(limit) {
+		t.Fatalf("next update in %v", next.Sub(c.t))
+	}
+	if r := s.pick(); r == nil || r.route.Code != "a1" {
+		t.Fatalf("first pick %+v, want a1", r)
+	}
+	if r := s.pick(); r == nil || r.route.Code != "b1" {
+		t.Fatalf("second pick %+v, want b1", r)
+	}
+}
+
+// Data younger than urgentAfter is fresh enough: no extra poll.
+func TestWatchRecentPollNotUrgent(t *testing.T) {
+	c := &clock{t0}
+	s := twoPolled(c, 5*time.Second)
+	s.Watch("A")
+	if r := s.pick(); r == nil || r.route.Code != "b1" {
+		t.Fatalf("first pick %+v, want b1", r)
+	}
+	if r := s.pick(); r != nil {
+		t.Fatalf("A polled again after 5 s: %+v", r)
+	}
+}
+
+// The frontend refetches a watched line again and again; that must not force polls.
+func TestRewatchNotUrgent(t *testing.T) {
+	c := &clock{t0}
+	s := twoPolled(c, 20*time.Second)
+	s.Watch("A")
+	pollAll(s) // urgent poll of A, then B
+	c.t = c.t.Add(20 * time.Second)
+	s.lines["B"].nextDue = c.t.Add(-50 * time.Second)
+	s.Watch("A")
+	if r := s.pick(); r == nil || r.route.Code != "b1" {
+		t.Fatalf("first pick %+v, want b1", r)
+	}
+	if r := s.pick(); r != nil {
+		t.Fatalf("watched A polled before its interval: %+v", r)
+	}
+}
+
+// Opening a line whose poll is running adds nothing: its data is on the way.
+func TestWatchDuringPollNotUrgent(t *testing.T) {
+	c := &clock{t0}
+	s := twoPolled(c, 20*time.Second)
+	s.lines["A"].nextDue = c.t.Add(-60 * time.Second)
+	r := s.pick() // A's poll starts (due first)
+	if r == nil || r.route.Code != "a1" {
+		t.Fatalf("pick %+v, want a1", r)
+	}
+	s.Watch("A")
+	if s.lines["A"].urgent {
+		t.Fatal("line being polled marked urgent")
+	}
+}
+
+// Urgency ends with the watch: a line that drops out of the watched tier before its urgent
+// poll does not keep jumping the queue.
+func TestUrgentClearedWhenWatchExpires(t *testing.T) {
+	c := &clock{t0}
+	s := twoPolled(c, 20*time.Second)
+	s.Watch("A")
+	c.t = c.t.Add(DefaultConfig().WatchWindow + time.Second)
+	s.replan()
+	if s.lines["A"].urgent {
+		t.Fatal("urgent after the watch expired")
+	}
+}
+
+// Until a finished poll is published, NextUpdate must not announce the following poll:
+// otherwise /v1/lines would cache the old payload for a whole interval.
+func TestNextUpdateSoonWhilePublishing(t *testing.T) {
+	c := &clock{t0}
+	f := &fakeFetch{}
+	var s *Scheduler
+	var during time.Time
+	s = New(DefaultConfig(), &fakeSlots{4}, f, func(p LinePoll) { during, _ = s.NextUpdate(p.Line) })
+	s.now = c.now
+	s.SetLines([]LineSpec{{ID: "A", Active: true, Routes: routes("a1")}})
+	pollAll(s)
+	if during.After(t0.Add(3 * time.Second)) {
+		t.Fatalf("next update %v ahead while publishing", during.Sub(t0))
+	}
+	if after, _ := s.NextUpdate("A"); !after.After(t0.Add(time.Minute)) {
+		t.Fatalf("next update %v ahead after publishing", after.Sub(t0))
+	}
+}
+
+// An urgent poll still waits for watched credit, so mass opening of lines cannot take more
+// than the watched share.
+func TestUrgentRespectsWatchedCredit(t *testing.T) {
+	c := &clock{t0}
+	s := twoPolled(c, 20*time.Second)
+	s.Watch("A")
+	s.watchedCredit = -1 // pick adds WatchedShare: still below 1
+	if r := s.pick(); r == nil || r.route.Code != "b1" {
+		t.Fatalf("first pick %+v, want b1", r)
+	}
+}
+
+// A line opened while its poll is being published gets the watched interval for its next
+// poll, not the slower one it had when the poll started.
+func TestWatchWhilePublishingUsesWatchedInterval(t *testing.T) {
+	c := &clock{t0}
+	var s *Scheduler
+	s = New(DefaultConfig(), &fakeSlots{4}, &fakeFetch{}, func(p LinePoll) { s.Watch(p.Line) })
+	s.now = c.now
+	s.SetLines([]LineSpec{{ID: "A", Active: true, Routes: routes("a1")}})
+	pollAll(s)
+	if due := s.lines["A"].nextDue; due.After(t0.Add(DefaultConfig().Watched.Base)) {
+		t.Fatalf("next poll due after %v", due.Sub(t0))
+	}
+}

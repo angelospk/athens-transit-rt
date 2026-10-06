@@ -108,15 +108,16 @@ type Arrival struct {
 
 // Client calls the API. With a non-nil Pacer every call waits for its slot first.
 type Client struct {
-	BaseURL  string
-	HTTP     *http.Client
-	Pacer    *Pacer
-	Log      RequestLog    // every request, per second
-	MinGap   time.Duration // never send two requests closer than this (0 = no limit)
-	gapMu    chan struct{} // 1-slot lock that a waiter can abandon on cancel
-	lastAt   time.Time     // last send, guarded by gapMu
-	requests atomic.Int64
-	errors   atomic.Int64
+	BaseURL   string
+	HTTP      *http.Client
+	Pacer     *Pacer
+	Log       RequestLog    // every request, per second
+	MinGap    time.Duration // never start two sends closer than this, nor write two requests closer than MinGap/4 (0 = no limit)
+	gapMu     chan struct{} // 1-slot lock that a waiter can abandon on cancel
+	lastAt    time.Time     // start of the last send, guarded by gapMu
+	lastWrite time.Time     // end of the last request write, guarded by gapMu
+	requests  atomic.Int64
+	errors    atomic.Int64
 }
 
 func New(baseURL string, pacer *Pacer) *Client {
@@ -156,7 +157,14 @@ func (g *gapTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	if wait := time.Until(c.lastAt.Add(c.MinGap)); c.MinGap > 0 && wait > 0 {
+	// The gap counts from the send start, so the connect (OASA closes every connection) runs
+	// inside it instead of adding to it. A quarter gap after the last write still keeps a
+	// slow connect followed by a fast one from arriving back to back.
+	next := c.lastAt.Add(c.MinGap)
+	if w := c.lastWrite.Add(c.MinGap / 4); w.After(next) {
+		next = w
+	}
+	if wait := time.Until(next); c.MinGap > 0 && wait > 0 {
 		t := time.NewTimer(wait)
 		select {
 		case <-t.C:
@@ -166,14 +174,14 @@ func (g *gapTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, ctx.Err()
 		}
 	}
-	// Hold the gate until the request is written (or fails), so a slow connect cannot let
-	// the next request go out right behind it. The gap counts from the write.
+	// Hold the gate until the request is written (or fails). A failed send still uses its gap.
+	c.lastAt = time.Now()
 	var once sync.Once
 	release := func(sent bool) {
 		once.Do(func() {
 			if sent {
-				c.lastAt = time.Now()
-				c.Log.Add(c.lastAt)
+				c.lastWrite = time.Now()
+				c.Log.Add(c.lastWrite)
 			}
 			<-c.gapMu
 		})
