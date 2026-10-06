@@ -24,6 +24,7 @@ const (
 	pathHorizonS     = 150              // path covers this many seconds at the current speed ...
 	pathMinM         = 300              // ... at least this far ...
 	pathMaxM         = 1500             // ... and at most this far
+	pathStops        = 3                // with known stops: up to this many stops ahead
 	pathSimplifyM    = 5
 	motionCoordScale = 1e5 // 5 decimals
 )
@@ -157,14 +158,24 @@ func (m *motion) forget(now time.Time) {
 	}
 }
 
-// pathAhead is the line ahead of s as [lat, lon] points: to the next stop (next >= 0), else
-// max(speed * pathHorizonS, pathMinM); at most pathMaxM and never past the line's end. nil when
-// there is nothing ahead (at the stop, at the end).
-func pathAhead(line *geo.Polyline, s float64, speed *float64, next float64) [][2]float64 {
+// pathAhead is the line ahead of s as [lat, lon] points, and the stops on it as metres along it.
+// With stops (along positions of the vehicle's next stops, in order) it reaches the pathStops-th
+// stop ahead, else max(speed * pathHorizonS, pathMinM); at most pathMaxM and never past the
+// line's end. nil when there is nothing ahead (at the last stop, at the end).
+func pathAhead(line *geo.Polyline, s float64, speed *float64, stops []float64) ([][2]float64, []int) {
+	var ahead []float64
+	for _, x := range stops {
+		if x > s+1 {
+			ahead = append(ahead, x)
+		}
+	}
 	end := s + pathMaxM
 	switch {
-	case next >= 0:
-		end = min(end, next)
+	case stops != nil:
+		if len(ahead) == 0 {
+			return nil, nil
+		}
+		end = min(end, ahead[min(pathStops, len(ahead))-1])
 	case speed != nil:
 		end = s + min(pathMaxM, max(pathMinM, *speed*pathHorizonS))
 	default:
@@ -172,7 +183,7 @@ func pathAhead(line *geo.Polyline, s float64, speed *float64, next float64) [][2
 	}
 	end = min(end, line.Length())
 	if end-s < 1 {
-		return nil
+		return nil, nil
 	}
 	pts := geo.Simplify(line.Slice(s, end), pathSimplifyM)
 	out := make([][2]float64, 0, len(pts))
@@ -184,9 +195,15 @@ func pathAhead(line *geo.Polyline, s float64, speed *float64, next float64) [][2
 		}
 	}
 	if len(out) < 2 {
-		return nil
+		return nil, nil
 	}
-	return out
+	var at []int
+	for _, x := range ahead {
+		if x <= end {
+			at = append(at, int(math.Round(x-s)))
+		}
+	}
+	return out, at
 }
 
 func round5(v float64) float64 { return math.Round(v*motionCoordScale) / motionCoordScale }

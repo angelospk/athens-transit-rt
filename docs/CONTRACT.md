@@ -14,7 +14,8 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 3 (2026-10-06): `GET /v1/vehicles`; `speed` and `path` on vehicles
+Revision: 4 (2026-10-06): `path` reaches up to the third stop ahead; `path_stops`
+(rev 3: `GET /v1/vehicles`; `speed` and `path` on vehicles)
 
 ## Hosts
 
@@ -54,7 +55,8 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
       "delay_s": 140,
       "next_stop_id": "400012",
       "speed": 6.4,
-      "path": [[37.9755, 23.7348], [37.97601, 23.73502], [37.9781, 23.7356]]
+      "path": [[37.9755, 23.7348], [37.97601, 23.73502], [37.9781, 23.7356]],
+      "path_stops": [412]
     }
   ]
 }
@@ -70,14 +72,19 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
   fewer than 2 fixes ≥ 20 s apart on the same shape (first sighting, new run, long gap
   between polls), position on the shape ambiguous (a loop or out-and-back passes there
   twice and history cannot tell which), more than 150 m from the shape, no shape.
-- `path` (rev 3): the route ahead as `[lat, lon]` pairs (5 decimals), from the vehicle's
-  projected point on its shape (at `position_at`) to its next stop when matched,
+- `path` (rev 3, rev 4): the route ahead as `[lat, lon]` pairs (5 decimals), from the
+  vehicle's projected point on its shape (at `position_at`) to its third stop ahead when
+  matched (rev 3: to its next stop; a vehicle waiting to start: to its first stop),
   otherwise `max(speed × 150 s, 300 m)` ahead; at most 1.5 km and never past the
   shape's end. Simplified (5 m), so a straight street has 2 points. `null` when there is
   nothing to move along: no shape, > 150 m from it, ambiguous position, or already at the
-  next stop / the shape's end. Use: move the marker along `path` at `speed` from
-  `position_at`, stop at the last point and wait for the next update. The static
-  `shape` is not needed for this.
+  last stop / the shape's end. Use: move the marker along `path` from `position_at` at
+  about `speed`, waiting a little at each of `path_stops`; stop at the last point and wait
+  for the next update. The static `shape` is not needed for this.
+- `path_stops` (rev 4): the stops on `path`, as whole metres along it from its start (the
+  last one may be its end). `null` when unknown (not matched to a trip, no `path`) or no
+  stop is on it (the 1.5 km limit came first). Older clients ignore it; they then drive
+  past the next stop.
 - Headers: `Cache-Control: public, max-age=<seconds until next_update_at, min 5, max 300>`.
   The frontend refetches a line at `next_update_at + 1..3 s` (random jitter), never faster
   than every 5 s, and at most every 60 s while the tab is hidden.
@@ -108,7 +115,8 @@ to ~2.5 min staler than `/v1/lines/{id}` for lines nobody watches.
       "variant": "2045",
       "delay_s": 140,
       "speed": 6.4,
-      "path": [[37.9755, 23.7348], [37.9781, 23.7356]]
+      "path": [[37.9755, 23.7348], [37.9781, 23.7356]],
+      "path_stops": [412]
     }
   ]
 }

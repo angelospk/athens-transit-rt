@@ -2,6 +2,7 @@ package server
 
 import (
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -161,36 +162,49 @@ func TestPickPass(t *testing.T) {
 
 func TestPathAhead(t *testing.T) {
 	l := straight()
-	// Ends at the next stop when there is one, simplified to 2 points.
-	p := pathAhead(l, 1000, nil, 1600)
-	if len(p) != 2 || !nearLL(p[0], l.XY[0], 1000) || !nearLL(p[1], l.XY[0], 1600) {
-		t.Fatalf("to next stop: %v", p)
+	// To the next stop when it is the only one, simplified to 2 points.
+	p, at := pathAhead(l, 1000, nil, []float64{1600})
+	if len(p) != 2 || !nearLL(p[0], l.XY[0], 1000) || !nearLL(p[1], l.XY[0], 1600) || !slices.Equal(at, []int{600}) {
+		t.Fatalf("to next stop: %v %v", p, at)
 	}
-	// Without a next stop: max(speed * 150 s, 300 m), at most 1500 m.
-	if p := pathAhead(l, 1000, nil, -1); !nearLL(p[1], l.XY[0], 1300) {
-		t.Fatalf("no speed: %v", p)
+	// Up to the third stop ahead; passed stops are left out.
+	p, at = pathAhead(l, 1000, ptr(5.0), []float64{800, 1300, 1700, 2100, 2400})
+	if !nearLL(p[len(p)-1], l.XY[0], 2100) || !slices.Equal(at, []int{300, 700, 1100}) {
+		t.Fatalf("three stops: %v %v", p, at)
 	}
-	if p := pathAhead(l, 1000, ptr(4.0), -1); !nearLL(p[1], l.XY[0], 1600) {
+	// At most 1500 m: stops beyond are left out.
+	p, at = pathAhead(l, 1000, nil, []float64{1200, 2800, 3000})
+	if !nearLL(p[len(p)-1], l.XY[0], 2500) || !slices.Equal(at, []int{200}) {
+		t.Fatalf("far stops: %v %v", p, at)
+	}
+	// Without stops: max(speed * 150 s, 300 m), at most 1500 m, no stops.
+	if p, at := pathAhead(l, 1000, nil, nil); !nearLL(p[1], l.XY[0], 1300) || at != nil {
+		t.Fatalf("no speed: %v %v", p, at)
+	}
+	if p, _ := pathAhead(l, 1000, ptr(4.0), nil); !nearLL(p[1], l.XY[0], 1600) {
 		t.Fatalf("4 m/s: %v", p)
 	}
-	if p := pathAhead(l, 1000, ptr(20.0), -1); !nearLL(p[1], l.XY[0], 2500) {
+	if p, _ := pathAhead(l, 1000, ptr(20.0), nil); !nearLL(p[1], l.XY[0], 2500) {
 		t.Fatalf("20 m/s: %v", p)
 	}
-	if p := pathAhead(l, 1000, nil, 4000); !nearLL(p[1], l.XY[0], 2500) {
-		t.Fatalf("far next stop: %v", p)
-	}
-	// Shape end, at the stop, past the stop: nothing to move along.
-	if p := pathAhead(l, 4900, nil, -1); !nearLL(p[1], l.XY[0], 5000) {
+	// Shape end, at the last stop, past it: nothing to move along.
+	if p, _ := pathAhead(l, 4900, nil, nil); !nearLL(p[1], l.XY[0], 5000) {
 		t.Fatalf("shape end: %v", p)
 	}
-	for _, c := range [][2]float64{{5000, -1}, {1000, 1000}, {1000, 900}, {1000, 1000.5}} {
-		if p := pathAhead(l, c[0], nil, c[1]); p != nil {
-			t.Fatalf("s %v next %v: %v", c[0], c[1], p)
+	if p, _ := pathAhead(l, 5000, nil, nil); p != nil {
+		t.Fatalf("at the end: %v", p)
+	}
+	for _, next := range []float64{1000, 900, 1000.5} {
+		if p, at := pathAhead(l, 1000, nil, []float64{next}); p != nil || at != nil {
+			t.Fatalf("next %v: %v %v", next, p, at)
 		}
+	}
+	if p, _ := pathAhead(l, 1000, nil, []float64{}); p != nil {
+		t.Fatalf("no stops left: %v", p)
 	}
 	// A corner keeps its vertex.
 	corner := geo.NewPolyline([][2]float64{{0, 0}, {100, 0}, {100, 1000}})
-	if p := pathAhead(corner, 50, nil, -1); len(p) != 3 {
+	if p, _ := pathAhead(corner, 50, nil, nil); len(p) != 3 {
 		t.Fatalf("corner: %v", p)
 	}
 }

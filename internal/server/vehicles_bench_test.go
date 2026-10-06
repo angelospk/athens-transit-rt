@@ -58,7 +58,7 @@ func benchApp(b *testing.B, n int) *App {
 		v := Vehicle{ID: strconv.Itoa(40000 + i), Lat: lat, Lon: lon,
 			Bearing: ptr(90.0), PositionAt: now.Unix() - 30, Variant: ptr(f.Shapes[t.Shape].ID), DelayS: ptr(120),
 			Speed: ptr(float64(rng.IntN(120)) / 10)}
-		v.Path = pathAhead(g.Line, s, v.Speed, g.StopAlong[next])
+		v.Path, v.PathStops = pathAhead(g.Line, s, v.Speed, g.StopAlong[next:])
 		if v.Path != nil {
 			paths++
 			points += len(v.Path)

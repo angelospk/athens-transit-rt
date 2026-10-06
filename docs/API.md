@@ -97,13 +97,15 @@ percent-encoded. Latin look-alikes also work (`A1` → `Α1`).
   away.
 - `speed` is the speed along the route in m/s (0..20, `0` = standing, `null` = unknown).
   `path` is the route ahead as `[lat, lon]` pairs, from the vehicle's point on its shape to
-  the next stop (or 300 m-1.5 km ahead), or `null`. See [`CONTRACT.md`](CONTRACT.md).
+  the third stop ahead (or 300 m-1.5 km ahead), or `null`. `path_stops` gives the stops on
+  it as metres along it, or `null`. See [`CONTRACT.md`](CONTRACT.md).
 
 ## All vehicles
 
 `GET /v1/vehicles` returns every vehicle with a GPS fix from the last 5 minutes, one snapshot
 for everyone, rebuilt at most every 30 s. Each vehicle has `line`, `id`, `lat`, `lon`,
-`bearing`, `position_at`, `variant`, `delay_s`, `speed` and `path` (same meanings as above).
+`bearing`, `position_at`, `variant`, `delay_s`, `speed`, `path` and `path_stops` (same meanings
+as above).
 It does not raise any line's polling priority, so lines nobody watches update about every
 150 s. Send `If-None-Match` with the last `ETag` to get `304` when nothing changed.
 
