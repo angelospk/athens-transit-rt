@@ -10,7 +10,8 @@
 //	Other    scheduled service now                              -> ~150 s (2-5 min)
 //	Inactive no scheduled service now                           -> not polled
 //
-// When a tier's demand exceeds its share of the budget, its intervals are stretched.
+// When a tier's demand exceeds its share of the budget, its intervals are stretched. A line
+// that becomes watched is polled at once if its data is older than urgentAfter.
 package sched
 
 import (
@@ -119,7 +120,8 @@ type lineState struct {
 	nextDue   time.Time
 	lastStart time.Time
 	polled    bool // at least one poll finished
-	polling   bool
+	polling   bool // from the poll start until its result is published
+	urgent    bool // just opened by a user: polled before every other due line
 	inFlight  int
 	obs       []match.Obs
 	routes    int
@@ -165,6 +167,10 @@ const (
 
 // watchedBurst caps the saved-up credit of the watched tier, in requests.
 const watchedBurst = 4
+
+// urgentAfter: a user opening a line whose last poll started longer ago than this gets a
+// poll at once (see Watch).
+const urgentAfter = 10 * time.Second
 
 // bgEvery: while background work is queued, every bgEvery-th slot goes to it, so metadata
 // (first boot: ~500 requests) is not starved by line polls.
@@ -261,7 +267,10 @@ func (s *Scheduler) SetLines(specs []LineSpec) {
 	s.replanLocked()
 }
 
-// Watch marks a line as requested by a user now.
+// Watch marks a line as requested by a user now. A line that just became watched and was
+// not polled in the last urgentAfter is polled at once, ahead of other due lines (still
+// within the watched share). Requests for a line already watched (the frontend refetching)
+// change nothing, so clients cannot force polls.
 func (s *Scheduler) Watch(line string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -269,11 +278,16 @@ func (s *Scheduler) Watch(line string) {
 	if l == nil {
 		return
 	}
-	wasWatched := s.cfg.classify(l, s.now()) == Watched
-	l.watchedAt = s.now()
-	if !wasWatched && l.spec.Active {
-		s.replanLocked()
+	now := s.now()
+	wasWatched := s.cfg.classify(l, now) == Watched
+	l.watchedAt = now
+	if wasWatched || !l.spec.Active {
+		return
 	}
+	if !l.polling && (!l.polled || now.Sub(l.lastStart) >= urgentAfter) {
+		l.urgent, l.nextDue = true, now
+	}
+	s.replanLocked()
 }
 
 // IsWatched reports whether the line is in the watched tier.
@@ -311,6 +325,9 @@ func (s *Scheduler) replanLocked() {
 	var demand [numTiers]float64
 	for _, l := range s.lines {
 		l.tier = s.cfg.classify(l, now)
+		if l.tier != Watched {
+			l.urgent = false
+		}
 		if l.tier != Inactive {
 			demand[l.tier] += s.routeDemand(l, l.tier, s.cfg.tier(l.tier).Base)
 		}
@@ -393,6 +410,9 @@ func (s *Scheduler) pickLine() *request {
 	}
 	sort.Slice(due, func(i, j int) bool {
 		a, b := due[i], due[j]
+		if a.urgent != b.urgent {
+			return a.urgent
+		}
 		if !a.nextDue.Equal(b.nextDue) {
 			return a.nextDue.Before(b.nextDue)
 		}
@@ -416,10 +436,10 @@ func (s *Scheduler) pickLine() *request {
 			reqs = append(reqs, &request{line: l.spec.ID, tier: l.tier, route: r})
 		}
 		if len(reqs) == 0 {
-			l.nextDue = now.Add(l.interval)
+			l.nextDue, l.urgent = now.Add(l.interval), false
 			continue
 		}
-		l.polling, l.lastStart, l.inFlight = true, now, len(reqs)
+		l.polling, l.urgent, l.lastStart, l.inFlight = true, false, now, len(reqs)
 		l.obs, l.routes, l.failed = nil, len(reqs), 0
 		s.pending = append(s.pending, reqs[1:]...)
 		return reqs[0]
@@ -465,7 +485,6 @@ func (s *Scheduler) execute(ctx context.Context, r *request) {
 		s.mu.Unlock()
 		return
 	}
-	l.polling = false
 	l.polled = true
 	l.nextDue = l.lastStart.Add(l.interval)
 	if l.failed < l.routes {
@@ -476,6 +495,11 @@ func (s *Scheduler) execute(ctx context.Context, r *request) {
 	l.obs = nil
 	s.mu.Unlock()
 	s.onLine(poll)
+	s.mu.Lock()
+	l.polling = false
+	// A replan during publication (e.g. the line was just watched) skips polling lines.
+	l.nextDue = minTime(l.nextDue, l.lastStart.Add(l.interval))
+	s.mu.Unlock()
 }
 
 // NextUpdate estimates when fresh data for a line will be published. polled=false for lines

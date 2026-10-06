@@ -129,8 +129,7 @@ func (a *App) handleLine(w http.ResponseWriter, r *http.Request) {
 	line := CanonicalLine(r.PathValue("id"))
 	now := a.now()
 	a.mu.RLock()
-	known, warming := a.known[line], a.warming[line]
-	d := a.lines[line]
+	known := a.known[line]
 	a.mu.RUnlock()
 	if !known {
 		writeJSON(w, http.StatusNotFound, unknownMaxAge, map[string]string{"error": "unknown_line"})
@@ -138,6 +137,11 @@ func (a *App) handleLine(w http.ResponseWriter, r *http.Request) {
 	}
 	a.sched.Watch(line)
 	next, polled := a.sched.NextUpdate(line)
+	// Read the data after the estimate: a poll published in between then shows up here,
+	// instead of an old payload cached until the poll after it.
+	a.mu.RLock()
+	warming, d := a.warming[line], a.lines[line]
+	a.mu.RUnlock()
 	if warming {
 		writeJSON(w, http.StatusServiceUnavailable, minMaxAge, map[string]string{"error": "warming_up"})
 		return

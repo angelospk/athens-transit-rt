@@ -51,6 +51,9 @@ home machine (Docker): atrt serve ── downloads snapshot (sha256-checked), po
 | other | scheduled service now | 150 s (stretched up to 5 min under load) |
 | inactive | no scheduled service now | not polled |
 
+A line that becomes watched and was not polled in the last 10 s is polled at once, before
+every other due line (still within the watched share), so its first fresh answer comes a few
+seconds after the first request. Later requests of a watched line do not force extra polls.
 Routes that came back empty twice are re-polled only every 5 min (except for watched lines).
 Metadata refreshes (lines, routes, stops) get every 4th request slot while they are queued.
 When a tier needs more than its share, its intervals stretch. A line response carries

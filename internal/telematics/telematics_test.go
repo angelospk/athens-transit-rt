@@ -336,7 +336,9 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 
 // The gap counts from when a request was actually written: a send that is slow to go out
 // (e.g. a new connection) holds the next one back.
-func TestClientGapCountsFromWrite(t *testing.T) {
+// A slow first connect followed by a fast one: the second request still arrives at least a
+// quarter gap after the first was written.
+func TestClientSlowConnectKeepsWriteFloor(t *testing.T) {
 	var mu sync.Mutex
 	var arrived []time.Time
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -347,9 +349,9 @@ func TestClientGapCountsFromWrite(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL+"/", nil)
-	c.MinGap = 50 * time.Millisecond
-	// The first connection takes 100 ms to open, later ones are instant.
-	c.SetTransport(delayedFirstDial(100 * time.Millisecond))
+	c.MinGap = 200 * time.Millisecond
+	// The first connection takes 300 ms to open, later ones are instant.
+	c.SetTransport(delayedFirstDial(300 * time.Millisecond))
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
@@ -361,8 +363,8 @@ func TestClientGapCountsFromWrite(t *testing.T) {
 		t.Fatalf("%d arrivals", len(arrived))
 	}
 	sort.Slice(arrived, func(i, j int) bool { return arrived[i].Before(arrived[j]) })
-	// 40 ms of slack for scheduling between the write and the handler.
-	if gap := arrived[1].Sub(arrived[0]); gap < c.MinGap-40*time.Millisecond {
+	// 20 ms of slack for scheduling between the write and the handler.
+	if gap := arrived[1].Sub(arrived[0]); gap < c.MinGap/4-20*time.Millisecond {
 		t.Fatalf("requests arrived %v apart", gap)
 	}
 }
@@ -375,6 +377,66 @@ func delayedFirstDial(d time.Duration) http.RoundTripper {
 	dial := (&net.Dialer{}).DialContext
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		first.Do(func() { time.Sleep(d) })
+		return dial(ctx, network, addr)
+	}
+	return tr
+}
+
+// OASA closes every connection, so each request opens a new one. The connect time must not
+// add to the gap: with a 100 ms gap and 100 ms connects, 6 requests take about 600 ms, not
+// 1100 ms (2.6 instead of 4 req/s in production).
+func TestClientGapOverlapsConnect(t *testing.T) {
+	var mu sync.Mutex
+	var arrived []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		arrived = append(arrived, time.Now())
+		mu.Unlock()
+		w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+	c := New(srv.URL+"/", nil)
+	c.MinGap = 100 * time.Millisecond
+	c.SetTransport(delayedDials(100 * time.Millisecond))
+	start := time.Now()
+	var wg sync.WaitGroup
+	errs := make(chan error, 6)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := c.BusLocations(context.Background(), "1")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(arrived) != 6 {
+		t.Fatalf("%d arrivals", len(arrived))
+	}
+	if took := time.Since(start); took > 900*time.Millisecond {
+		t.Fatalf("6 requests took %v", took)
+	}
+	sort.Slice(arrived, func(i, j int) bool { return arrived[i].Before(arrived[j]) })
+	for i := 1; i < len(arrived); i++ {
+		if gap := arrived[i].Sub(arrived[i-1]); gap < c.MinGap-40*time.Millisecond {
+			t.Fatalf("requests %d and %d arrived %v apart", i-1, i, gap)
+		}
+	}
+}
+
+// delayedDials is a transport (no keep-alive) whose every connection takes d to open.
+func delayedDials(d time.Duration) http.RoundTripper {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DisableKeepAlives = true
+	dial := (&net.Dialer{}).DialContext
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		time.Sleep(d)
 		return dial(ctx, network, addr)
 	}
 	return tr
