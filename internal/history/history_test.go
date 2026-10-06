@@ -54,7 +54,7 @@ func TestWritesNewFixesOnce(t *testing.T) {
 	}
 	d := 140
 	w.Add(Row{FixT: 100, Line: "040", RouteCode: "3922", Veh: "A", Lat: 37.9755, Lon: 23.7348, GTFS: "2026-10-06",
-		TripID: `T,1 "x"`, ShapeID: "S1", SM: 1234, DelayS: &d})
+		TripID: "T,1 \"x\"\n", ShapeID: "S1", SM: 1234, DelayS: &d})
 	w.Add(Row{FixT: 100, Line: "040", Veh: "A", SM: -1})           // the same fix polled again
 	w.Add(Row{FixT: 90, Line: "040", Veh: "A", SM: -1})            // older
 	w.Add(Row{FixT: 100, Line: "Α1", Veh: "B", Lat: -1.5, SM: -1}) // unmatched, other vehicle

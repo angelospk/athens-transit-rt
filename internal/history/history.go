@@ -183,9 +183,23 @@ func (w *Writer) write(r Row) {
 	if r.DelayS != nil {
 		delay = strconv.Itoa(*r.DelayS)
 	}
-	w.cw.Write([]string{strconv.FormatInt(r.FixT, 10), r.Line, r.RouteCode, r.Veh, micro(r.Lat), micro(r.Lon),
-		r.GTFS, r.TripID, r.ShapeID, strconv.Itoa(int(r.SM)), delay})
+	w.cw.Write([]string{strconv.FormatInt(r.FixT, 10), oneLine(r.Line), oneLine(r.RouteCode), oneLine(r.Veh),
+		micro(r.Lat), micro(r.Lon), oneLine(r.GTFS), oneLine(r.TripID), oneLine(r.ShapeID), strconv.Itoa(int(r.SM)), delay})
 	w.pending++
+}
+
+// oneLine drops line breaks (ids never have them), so every newline in a file ends a row and a
+// row stays far below the 64 KiB cutPartialRow looks at.
+func oneLine(v string) string {
+	if len(v) > 256 {
+		v = v[:256]
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, v)
 }
 
 func micro(deg float64) string { return strconv.FormatInt(int64(math.Round(deg*1e6)), 10) }
