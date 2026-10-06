@@ -28,6 +28,8 @@ type Metrics struct {
 	SentByTier        map[string]int64 `json:"sent_by_tier"` // since start; "background" = metadata
 	LinesByTier       map[string]int   `json:"lines_by_tier"`
 	RSSBytes          int64            `json:"rss_bytes"`
+	HistoryRows       int64            `json:"history_rows"`    // fixes written since start (fix history on)
+	HistoryDropped    int64            `json:"history_dropped"` // fixes dropped: the writer fell behind
 	Lines             []MetricsLine    `json:"lines"`
 }
 
@@ -50,6 +52,11 @@ func (a *App) Metrics() Metrics {
 		Max1s: telematics.MaxWindow(per, 1), Max10s: telematics.MaxWindow(per, 10),
 		SentByTier: map[string]int64{"background": st.SentBackground}, LinesByTier: map[string]int{},
 		RSSBytes: rss()}
+	a.matchMu.Lock()
+	if h := a.hist; h != nil {
+		m.HistoryRows, m.HistoryDropped = h.Written(), h.Dropped()
+	}
+	a.matchMu.Unlock()
 	for _, t := range []sched.Tier{sched.Inactive, sched.Other, sched.Dense, sched.Watched} {
 		m.LinesByTier[t.String()] = st.LinesByTier[t]
 		if t != sched.Inactive {

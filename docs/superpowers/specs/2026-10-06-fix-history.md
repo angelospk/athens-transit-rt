@@ -1,6 +1,8 @@
 # Fix history (storage design, not built)
 
-Status: design, written 2026-10-06. Build only when Harold asks. It is the raw input for
+Status: built 2026-10-06 (Harold asked; disk is fine): `internal/history`, `atrt serve --history`.
+Written as designed, with: file hours are UTC; unmatched fixes are kept; an idle hour makes no
+file; `history_rows` next to `history_dropped` in `/metrics`; `--history-days` (default 30). It is the raw input for
 [route speed statistics](2026-10-06-route-speed-stats.md) and for later delay statistics.
 
 ## What to keep

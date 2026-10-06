@@ -87,6 +87,7 @@ go build -o atrt ./cmd/atrt
 # Live service. Downloads the snapshot from this repo's release into --state.
 atrt serve --listen 127.0.0.1:8095 --metrics-listen 127.0.0.1:8096 --state /var/lib/atrt --rps 4
 atrt serve --gtfs osy_gtfs.zip --state ./state     # local, from a GTFS zip
+atrt serve ... --history --history-max-mb 3000     # also keep every GPS fix (30 days) in --state/history
 
 # Snapshot + static map data (what the gtfs workflow runs).
 atrt snapshot --gtfs osy_gtfs.zip --out dist --site site

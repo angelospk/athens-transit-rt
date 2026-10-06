@@ -29,6 +29,9 @@ func serve(args []string) error {
 	telURL := fs.String("telematics-url", "", "OASA telematics API base URL")
 	proxy := fs.String("proxy", "", "proxy for OASA requests, e.g. socks5h://127.0.0.1:40001 (empty = direct)")
 	check := fs.Duration("release-check", 30*time.Minute, "how often to look for a new snapshot")
+	hist := fs.Bool("history", false, "keep every new GPS fix in <state>/history (hourly CSV, gzipped)")
+	histMB := fs.Int64("history-max-mb", 500, "fix history: delete the oldest hours above this size")
+	histDays := fs.Int("history-days", 30, "fix history: delete hours older than this")
 	fs.Parse(args)
 
 	kind, ok := match.ParseKind(*matcher)
@@ -45,9 +48,16 @@ func serve(args []string) error {
 		return fmt.Errorf("--rps %.1f is above the maximum of %d", *rps, telematics.MaxRPS)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	var histBytes int64
+	if *hist {
+		if *histMB <= 0 || *histDays <= 0 {
+			return fmt.Errorf("--history-max-mb and --history-days must be positive")
+		}
+		histBytes = *histMB << 20
+	}
 	app := server.New(server.Config{Listen: *listen, MetricsListen: *metricsListen, StateDir: *state, RPS: *rps, Matcher: kind,
-		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, TelematicsURL: *telURL, Proxy: *proxy, ReleaseCheck: *check,
-		Sched: sched.DefaultConfig()}, log)
+		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, TelematicsURL: *telURL, Proxy: *proxy, ReleaseCheck: *check, HistoryMaxBytes: histBytes,
+		Sched: sched.DefaultConfig(), HistoryKeep: time.Duration(*histDays) * 24 * time.Hour}, log)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err := app.Run(ctx)

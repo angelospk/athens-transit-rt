@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/angelospk/athens-transit-rt/internal/feed"
 	"github.com/angelospk/athens-transit-rt/internal/geo"
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
+	"github.com/angelospk/athens-transit-rt/internal/history"
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/meta"
 	"github.com/angelospk/athens-transit-rt/internal/release"
@@ -44,6 +46,9 @@ type Config struct {
 	Proxy         string        // proxy URL for OASA requests, e.g. socks5h://127.0.0.1:40001 ("" = direct)
 	ReleaseCheck  time.Duration // how often to look for a new snapshot
 	Sched         sched.Config
+	// Fix history (docs/superpowers/specs/2026-10-06-fix-history.md): off when HistoryMaxBytes is 0.
+	HistoryMaxBytes int64
+	HistoryKeep     time.Duration
 }
 
 type world struct {
@@ -91,6 +96,8 @@ type App struct {
 
 	vehMu   sync.Mutex // lock order: vehMu, then mu
 	vehSnap *vehiclesSnapshot
+
+	hist *history.Writer // nil: no fix history
 }
 
 func New(cfg Config, log *slog.Logger) *App {
@@ -249,8 +256,15 @@ func (a *App) onLine(p sched.LinePoll) {
 	}
 	results := w.matcher.MatchLine(p.Line, p.Obs)
 	vehicles := make([]Vehicle, len(results))
+	ver := ""
+	if a.hist != nil {
+		ver = a.gtfsVersion()
+	}
 	for i := range results {
 		vehicles[i] = a.vehicleView(w, &results[i])
+		if a.hist != nil {
+			a.hist.Add(historyRow(w, p.Line, &results[i], ver))
+		}
 	}
 	a.matchMu.Unlock()
 
@@ -344,6 +358,24 @@ func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, 
 	speed = a.motion.observe(r.VehicleID, line, s, r.Time)
 	path, _, _ = pathAhead(line, s, speed, nil)
 	return speed, path, nil, nil
+}
+
+// historyRow is one fix for the history: trip, shape and position along it when matched.
+func historyRow(w *world, line string, r *match.Result, ver string) history.Row {
+	row := history.Row{FixT: r.Time.Unix(), Line: line, RouteCode: r.RouteCode, Veh: r.VehicleID,
+		Lat: r.Lat, Lon: r.Lon, GTFS: ver, SM: -1}
+	if !r.Matched() {
+		return row
+	}
+	t := w.feed.Trip(r.Trip)
+	row.TripID, row.DelayS = t.ID, ptr(r.Delay)
+	if t.Shape >= 0 {
+		row.ShapeID = w.feed.Shapes[t.Shape].ID
+	}
+	if g := w.matcher.Geometry(t); g != nil && g.FromShape {
+		row.SM = int32(math.Round(r.Along))
+	}
+	return row
 }
 
 // bestShape picks the shape with the most trips of the line among a route code's shapes.
@@ -450,6 +482,16 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.meta.Due() {
 		a.meta.Refresh()
+	}
+	if a.cfg.HistoryMaxBytes > 0 {
+		h, err := history.Open(filepath.Join(a.cfg.StateDir, "history"), a.cfg.HistoryMaxBytes, a.cfg.HistoryKeep, a.now, a.log)
+		if err != nil {
+			return err
+		}
+		a.matchMu.Lock()
+		a.hist = h
+		a.matchMu.Unlock()
+		defer h.Close()
 	}
 	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second}
