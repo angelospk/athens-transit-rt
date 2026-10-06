@@ -6,6 +6,7 @@ package history
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/csv"
 	"io"
@@ -192,9 +193,14 @@ func micro(deg float64) string { return strconv.FormatInt(int64(math.Round(deg*1
 // open opens (appends to) the current hour's file.
 func (w *Writer) open() bool {
 	w.hour = w.nowHour()
-	f, err := os.OpenFile(filepath.Join(w.dir, w.hour+".csv"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(w.dir, w.hour+".csv"), os.O_CREATE|os.O_APPEND|os.O_RDWR, 0o644)
 	if err != nil {
 		w.log.Warn("history: open", "err", err)
+		return false
+	}
+	if err := cutPartialRow(f); err != nil {
+		w.log.Warn("history: open", "err", err)
+		f.Close()
 		return false
 	}
 	w.f, w.bw = f, bufio.NewWriterSize(f, 64<<10)
@@ -203,6 +209,25 @@ func (w *Writer) open() bool {
 		w.bw.WriteString(Header)
 	}
 	return true
+}
+
+// cutPartialRow drops an unfinished last row (a write that failed half way), so the next row
+// starts on its own line.
+func cutPartialRow(f *os.File) error {
+	st, err := f.Stat()
+	if err != nil || st.Size() == 0 {
+		return err
+	}
+	n := min(st.Size(), 64<<10)
+	tail := make([]byte, n)
+	if _, err := f.ReadAt(tail, st.Size()-n); err != nil {
+		return err
+	}
+	if tail[n-1] == '\n' {
+		return nil
+	}
+	keep := st.Size() - n + int64(bytes.LastIndexByte(tail, '\n')+1)
+	return f.Truncate(keep)
 }
 
 // flush moves the buffered rows to the file. On an error they count as lost and the file is
@@ -249,40 +274,61 @@ func (w *Writer) endHour() {
 	}
 }
 
-// compressLeftovers gzips every plain .csv except the current hour's.
+// compressLeftovers gzips every plain .csv except the current hour's. Each gets its own
+// archive (hour.csv.gz, then hour.1.csv.gz, ... after a restart within the hour), each with its
+// header. Retries are idempotent: the CSV is first renamed to .part, and a .part whose archive
+// exists was already gzipped.
 func (w *Writer) compressLeftovers(current string) {
 	names, _ := filepath.Glob(filepath.Join(w.dir, "*.csv"))
 	for _, p := range names {
-		if strings.TrimSuffix(filepath.Base(p), ".csv") == current {
+		hour := strings.TrimSuffix(filepath.Base(p), ".csv")
+		if hour == current {
 			continue
 		}
-		if err := gzipFile(p); err != nil {
-			w.log.Warn("history: gzip", "file", p, "err", err)
+		for k := 0; ; k++ {
+			base := hour
+			if k > 0 {
+				base += "." + strconv.Itoa(k)
+			}
+			part := filepath.Join(w.dir, base+".csv.part")
+			if exists(part) || exists(filepath.Join(w.dir, base+".csv.gz")) {
+				continue
+			}
+			if err := os.Rename(p, part); err != nil {
+				w.log.Warn("history: seal", "file", p, "err", err)
+			}
+			break
 		}
+	}
+	parts, _ := filepath.Glob(filepath.Join(w.dir, "*.csv.part"))
+	for _, part := range parts {
+		gz := strings.TrimSuffix(part, ".part") + ".gz"
+		if !exists(gz) {
+			if err := gzipFile(part, gz); err != nil {
+				w.log.Warn("history: gzip", "file", part, "err", err)
+				continue
+			}
+		}
+		os.Remove(part)
 	}
 }
 
-// gzipFile replaces path with path.gz. An existing path.gz (the same hour written before a
-// restart) is kept: the new rows follow it as another gzip member (readers see one stream).
-func gzipFile(path string) error {
-	in, err := os.Open(path)
+func exists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// gzipFile writes src gzipped to dst (via a temporary file and a rename).
+func gzipFile(src, dst string) error {
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	tmp := path + ".gz.tmp"
+	tmp := dst + ".tmp"
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err
-	}
-	if old, err := os.Open(path + ".gz"); err == nil {
-		_, err = io.Copy(out, old)
-		old.Close()
-		if err != nil {
-			out.Close()
-			os.Remove(tmp)
-			return err
-		}
 	}
 	zw := gzip.NewWriter(out)
 	_, err = io.Copy(zw, in)
@@ -293,13 +339,12 @@ func gzipFile(path string) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(tmp, path+".gz")
+		err = os.Rename(tmp, dst)
 	}
 	if err != nil {
 		os.Remove(tmp)
-		return err
 	}
-	return os.Remove(path)
+	return err
 }
 
 // prune deletes hours older than keep, then the oldest files while the directory holds more
