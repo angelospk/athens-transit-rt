@@ -158,34 +158,93 @@ func (m *motion) forget(now time.Time) {
 	}
 }
 
-// pathAhead is the line ahead of s as [lat, lon] points, and the stops on it as metres along it.
-// With stops (along positions of the vehicle's next stops, in order) it reaches the pathStops-th
-// stop ahead, else max(speed * pathHorizonS, pathMinM); at most pathMaxM and never past the
-// line's end. nil when there is nothing ahead (at the last stop, at the end).
-func pathAhead(line *geo.Polyline, s float64, speed *float64, stops []float64) ([][2]float64, []int) {
-	var ahead []float64
-	for _, x := range stops {
-		if x > s+1 {
-			ahead = append(ahead, x)
-		}
-	}
+// pathAhead is the line ahead of s as [lat, lon] points (contract rev 3): to the next stop
+// (stops[0]) when stops are known, else max(speed * pathHorizonS, pathMinM); at most pathMaxM
+// and never past the line's end. nil when there is nothing ahead (at the stop, at the end).
+// With stops it also returns (rev 4) the continuation up to the pathStops-th stop ahead (from
+// path's end, or from s when path is nil) and the stops on path + beyond, as metres along them.
+func pathAhead(line *geo.Polyline, s float64, speed *float64, stops []float64) (path, beyond [][2]float64, at []int) {
 	end := s + pathMaxM
 	switch {
 	case stops != nil:
-		if len(ahead) == 0 {
-			return nil, nil
+		if len(stops) == 0 {
+			return nil, nil, nil
 		}
-		end = min(end, ahead[min(pathStops, len(ahead))-1])
+		end = min(end, stops[0])
 	case speed != nil:
 		end = s + min(pathMaxM, max(pathMinM, *speed*pathHorizonS))
 	default:
 		end = s + pathMinM
 	}
 	end = min(end, line.Length())
-	if end-s < 1 {
-		return nil, nil
+	var off func(float64) float64
+	if end-s >= 1 {
+		path, off = simplified(line, s, end)
 	}
-	pts := geo.Simplify(line.Slice(s, end), pathSimplifyM)
+	if stops == nil {
+		return path, nil, nil
+	}
+	var ahead []float64
+	for _, x := range stops {
+		if x > s+1 && (len(ahead) == 0 || x > ahead[len(ahead)-1]) {
+			ahead = append(ahead, x)
+		}
+	}
+	if len(ahead) == 0 {
+		return path, nil, nil
+	}
+	from := s
+	if path != nil {
+		from = end
+	}
+	last := min(s+pathMaxM, line.Length(), ahead[min(pathStops, len(ahead))-1])
+	var offB func(float64) float64
+	if last-from >= 1 {
+		beyond, offB = simplified(line, from, last)
+	}
+	base := 0.0
+	if path != nil {
+		base = off(end)
+	}
+	for _, x := range ahead {
+		var m float64
+		switch {
+		case path != nil && x <= end:
+			m = off(x)
+		case beyond != nil && x <= last:
+			m = base + offB(x)
+		default:
+			continue
+		}
+		if r := int(math.Round(m)); len(at) == 0 || r > at[len(at)-1] {
+			at = append(at, r)
+		}
+	}
+	return path, beyond, at
+}
+
+// simplified is the line from `from` to `to` as rounded [lat, lon] points (5 m simplification)
+// and, for a position along the line in that range, the metres along those points (nil, nil
+// when fewer than 2 points remain).
+func simplified(line *geo.Polyline, from, to float64) ([][2]float64, func(float64) float64) {
+	sl := line.Slice(from, to)
+	pts := geo.Simplify(sl, pathSimplifyM)
+	// Simplify keeps a subset of sl: the original along and the simplified along of each kept point.
+	orig, cum := make([]float64, 0, len(pts)), make([]float64, 0, len(pts))
+	a, j := from, 0
+	for k, p := range pts {
+		for ; j < len(sl) && sl[j] != p; j++ {
+			if j+1 < len(sl) {
+				a += geo.Dist(sl[j], sl[j+1])
+			}
+		}
+		orig = append(orig, a)
+		if k == 0 {
+			cum = append(cum, 0)
+		} else {
+			cum = append(cum, cum[k-1]+geo.Dist(pts[k-1], p))
+		}
+	}
 	out := make([][2]float64, 0, len(pts))
 	for _, p := range pts {
 		lat, lon := geo.LatLon(p)
@@ -197,13 +256,17 @@ func pathAhead(line *geo.Polyline, s float64, speed *float64, stops []float64) (
 	if len(out) < 2 {
 		return nil, nil
 	}
-	var at []int
-	for _, x := range ahead {
-		if x <= end {
-			at = append(at, int(math.Round(x-s)))
+	return out, func(x float64) float64 {
+		k := 0
+		for k+2 < len(orig) && orig[k+1] < x {
+			k++
 		}
+		if orig[k+1] <= orig[k] {
+			return cum[k+1]
+		}
+		f := max(0, min(1, (x-orig[k])/(orig[k+1]-orig[k])))
+		return cum[k] + f*(cum[k+1]-cum[k])
 	}
-	return out, at
 }
 
 func round5(v float64) float64 { return math.Round(v*motionCoordScale) / motionCoordScale }

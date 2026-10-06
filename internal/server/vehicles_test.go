@@ -189,8 +189,8 @@ func TestVehiclesConcurrent(t *testing.T) {
 	}
 }
 
-// TestLineMotion: a matched vehicle 300 m further after 30 s has speed 10 m/s and a path through
-// its next stops, on /v1/lines and /v1/vehicles alike.
+// TestLineMotion: a matched vehicle 300 m further after 30 s has speed 10 m/s, a path to its
+// next stop and a continuation through the next ones, on /v1/lines and /v1/vehicles alike.
 func TestLineMotion(t *testing.T) {
 	now := monday1020
 	a := newAppWith(t, sched.DefaultConfig(), func() time.Time { return now })
@@ -207,16 +207,21 @@ func TestLineMotion(t *testing.T) {
 	if v.TripID == nil || v.Speed == nil || math.Abs(*v.Speed-10) > 0.05 {
 		t.Fatalf("vehicle %s", body)
 	}
-	// Up to the third stop ahead (stops every 0.01° lon; the last one, S4, is the second ahead).
-	if len(v.Path) != 2 || math.Abs(v.Path[0][1]-(23.72+step)) > 2e-5 || v.Path[1] != [2]float64{37.98, 23.74} {
+	// path to the next stop; path_beyond on to the third stop ahead (stops every 0.01° lon; the
+	// last one, S4, is the second ahead).
+	if len(v.Path) != 2 || math.Abs(v.Path[0][1]-(23.72+step)) > 2e-5 || v.Path[1] != [2]float64{37.98, 23.73} {
 		t.Fatalf("path %v", v.Path)
+	}
+	if len(v.PathBeyond) != 2 || v.PathBeyond[0] != v.Path[1] || v.PathBeyond[1] != [2]float64{37.98, 23.74} {
+		t.Fatalf("path_beyond %v", v.PathBeyond)
 	}
 	if len(v.PathStops) != 2 || math.Abs(float64(v.PathStops[0])-(877.6-300)) > 3 || math.Abs(float64(v.PathStops[1])-(2*877.6-300)) > 3 {
 		t.Fatalf("path_stops %v", v.PathStops)
 	}
 	_, body = get(t, a, "/v1/vehicles")
 	c := decodeVehicles(t, body).Vehicles[0]
-	if *c.Speed != *v.Speed || len(c.Path) != 2 || c.Line != "L" || !slices.Equal(c.PathStops, v.PathStops) {
+	if *c.Speed != *v.Speed || len(c.Path) != 2 || c.Line != "L" || !slices.Equal(c.PathStops, v.PathStops) ||
+		len(c.PathBeyond) != 2 {
 		t.Fatalf("/v1/vehicles %s", body)
 	}
 	// Far from the shape: no motion.

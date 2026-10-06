@@ -276,9 +276,10 @@ type Vehicle struct {
 	TripLabel  *string      `json:"trip_label"`
 	DelayS     *int         `json:"delay_s"`
 	NextStopID *string      `json:"next_stop_id"`
-	Speed      *float64     `json:"speed"`      // m/s along the route
-	Path       [][2]float64 `json:"path"`       // [lat, lon] of the route ahead
-	PathStops  []int        `json:"path_stops"` // metres along path of each stop on it (rev 4)
+	Speed      *float64     `json:"speed"`       // m/s along the route
+	Path       [][2]float64 `json:"path"`        // [lat, lon] of the route ahead, to the next stop
+	PathBeyond [][2]float64 `json:"path_beyond"` // rev 4: on from path's end to the third stop
+	PathStops  []int        `json:"path_stops"`  // rev 4: metres along path + path_beyond of each stop
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -294,14 +295,14 @@ func (a *App) vehicleView(w *world, r *match.Result) Vehicle {
 		if s >= 0 {
 			v.Variant = ptr(f.Shapes[s].ID)
 		}
-		v.Speed, v.Path, v.PathStops = a.motionOf(w, r, s)
+		v.Speed, v.Path, v.PathBeyond, v.PathStops = a.motionOf(w, r, s)
 		return v
 	}
 	t := f.Trip(r.Trip)
 	if t.Shape >= 0 {
 		v.Variant = ptr(f.Shapes[t.Shape].ID)
 	}
-	v.Speed, v.Path, v.PathStops = a.motionOf(w, r, t.Shape)
+	v.Speed, v.Path, v.PathBeyond, v.PathStops = a.motionOf(w, r, t.Shape)
 	v.TripID = ptr(t.ID)
 	v.TripLabel = ptr(TripLabel(f, t))
 	v.DelayS = ptr(r.Delay)
@@ -310,39 +311,39 @@ func (a *App) vehicleView(w *world, r *match.Result) Vehicle {
 }
 
 // motionOf records the vehicle's position along its shape and returns its speed, the path
-// ahead and the stops on it. A matched trip whose stops fit its shape has its position from the matcher; others are
+// ahead, its continuation and the stops on them. A matched trip whose stops fit its shape has its position from the matcher; others are
 // projected onto the shape when the pass is clear.
-func (a *App) motionOf(w *world, r *match.Result, shape int32) (*float64, [][2]float64, []int) {
+func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, path, beyond [][2]float64, at []int) {
 	pos := geo.XY(r.Lat, r.Lon)
 	if r.Matched() {
 		if g := w.matcher.Geometry(w.feed.Trip(r.Trip)); g != nil && g.FromShape {
 			if geo.Dist(pos, g.Line.At(r.Along)) > motionMaxOffM {
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
 			// Waiting to start: only up to the first stop (usually nothing: it is there).
 			stops := g.StopAlong[r.NextIndex:]
 			if r.Waiting {
 				stops = g.StopAlong[:1]
 			}
-			speed := a.motion.observe(r.VehicleID, g.Line, r.Along, r.Time)
-			path, at := pathAhead(g.Line, r.Along, speed, stops)
-			return speed, path, at
+			speed = a.motion.observe(r.VehicleID, g.Line, r.Along, r.Time)
+			path, beyond, at = pathAhead(g.Line, r.Along, speed, stops)
+			return speed, path, beyond, at
 		}
 	}
 	if shape < 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	line := w.matcher.ShapeLine(shape)
 	if len(line.XY) < 2 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	s, ok := a.motion.pick(r.VehicleID, line, line.Candidates(pos[0], pos[1], motionMaxOffM, r.Bearing, r.Bearing != 0), r.Time)
 	if !ok {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	speed := a.motion.observe(r.VehicleID, line, s, r.Time)
-	path, _ := pathAhead(line, s, speed, nil)
-	return speed, path, nil
+	speed = a.motion.observe(r.VehicleID, line, s, r.Time)
+	path, _, _ = pathAhead(line, s, speed, nil)
+	return speed, path, nil, nil
 }
 
 // bestShape picks the shape with the most trips of the line among a route code's shapes.
