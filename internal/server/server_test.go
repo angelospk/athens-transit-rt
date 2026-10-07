@@ -408,10 +408,17 @@ func TestExpiredGTFSStillServesVehicles(t *testing.T) {
 	if res.StatusCode != 200 || len(lr.Vehicles) == 0 {
 		t.Fatalf("%d %s", res.StatusCode, body)
 	}
+	matched := 0
 	for _, v := range lr.Vehicles {
-		if v.TripID != nil || v.DelayS != nil || v.RouteCode != "SH" || v.Lat == 0 {
+		if v.RouteCode != "SH" || v.Lat == 0 {
 			t.Fatalf("vehicle %+v", v)
 		}
+		if v.TripID != nil && v.DelayS != nil {
+			matched++
+		}
+	}
+	if matched == 0 { // trips still match by the same weekday inside the feed's validity
+		t.Fatalf("no vehicle matched to a trip after the GTFS expired: %s", body)
 	}
 	_, body = get(t, a, "/v1/status")
 	var st StatusResponse

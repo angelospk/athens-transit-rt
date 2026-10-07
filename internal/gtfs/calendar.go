@@ -32,6 +32,8 @@ func dayDate(day time.Time) time.Time { return day.Add(12 * time.Hour).In(Athens
 func ServiceDate(day time.Time) string { return dayDate(day).Format("20060102") }
 
 // ServiceActive reports whether service runs on the service day `day` (a ServiceDay).
+// Outside the feed's validity (an expired feed not yet replaced by OASA), the same weekday
+// whole weeks inside it decides (PlanningTime); exceptions apply to their own date only.
 func (f *Feed) ServiceActive(service int32, day time.Time) bool {
 	date := dayDate(day)
 	d := yyyymmdd(date)
@@ -40,6 +42,7 @@ func (f *Feed) ServiceActive(service int32, day time.Time) bool {
 	}
 	s := &f.Services[service]
 	wd := (int(date.Weekday()) + 6) % 7 // Monday = 0
+	d = yyyymmdd(f.PlanningTime(date))
 	return s.Start <= d && d <= s.End && s.Days[wd]
 }
 

@@ -81,7 +81,9 @@ func TestServiceActive(t *testing.T) {
 		"2026-10-06": false, // Tuesday
 		"2026-07-13": false, // Monday removed by exception
 		"2026-07-15": true,  // Wednesday added by exception
-		"2026-10-12": false, // Monday after end_date
+		"2026-10-12": true,  // Monday after end_date: an expired feed still runs by weekday
+		"2026-10-13": false, // Tuesday after end_date
+		"2026-06-29": true,  // Monday before start_date
 	}
 	for d, want := range cases {
 		if got := f.ServiceActive(svc, day(d)); got != want {
