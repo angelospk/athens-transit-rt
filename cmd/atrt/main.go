@@ -5,6 +5,7 @@
 //	atrt compare   compare our ETAs with OASA's own predictions, once
 //	atrt record    record GPS fixes, matches and OASA ETAs to SQLite
 //	atrt replay    score the matchers on a recording (--blocks: check GTFS vehicle blocks)
+//	atrt stats     sum the fix history into daily statistics, once
 package main
 
 import (
@@ -18,10 +19,11 @@ var commands = map[string]func(args []string) error{
 	"compare":  compare,
 	"record":   record,
 	"replay":   replay,
+	"stats":    statsCmd,
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: atrt serve|snapshot|compare|record|replay [flags]   (atrt <command> -h for flags)")
+	fmt.Fprintln(os.Stderr, "usage: atrt serve|snapshot|compare|record|replay|stats [flags]   (atrt <command> -h for flags)")
 }
 
 func main() {

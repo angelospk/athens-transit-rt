@@ -1,0 +1,79 @@
+# Copies the daily statistics (GET /v1/stats, docs/API.md) to the orphan branch `stats`, so
+# readers fetch them from GitHub and not from the server. The branch keeps every day, even if
+# the server loses its state. Days are written by the server about 2-3 h after local midnight.
+name: stats
+on:
+  schedule:
+    - cron: "40 3 * * *" # 06:40 Athens summer time, 05:40 winter
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: stats
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      API: ${{ vars.STATS_API || 'https://transit.haroldpoi.dev' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the stats branch (or start it)
+        run: |
+          git init -q pub && cd pub
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth=1 origin stats; then
+            git checkout -q -b stats FETCH_HEAD
+          else
+            git checkout -q --orphan stats
+          fi
+      - name: Download new days
+        working-directory: pub
+        run: |
+          set -euo pipefail
+          mkdir -p v1/days
+          curl -fsS --retry 3 --max-time 30 "$API/v1/stats" -o ../index.json
+          jq -e '.version == 1 and (.days | type == "array")' ../index.json >/dev/null
+          for d in $(jq -r '.days[]' ../index.json); do
+            [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad day $d"; exit 1; }
+            [ -f "v1/days/$d.json" ] && continue
+            # One bad day must not block the others; it is tried again tomorrow.
+            if ! curl -fsS --retry 3 --max-time 30 "$API/v1/stats/days/$d" -o "../$d.json" ||
+               ! jq -e --arg d "$d" '.version == 1 and .date == $d and (.hours | length) == 24' "../$d.json" >/dev/null; then
+              echo "::warning::day $d skipped"; rm -f "../$d.json"; continue
+            fi
+            mv "../$d.json" "v1/days/$d.json"
+            echo "new day $d"
+          done
+      - name: Write index, latest and README
+        working-directory: pub
+        run: |
+          set -euo pipefail
+          days=$(ls v1/days | sed -n 's/^\([0-9-]*\)\.json$/\1/p' | sort)
+          [ -n "$days" ] || { echo "no days yet"; exit 0; }
+          latest=$(echo "$days" | tail -1)
+          printf '%s\n' $days | jq -R . | jq -sc --arg l "$latest" '{version: 1, latest: $l, days: .}' > v1/index.json
+          cp "v1/days/$latest.json" v1/latest.json
+          cat > README.md <<'MD'
+          # athens-transit-rt daily statistics
+
+          One file per day (Europe/Athens) of the OASA buses and trolleys seen by
+          [athens-transit-rt](https://github.com/angelospk/athens-transit-rt): GPS fixes,
+          vehicles and travel speed per hour and per line. Updated daily by the `stats` workflow.
+
+          - `v1/latest.json`: the newest day
+          - `v1/index.json`: all days
+          - `v1/days/YYYY-MM-DD.json`: one day
+
+          Speed (km/h) = `dist_m / time_s * 3.6`. Fields and method: `docs/API.md` on `main`.
+          Raw URL: `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/latest.json`
+          MD
+      - name: Commit and push
+        working-directory: pub
+        run: |
+          git add -A
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git commit -q -m "stats: $(jq -r .latest v1/index.json)"
+          git push -q origin stats

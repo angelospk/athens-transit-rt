@@ -491,6 +491,7 @@ func (a *App) Run(ctx context.Context) error {
 		a.hist = h
 		a.matchMu.Unlock()
 		defer h.Close()
+		go a.dailyStats(ctx)
 	}
 	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second}

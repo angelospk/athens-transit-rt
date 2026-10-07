@@ -47,6 +47,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", a.handleStatus)
 	mux.HandleFunc("GET /v1/vehicles", a.handleVehicles)
 	mux.HandleFunc("GET /v1/gtfs-rt/{name}", a.handleGTFSRT)
+	mux.HandleFunc("GET /v1/stats", a.handleStatsIndex)
+	mux.HandleFunc("GET /v1/stats/days/{date}", a.handleStatsDay)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write([]byte("ok\n"))

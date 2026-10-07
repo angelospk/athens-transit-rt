@@ -23,6 +23,8 @@ instance (see [Self-hosting](../README.md#self-hosting-docker)).
 | `GET /v1/lines/{line_id}` | vehicles of one line, simple JSON | until the next poll of the line (5-300 s) |
 | `GET /v1/vehicles` | all vehicles of all lines, compact JSON | until the next snapshot (5-30 s) |
 | `GET /v1/status` | service health and GTFS version | 10 s |
+| `GET /v1/stats` | list of days with network statistics | 600 s |
+| `GET /v1/stats/days/{YYYY-MM-DD}` | statistics of one day | 1 day |
 
 Static data (line list, shapes, stops) is on GitHub Pages:
 `https://angelospk.github.io/athens-transit-rt/static/v1/lines.json` and
@@ -109,6 +111,34 @@ for everyone, rebuilt at most every 30 s. Each vehicle has `line`, `id`, `lat`, 
 (same meanings as above).
 It does not raise any line's polling priority, so lines nobody watches update about every
 150 s. Send `If-None-Match` with the last `ETag` to get `304` when nothing changed.
+
+## Daily statistics
+
+A server that runs with `--history` sums each finished day (Europe/Athens, 00:00-24:00) about
+2-3 h after midnight. `GET /v1/stats` returns `{"version":1,"latest":"2026-10-06","days":[...]}`;
+`GET /v1/stats/days/{date}` returns one day (`400` for a malformed date, `404` when missing).
+The same files, every day kept, are on the `stats` branch of this repository; prefer them:
+`https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/latest.json`,
+`.../stats/v1/index.json`, `.../stats/v1/days/{date}.json`.
+
+| Field | Meaning |
+|---|---|
+| `date`, `tz` | the local day and its time zone |
+| `generated_at` | when the file was written |
+| `first_fix`, `last_fix` | first and last fix time of the day (a day the history started late, or with an outage, has fewer hours with fixes) |
+| `files`, `fixes`, `vehicles`, `lines` | history archives read, GPS fixes, distinct vehicles, distinct lines |
+| `hours[h]` | 24 entries by local hour: `fixes`, `vehicles`, `lines`, `dist_m`, `time_s` |
+| `by_line[]` | every line with a fix: `line`, `fixes`, `vehicles`, `dist_m`, `time_s` |
+
+Speed in km/h = `dist_m / time_s * 3.6`; `time_s` 0 means no speed. Sums, not averages, so
+several days add up exactly. A speed sample is two consecutive fixes of one vehicle on the
+same line, 5-120 s apart and at most 25 m/s, counted in the hour and line of the later fix;
+the distance is the straight line between them (a little short on curves) and stops and
+traffic lights count. A fix counts for the day and hour of its own fix time; a fix that
+reaches the server more than 1 h after the end of its day is not counted. A day without any
+history file (server down all day) has no file and is not listed. `vehicles` counts vehicles that sent a
+fix, which depends on the polling: a line nobody watches is polled about every 150 s. In the
+hour repeated when clocks go back, both hours are summed into one entry.
 
 ## GTFS-Realtime details
 
