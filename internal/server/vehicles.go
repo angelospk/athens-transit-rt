@@ -42,9 +42,17 @@ type VehiclesResponse struct {
 	Vehicles     []CityVehicle `json:"vehicles"`
 }
 
-// vehiclesSnapshot is the encoded /v1/vehicles body every client gets until the next build.
+// vehiclesSnapshot is the encoded /v1/vehicles body and tiles every client gets until the next
+// build.
 type vehiclesSnapshot struct {
-	built        time.Time
+	built time.Time
+	encoded
+	tiles map[tileKey]*encoded // non-empty tiles
+	empty *encoded             // every other tile of the domain
+}
+
+// encoded is one response body, raw and gzipped, with their ETags.
+type encoded struct {
 	raw, gz      []byte
 	etag, gzETag string
 }
@@ -107,13 +115,28 @@ func (a *App) collectVehicles(now time.Time) []CityVehicle {
 }
 
 func (a *App) buildVehicles(now time.Time) (*vehiclesSnapshot, error) {
-	raw, err := json.Marshal(VehiclesResponse{UpdatedAt: now.Unix(), NextUpdateAt: now.Add(vehiclesEvery).Unix(),
-		Vehicles: a.collectVehicles(now)})
+	resp := VehiclesResponse{UpdatedAt: now.Unix(), NextUpdateAt: now.Add(vehiclesEvery).Unix(),
+		Vehicles: a.collectVehicles(now)}
+	zw := gzip.NewWriter(nil)
+	all, err := encode(zw, resp)
+	if err != nil {
+		return nil, err
+	}
+	s := &vehiclesSnapshot{built: now, encoded: *all}
+	if err := s.buildTiles(zw, resp); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// encode marshals v and gzips it with zw.
+func encode(zw *gzip.Writer, v any) (*encoded, error) {
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
+	zw.Reset(&buf)
 	if _, err := zw.Write(raw); err != nil {
 		return nil, err
 	}
@@ -122,20 +145,27 @@ func (a *App) buildVehicles(now time.Time) (*vehiclesSnapshot, error) {
 	}
 	sum := sha256.Sum256(raw)
 	h := hex.EncodeToString(sum[:8])
-	return &vehiclesSnapshot{built: now, raw: raw, gz: buf.Bytes(), etag: `"` + h + `"`, gzETag: `"` + h + `-gz"`}, nil
+	return &encoded{raw: raw, gz: buf.Bytes(), etag: `"` + h + `"`, gzETag: `"` + h + `-gz"`}, nil
 }
 
 // handleVehicles serves the prebuilt bytes; the Handler does not gzip this path again.
 func (a *App) handleVehicles(w http.ResponseWriter, r *http.Request) {
+	a.serveSnapshot(w, r, func(s *vehiclesSnapshot) *encoded { return &s.encoded })
+}
+
+// serveSnapshot serves the body pick chooses from the current snapshot, with the snapshot's
+// cache headers.
+func (a *App) serveSnapshot(w http.ResponseWriter, r *http.Request, pick func(*vehiclesSnapshot) *encoded) {
 	s, err := a.vehicles()
 	if err != nil {
 		a.log.Error("building /v1/vehicles", "err", err)
 		writeJSON(w, http.StatusInternalServerError, minMaxAge, map[string]string{"error": "internal"})
 		return
 	}
-	body, etag := s.raw, s.etag
+	e := pick(s)
+	body, etag := e.raw, e.etag
 	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
-		body, etag = s.gz, s.gzETag
+		body, etag = e.gz, e.gzETag
 	}
 	// The floor of 5 s can keep a copy in caches up to 5 s past next_update_at.
 	maxAge := clamp(int64(s.built.Add(vehiclesEvery).Sub(a.now())/time.Second), minMaxAge, vehiclesMaxAge)
@@ -147,7 +177,7 @@ func (a *App) handleVehicles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Set("Content-Type", "application/json; charset=utf-8")
-	if etag == s.gzETag {
+	if etag == e.gzETag {
 		h.Set("Content-Encoding", "gzip")
 	}
 	h.Set("Content-Length", strconv.Itoa(len(body)))

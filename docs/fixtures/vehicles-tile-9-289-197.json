@@ -1,0 +1,50 @@
+{
+ "updated_at": 1791187860,
+ "next_update_at": 1791187890,
+ "vehicles": [
+  {
+   "line": "040",
+   "id": "44537",
+   "lat": 37.95614,
+   "lon": 23.71609,
+   "bearing": 52,
+   "position_at": 1791187838,
+   "variant": "5512",
+   "delay_s": -35,
+   "speed": 0
+  },
+  {
+   "line": "040",
+   "id": "44548",
+   "lat": 37.97062,
+   "lon": 23.73269,
+   "bearing": 3,
+   "position_at": 1791187847,
+   "variant": "5512",
+   "delay_s": 140,
+   "speed": 6.4
+  },
+  {
+   "line": "040",
+   "id": "44549",
+   "lat": 37.9385,
+   "lon": 23.63106,
+   "bearing": null,
+   "position_at": 1791187843,
+   "variant": "5512",
+   "delay_s": null,
+   "speed": null
+  },
+  {
+   "line": "Α1",
+   "id": "53021",
+   "lat": 37.98712,
+   "lon": 23.73105,
+   "bearing": 214,
+   "position_at": 1791187831,
+   "variant": "7342",
+   "delay_s": null,
+   "speed": 4.2
+  }
+ ]
+}

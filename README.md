@@ -63,6 +63,11 @@ copy expires when fresh data exists.
 `/v1/vehicles` (all lines at once) reads only what the tiers above already polled: it never
 marks a line watched. Its body is built at most every 30 s, on the first request after the
 previous snapshot expired, and gzip-compressed once; every client gets the same bytes.
+The same build cuts it into map tiles (`/v1/vehicles/tiles/{z}/{x}/{y}`, `z` 9 without paths,
+`z` 13 with them), each encoded once too: a map client loads only its view, and the URLs are a
+fixed set (~1,100 tiles over Attica), so the origin load behind the cache does not grow with
+clients. Measured on a recorded rush-hour snapshot (922 vehicles): build 11.5 → 23 ms per 30 s,
+held bytes 355 → 875 KB; [spec](docs/superpowers/specs/2026-10-08-vehicle-tiles.md).
 
 `/v1/status` reports `ok: false` when no line poll succeeded in the last 5 minutes (while lines
 are scheduled). During an OASA outage the last good data stays served; `updated_at` shows its age.

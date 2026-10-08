@@ -46,6 +46,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/lines/{id}", a.handleLine)
 	mux.HandleFunc("GET /v1/status", a.handleStatus)
 	mux.HandleFunc("GET /v1/vehicles", a.handleVehicles)
+	mux.HandleFunc("GET /v1/vehicles/tiles/{z}/{x}/{y}", a.handleTile)
 	mux.HandleFunc("GET /v1/gtfs-rt/{name}", a.handleGTFSRT)
 	mux.HandleFunc("GET /v1/stats", a.handleStatsIndex)
 	mux.HandleFunc("GET /v1/stats/days/{date}", a.handleStatsDay)
@@ -64,8 +65,9 @@ func (a *App) Handler() http.Handler {
 			writeJSON(w, http.StatusNotFound, unknownMaxAge, map[string]string{"error": "not_found"})
 			return
 		}
-		if r.URL.Path == "/v1/vehicles" || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
-			// /v1/vehicles serves bytes compressed once per build.
+		if r.URL.Path == "/v1/vehicles" || strings.HasPrefix(r.URL.Path, "/v1/vehicles/tiles/") ||
+			!acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			// /v1/vehicles and its tiles serve bytes compressed once per build.
 			mux.ServeHTTP(w, r)
 			return
 		}

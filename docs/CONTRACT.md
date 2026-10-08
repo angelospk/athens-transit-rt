@@ -14,8 +14,9 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 4 (2026-10-06): `path_beyond` and `path_stops` on vehicles
-(rev 3: `GET /v1/vehicles`; `speed` and `path` on vehicles)
+Revision: 5 (2026-10-08): `GET /v1/vehicles/tiles/{z}/{x}/{y}` (vehicles of the map view)
+(rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
+`path` on vehicles)
 
 ## Hosts
 
@@ -143,6 +144,73 @@ to ~2.5 min staler than `/v1/lines/{id}` for lines nobody watches.
   `fetch`); do not set `If-None-Match` from JS: it is not a CORS-safelisted header and
   there is no `OPTIONS` preflight support. gzip when asked (~50 KB for 1500 vehicles).
 
+### `GET /v1/vehicles/tiles/{z}/{x}/{y}` (rev 5)
+
+The `/v1/vehicles` snapshot cut into map tiles, so a client loads only what its map view shows.
+Tiles are XYZ (Web Mercator, "slippy map") tiles, the scheme of OSM/MapLibre raster tiles. Each
+tile is one fixed URL shared by all clients, so Cloudflare caches it like `/v1/vehicles`.
+Example: `/v1/vehicles/tiles/13/4636/3160` (around Syntagma).
+
+| `z` | tile size (Athens) | content | use at MapLibre zoom |
+|---|---|---|---|
+| `9` | ~62 km | vehicles without `path`, `path_beyond`, `path_stops` (the keys are absent) | < 13 |
+| `13` | ~3.9 km | the same vehicle entries as `/v1/vehicles` | ≥ 13 |
+
+```json
+{
+  "updated_at": 1791187860,
+  "next_update_at": 1791187890,
+  "vehicles": [
+    {
+      "line": "040", "id": "44537",
+      "lat": 37.95614, "lon": 23.71609,
+      "bearing": 52, "position_at": 1791187838,
+      "variant": "5512", "delay_s": -35, "speed": 0
+    }
+  ]
+}
+```
+
+- Body: the shape of `/v1/vehicles` (same fields, order and rules), with only the vehicles whose
+  `lat`/`lon` is in that tile. A vehicle is in exactly one tile per zoom; its paths may run on
+  into other tiles. `z` 13 entries are byte-identical to `/v1/vehicles`; `z` 9 entries have
+  `line, id, lat, lon, bearing, position_at, variant, delay_s, speed` only.
+- Same snapshot as `/v1/vehicles`: one build, at most every 30 s, gives `/v1/vehicles` and all
+  tiles the same `updated_at` and `next_update_at`. No OASA request, no line marked watched.
+- Tiles exist only for the box lat 37.5..38.5, lon 22.9..24.5: `z` 9 x 288..290, y 196..198;
+  `z` 13 x 4617..4653, y 3145..3174. A tile in the box with no vehicle → `200` with
+  `"vehicles":[]`. A vehicle is in a tile only when its `z` 13 tile is one of these (then its `z` 9
+tile is too); one farther out is in no tile (none seen so far).
+- Tile of a point (the usual slippy-map formula, `n = 2^z`):
+  `x = floor((lon + 180) / 360 × n)`,
+  `y = floor((1 − asinh(tan(lat × π/180)) / π) / 2 × n)`.
+- `404` `{"error":"not_found"}` (`max-age=60`) for any other `z`, `x`/`y` outside the box, numbers
+  not in plain decimal (`04636`, `+4636`), percent-encoded digits, or a trailing `/`. `400`
+  `{"error":"query_not_allowed"}` (`no-store`) for any query string, even a bare `?`: each
+  variant would be another Cloudflare cache entry. Never add cache busters.
+- Headers as `/v1/vehicles`: `Cache-Control: public, max-age=<seconds until next_update_at,
+  min 5, max 30>`, `ETag`, `If-None-Match` → `304`, gzip when asked, `Vary: Accept-Encoding`.
+  Let the browser HTTP cache handle them (plain `fetch`); a tile asked again within its max-age
+  then costs no request.
+
+Client rules:
+
+1. Tile set: take the map bounds, pad by 300 m (≈ 30 s of driving, so a vehicle that will drive
+   into view is loaded), clamp to the box, choose `z` = 13 at MapLibre zoom ≥ 13 else 9, and take
+   every tile from the north-west corner's tile to the south-east corner's tile.
+2. On `moveend` (fires once the user stops panning or zooming): recompute the set, fetch tiles
+   not loaded, drop vehicles of tiles that left the set. When `z` changes, replace the whole set.
+3. Refresh all tiles of the set at `max(min(next_update_at) + 1..3 s, last refresh + 5 s)` (a
+   cached copy can carry a `next_update_at` up to 5 s in the past), and at most every 60 s
+   while the tab is hidden.
+4. Merge all tiles by vehicle `id`: newer `position_at` wins, on a tie the response with the
+   newer `updated_at`. Caches can mix two builds for a few seconds, so a vehicle that just
+   crossed a tile edge can be in two tiles, or in none until the next refresh.
+5. Fetch `/v1/lines/{line}` for `route_code`, `trip_id`, `trip_label`, `next_stop_id` when the
+   user selects a vehicle, as with `/v1/vehicles`.
+6. Cloudflare rate-limits per IP (`429`, back off ≥ 10 s). A desktop view at MapLibre 13 is ~15
+   tiles; do not refetch tiles that are still fresh.
+
 ### `GET /v1/status`
 
 ```json
@@ -203,5 +271,6 @@ Published by GitHub Actions in the backend repo when OASA publishes a new GTFS.
 ## Fixtures
 
 `docs/fixtures/` in the backend repo holds one example of every response above
-(`line-040.json`, `vehicles.json`, `status.json`, `lines.json`, `lines-040.json`). The frontend
+(`line-040.json`, `vehicles.json`, `vehicles-tile-13-4636-3160.json`,
+`vehicles-tile-9-289-197.json`, `status.json`, `lines.json`, `lines-040.json`). The frontend
 develops against copies of these until the live API is up.

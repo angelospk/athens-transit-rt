@@ -22,6 +22,7 @@ instance (see [Self-hosting](../README.md#self-hosting-docker)).
 | `GET /v1/gtfs-rt/vehicle_positions.json`, `trip_updates.json` | the same feeds as JSON, for debugging | 15 s |
 | `GET /v1/lines/{line_id}` | vehicles of one line, simple JSON | until the next poll of the line (5-300 s) |
 | `GET /v1/vehicles` | all vehicles of all lines, compact JSON | until the next snapshot (5-30 s) |
+| `GET /v1/vehicles/tiles/{z}/{x}/{y}` | the vehicles of one map tile (`z` 9 or 13) | until the next snapshot (5-30 s) |
 | `GET /v1/status` | service health and GTFS version | 10 s |
 | `GET /v1/stats` | list of days with network statistics | 600 s |
 | `GET /v1/stats/days/{YYYY-MM-DD}` | statistics of one day | 1 day |
@@ -45,6 +46,9 @@ curl -s https://transit.haroldpoi.dev/v1/lines/040
 
 # All vehicles, with speed (m/s) and the route ahead
 curl -s --compressed https://transit.haroldpoi.dev/v1/vehicles | jq '.vehicles | length'
+
+# Vehicles around Syntagma only (one ~4 km map tile)
+curl -s --compressed https://transit.haroldpoi.dev/v1/vehicles/tiles/13/4636/3160 | jq '.vehicles | length'
 
 # Whole-network feeds
 curl -s --compressed -o vehicle_positions.pb https://transit.haroldpoi.dev/v1/gtfs-rt/vehicle_positions.pb
@@ -111,6 +115,17 @@ for everyone, rebuilt at most every 30 s. Each vehicle has `line`, `id`, `lat`, 
 (same meanings as above).
 It does not raise any line's polling priority, so lines nobody watches update about every
 150 s. Send `If-None-Match` with the last `ETag` to get `304` when nothing changed.
+
+## Vehicles of a map area
+
+`GET /v1/vehicles/tiles/{z}/{x}/{y}` returns the part of the same snapshot that lies in one
+XYZ (Web Mercator, slippy map) tile, in the same JSON shape. `z` is `9` (~62 km tiles, no
+`path`, `path_beyond`, `path_stops`; for a zoomed-out map) or `13` (~3.9 km tiles, the full
+entries). Tiles exist for lat 37.5..38.5, lon 22.9..24.5 (`z` 9: x 288..290, y 196..198;
+`z` 13: x 4617..4653, y 3145..3174); others are `404`. Each vehicle is in the one tile of its
+position. Use plain URLs: a query string gives `400`, so every client shares the cached copy.
+A map view at MapLibre zoom 13 needs 2-15 tiles of 1-8 KB (gzip) instead of the 60+ KB of
+`/v1/vehicles`. Client rules: [`CONTRACT.md`](CONTRACT.md#get-v1vehiclestileszxy-rev-5).
 
 ## Daily statistics
 
