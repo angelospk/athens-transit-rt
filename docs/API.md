@@ -20,7 +20,7 @@ The list of endpoints, their parameters and response schemas is the OpenAPI 3.1 
 [`openapi/openapi.yaml`](openapi/openapi.yaml), with an interactive reference ("try it") at
 <https://angelospk.github.io/athens-transit-rt/>. This page has usage notes and examples.
 
-Live: `/v1/lines/{line_id}`, `/v1/vehicles`, `/v1/vehicles/tiles/{z}/{x}/{y}`,
+Live: `/v1/lines/{line_id}`, `/v1/vehicles`, `/v1/vehicles/tiles/{z}/{x}/{y}`, `/v1/stops/{stop_id}`,
 `/v1/gtfs-rt/{vehicle_positions,trip_updates}.{pb,json}`, `/v1/status`, `/v1/stats`,
 `/v1/stats/days/{YYYY-MM-DD}`, `/healthz`. Static data (line list, shapes, stops) is on GitHub Pages:
 `https://angelospk.github.io/athens-transit-rt/static/v1/lines.json` and
@@ -123,6 +123,23 @@ entries). Tiles exist for lat 37.5..38.5, lon 22.9..24.5 (`z` 9: x 288..290, y 1
 position. Use plain URLs: a query string gives `400`, so every client shares the cached copy.
 A map view at MapLibre zoom 13 needs 2-15 tiles of 1-8 KB (gzip) instead of the 60+ KB of
 `/v1/vehicles`. Client rules: [`CONTRACT.md`](CONTRACT.md#get-v1vehiclestileszxy-rev-5).
+
+## Arrivals at a stop
+
+`GET /v1/stops/{stop_id}` (contract rev 7) lists the vehicles on their way to one stop, like the
+signs at the stops: `{"stop_id","name","updated_at","next_update_at","lines":[...],"arrivals":[...]}`.
+`stop_id` is the GTFS `stop_id` (the stops in `static/v1/lines/{line_id}.json`). Each arrival
+has `line`, `variant`, `headsign`, `trip_id`, `vehicle`, `eta` (Unix s), `scheduled`,
+`position_at`, `stops_away`, `distance_m` and `source`: `live` for a vehicle (its position plus
+the typical driving time to the stop), `schedule` for a trip that has not left yet (none while
+the static GTFS is expired). Up to 60 min ahead, at most 3 per line and variant. It costs no
+OASA request and does not raise any line's polling priority, so positions are as fresh as
+`/v1/vehicles`; refetch at `next_update_at`. Unknown stop: `404` `{"error":"unknown_stop"}`.
+Full rules: [`CONTRACT.md`](CONTRACT.md#get-v1stopsstop_id-rev-7).
+
+```bash
+curl -s https://transit.haroldpoi.dev/v1/stops/61000 | jq '.arrivals[] | [.line, .headsign, ((.eta - now) / 60 | floor)]'
+```
 
 ## Daily statistics
 

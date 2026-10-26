@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: athens-transit-rt
-  version: "1 (contract rev 6)"
+  version: "1 (contract rev 7)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
     Free public API, no key. Live data comes from `https://transit.haroldpoi.dev`; the static map
@@ -49,6 +49,8 @@ tags:
     description: Vehicles of one line. Asking for a line raises its polling priority.
   - name: Vehicles
     description: One shared snapshot of all vehicles, whole or cut into map tiles.
+  - name: Stops
+    description: Arrivals at one stop, from the vehicles the server already follows.
   - name: GTFS-Realtime
     description: Whole-network GTFS-RT feeds for journey planners.
   - name: Service
@@ -307,6 +309,70 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: not_found
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/stops/{stop_id}:
+    get:
+      tags: [Stops]
+      operationId: getStop
+      summary: Arrivals at one stop
+      description: |
+        The vehicles on their way to one stop and about when they get there, like the signs at
+        the stops (contract rev 7). Computed from the line polls the server already makes:
+        **no OASA request**, and no line is marked watched, so positions are as fresh as
+        `/v1/vehicles` (lines nobody watches: every ~150 s). `position_at` gives each fix's age.
+
+        - **Live rows** (`source: "live"`): every vehicle of the stop's lines with a fix from the
+          last 5 min whose route passes the stop ahead of it (the first pass on a loop; not a
+          stop where its trip ends). `eta` = `position_at` + the time to drive there: per 200 m
+          of the shape the typical speed of the last 14 days at that day type and hour (as
+          `path_speeds`), elsewhere the timetable's running time; waits at stops and lights are
+          included. A matched vehicle waiting at its first stop leaves at its scheduled
+          departure (now when that is past). An unmatched one waiting there has `eta: null`.
+        - **Timetable rows** (`source: "schedule"`): trips of the stop's lines that have not
+          left their first stop yet, pass the stop within 60 min and no matched vehicle runs.
+          None while the static GTFS is expired (`gtfs_expires` in `/v1/status` is past):
+          vehicles still match it, but its times may not be OASA's any more.
+        - Up to 60 min ahead, soonest first (`eta: null` last), at most 3 rows per `line` and
+          `variant`.
+
+        `Cache-Control: public, max-age=<seconds until the earliest next poll of the stop's
+        lines, min 5, max 300>` (120 when none of them runs now).
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          description: GTFS `stop_id` (the stops of `static/v1/lines/{line_id}.json`).
+          schema:
+            type: string
+          example: "61000"
+      responses:
+        "200":
+          description: Arrivals at the stop.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopResponse"
+        "404":
+          description: Not a `stop_id` of the current GTFS. `max-age=60`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: unknown_stop
+        "503":
+          description: No static GTFS loaded yet. `max-age=5`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: warming_up
         "429":
           $ref: "#/components/responses/RateLimited"
 
@@ -668,7 +734,7 @@ components:
       properties:
         error:
           type: string
-          enum: [unknown_line, not_found, warming_up, feed_unavailable, query_not_allowed, bad_date, internal]
+          enum: [unknown_line, unknown_stop, not_found, warming_up, feed_unavailable, query_not_allowed, bad_date, internal]
 
     LatLon:
       type: array
@@ -855,6 +921,89 @@ components:
             anyOf:
               - $ref: "#/components/schemas/CityVehicle"
               - $ref: "#/components/schemas/CityVehicleLite"
+
+    StopResponse:
+      type: object
+      required: [stop_id, name, updated_at, next_update_at, lines, arrivals]
+      properties:
+        stop_id:
+          type: string
+        name:
+          type: string
+          description: Stop name from the GTFS.
+        updated_at:
+          type: integer
+          description: Time the answer was computed.
+        next_update_at:
+          type: integer
+          description: Earliest next poll of one of the stop's lines. Refetch then, not earlier.
+        lines:
+          type: array
+          description: Every line with a trip that stops here (not only as its last stop), sorted.
+          items:
+            type: string
+        arrivals:
+          type: array
+          items:
+            $ref: "#/components/schemas/Arrival"
+      example:
+        stop_id: "61000"
+        name: ΑΚΑΔΗΜΙΑ
+        updated_at: 1793019974
+        next_update_at: 1793020094
+        lines: ["022", "025", "608"]
+        arrivals:
+          - line: "608"
+            variant: "5346"
+            headsign: ΝΕΚΡ. ΖΩΓΡΑΦΟΥ - ΑΚΑΔΗΜΙΑ - ΓΑΛΑΤΣΙ
+            trip_id: 960_day_1_1625_1443
+            vehicle: "61191"
+            eta: 1793019999
+            scheduled: 1793020176
+            position_at: 1793019859
+            stops_away: 1
+            distance_m: 444
+            source: live
+
+    Arrival:
+      type: object
+      required: [line, variant, headsign, trip_id, vehicle, eta, scheduled, position_at, stops_away, distance_m, source]
+      properties:
+        line:
+          type: string
+        variant:
+          type: [string, "null"]
+          description: Key into `static/v1/lines/{line}.json` `variants` (the GTFS shape id).
+        headsign:
+          type: string
+        trip_id:
+          type: [string, "null"]
+          description: "`null` for a live vehicle not matched to a trip."
+        vehicle:
+          type: [string, "null"]
+          description: Vehicle id as in `/v1/lines/{line_id}`; `null` for timetable rows.
+        eta:
+          type: [integer, "null"]
+          description: |
+            Expected arrival at the stop. `null` only for an unmatched vehicle waiting at its
+            first stop (departure unknown).
+        scheduled:
+          type: [integer, "null"]
+          description: The trip's timetable time at the stop; `null` when unmatched.
+        position_at:
+          type: [integer, "null"]
+          description: GPS time of the vehicle's fix; `null` for timetable rows.
+        stops_away:
+          type: [integer, "null"]
+          minimum: 1
+          description: "`1`: the stop is the vehicle's next one. `null` for timetable rows."
+        distance_m:
+          type: [integer, "null"]
+          minimum: 0
+          description: Metres along the route from the vehicle to the stop; `null` for timetable rows.
+        source:
+          type: string
+          enum: [live, schedule]
 
     Status:
       type: object
