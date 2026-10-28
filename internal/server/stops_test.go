@@ -91,3 +91,17 @@ func TestStopArrivalsBusThatChangedLines(t *testing.T) {
 		t.Fatalf("got %s", body)
 	}
 }
+
+func TestStopWatchesOnlyLinesWithABusOnTheWay(t *testing.T) {
+	// S1 is behind the only bus of L: nothing comes, so L is not asked of OASA more often.
+	a := newApp(t, monday1020)
+	poll(a, monday1020)
+	get(t, a, "/v1/stops/S1")
+	if a.sched.IsWatched("L") {
+		t.Fatal("a stop with no bus on the way must not mark its lines watched")
+	}
+	get(t, a, "/v1/stops/S3")
+	if !a.sched.IsWatched("L") {
+		t.Fatal("a stop with a bus on the way must mark its line watched")
+	}
+}

@@ -157,8 +157,13 @@ func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.RUnlock()
 	sort.SliceStable(arr, func(i, j int) bool { return arr[i].EtaS < arr[j].EtaS })
-	for _, l := range lines {
-		a.sched.Watch(l)
+	// Only the lines with a bus on the way are asked of OASA more often: a big stop has 16 lines.
+	seen := map[string]bool{}
+	for _, x := range arr {
+		if !seen[x.Line] {
+			seen[x.Line] = true
+			a.sched.Watch(x.Line)
+		}
 	}
 	st := f.Stops[s]
 	writeJSON(w, http.StatusOK, stopMaxAge, StopResponse{Stop: StopInfo{st.ID, st.Name, st.Lat, st.Lon},

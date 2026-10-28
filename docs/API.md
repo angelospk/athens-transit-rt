@@ -136,7 +136,8 @@ first. Each has `line`, `headsign`, `variant`, `vehicle`, `eta_s`, `at`, `delay_
 `position_at`. The time is the stop's timetable time plus the bus's current delay, as in the
 GTFS-RT trip updates. Only buses already on a trip (driving it or waiting at its first stop) are
 listed; buses not heard of for 5 minutes are left out.
-The request raises the polling priority of the stop's lines. Cached 15 s.
+The request raises the polling priority of the stop's lines that have a bus on the way (in
+`arrivals`); a line with none keeps its usual rate. Cached 15 s.
 
 ## Schedules
 

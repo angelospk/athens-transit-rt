@@ -634,8 +634,9 @@ paths:
         time plus the bus's current delay (the model of the GTFS-RT trip updates), at most 2 h
         ahead, from GPS fixes of the last 5 minutes. A bus late by its last fix is due now
         (`eta_s` 0). Only buses already on a trip (driving it or waiting at its first stop) are
-        listed, not later timetable trips. Raises the polling priority of the
-        stop's lines, as a line request does. `Cache-Control: public, max-age=15`.
+        listed, not later timetable trips. Raises the polling priority of the stop's lines
+        that have a bus in `arrivals`, as a line request does; a line with none keeps its
+        usual rate. `Cache-Control: public, max-age=15`.
       parameters:
         - name: stop_id
           in: path
