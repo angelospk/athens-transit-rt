@@ -26,6 +26,10 @@ func TestSTASYStopTable(t *testing.T) {
 		if strings.TrimSpace(n.Name) == "" || (n.NameEn != nil && strings.TrimSpace(*n.NameEn) == "") {
 			t.Errorf("%s: %+v", id, n)
 		}
+		// A metro name in capitals is STASY's, not a checked one; ΚΑΤ is an acronym (#39).
+		if strings.HasSuffix(id, "-metro") && n.Name == strings.ToUpper(n.Name) && n.Name != "ΚΑΤ" {
+			t.Errorf("%s: name %q in capitals", id, n.Name)
+		}
 	}
 	for from, to := range f.Aliases {
 		if _, ok := f.Stops[to]; !ok {

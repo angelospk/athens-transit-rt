@@ -199,9 +199,11 @@ def v2_checks(bodies):
     for path in ("/v2/stops/oasa:240084", SYNTAGMA_METRO):
         if path in bodies and not bodies[path].get("arrivals"):
             problems.append(f"{path}: no Arrivals")
+    # Metro names that are written in capitals: an acronym, not a name the table is missing.
+    METRO_ACRONYMS = {"ΚΑΤ"}
     caps = [e[1] for e in bodies.get("/v2/stops", {}).get("stops", [])
             if e[0].startswith("stasy:") and e[0].endswith("-metro") and e[1] == e[1].upper()
-            and e[1] != e[1].lower()]
+            and e[1] != e[1].lower() and e[1] not in METRO_ACRONYMS]
     if caps:
         problems.append(f"/v2/stops: {len(caps)} metro Stop(s) in capitals, missing from "
                         f"internal/railgeo/stasy_stops.json (run scripts/stasy-stop-names.py): "
