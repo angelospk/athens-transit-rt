@@ -60,7 +60,8 @@ func (s *stasyAdapter) Namespace() string { return stasyNS }
 
 // stasyKey is the id of a stop name and mode: folded words joined by '-'.
 func stasyKey(name, mode string) string {
-	words := strings.FieldsFunc(rail.Fold(name), func(r rune) bool { return r == ' ' || r == '/' })
+	// '-' splits words too: the key must stay the same through Resolve, which reads '-' as a space.
+	words := strings.FieldsFunc(rail.Fold(name), func(r rune) bool { return r == ' ' || r == '/' || r == '-' })
 	return stasyPrefix + strings.Join(words, "-") + "-" + mode
 }
 

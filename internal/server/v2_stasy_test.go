@@ -190,3 +190,17 @@ func TestV2STASYWarmingUp(t *testing.T) {
 		t.Fatalf("an incomplete list is cached 5 s, got %d", ma)
 	}
 }
+
+// A published Stop id resolves to itself, also for a name with a hyphen next to a space.
+func TestSTASYKeyStableThroughResolve(t *testing.T) {
+	s := &stasyAdapter{}
+	for _, name := range []string{"Μηδείας - Μυκάλης", "Α-Β", "ΣΥΝΤΑΓΜΑ (ΚΕΝΤΡΟ)", "Α / Β"} {
+		id := stasyKey(name, "tram")
+		if got := s.Resolve(KindStop, id); got != id {
+			t.Errorf("%q: %s resolves to %s", name, id, got)
+		}
+	}
+	if stasyKey("Α - Β", "tram") != stasyKey("Α-Β", "tram") {
+		t.Error("punctuation changes the id")
+	}
+}

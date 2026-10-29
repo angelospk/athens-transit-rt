@@ -46,7 +46,9 @@ one: choice, alternative, reason. The docs did not settle these points.
     The map repo keeps its copies until phase 4 removes them.
 12. **stasy Stop ids use `rail.Fold`**, the fold the `/v1` departures already use: lower case, no
     accents, final sigma as σ, words joined by `-` ("stasy:πειραιασ-metro",
-    "stasy:συνταγμα-(κεντρο)-tram"). An unfolded id in a request resolves to the folded one.
+    "stasy:συνταγμα-(κεντρο)-tram"). An unfolded id in a request resolves to the folded one. A
+    `-` in a name is a word break too ("Α - Β" and "Α-Β" are both `α-β`), so an id resolves to
+    itself (CodeRabbit, session 2).
 13. **stasy Stop `name`** is the first platform's name in the feed as written (metro names are
     upper case, tram names mixed case). `name_en` is `null`: the STASY files have no English names.
 14. **stasy Line `name`** is the feed's `route_long_name` ("ΓΡΑΜΜΗ 1"), `"Γραμμή N"` when empty;
