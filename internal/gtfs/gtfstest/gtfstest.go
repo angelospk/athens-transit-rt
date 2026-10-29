@@ -44,6 +44,7 @@ type StraightLine struct {
 	First           int
 	Headway, Leg    int
 	SecondRouteCode string // optional extra route on the same line, reversed direction
+	Dwell           int    // seconds each departure is after its stop's arrival
 }
 
 func (s StraightLine) Files() map[string]string {
@@ -61,8 +62,8 @@ func (s StraightLine) Files() map[string]string {
 		fmt.Fprintf(&trips, "R1,day_1,%s,EAST,0,SH\n", id)
 		start := s.First + k*s.Headway*60
 		for i := 0; i < s.Stops; i++ {
-			at := hms(start + i*s.Leg*60)
-			fmt.Fprintf(&st, "%s,%s,%s,S%d,%d\n", id, at, at, i, i+1)
+			at := start + i*s.Leg*60
+			fmt.Fprintf(&st, "%s,%s,%s,S%d,%d\n", id, hms(at), hms(at+s.Dwell), i, i+1)
 		}
 	}
 	return map[string]string{

@@ -132,13 +132,24 @@ A map view at MapLibre zoom 13 needs 2-15 tiles of 1-8 KB (gzip) instead of the 
 ## A stop and its arrivals
 
 `GET /v1/stops/{stop_id}` returns the stop (`id`, `name`, `lat`, `lon`), the `lines` that call
-there and `arrivals`: the live buses of those lines that still have the stop ahead, soonest
-first. Each has `line`, `headsign`, `variant`, `vehicle`, `eta_s`, `at`, `delay_s` and
-`position_at`. The time is the stop's timetable time plus the bus's current delay, as in the
-GTFS-RT trip updates. Only buses already on a trip (driving it or waiting at its first stop) are
-listed; buses not heard of for 5 minutes are left out.
-The request raises the polling priority of the stop's lines that have a bus on the way (in
-`arrivals`); a line with none keeps its usual rate. Cached 15 s.
+there and `arrivals`, soonest first, up to 60 min ahead, at most 3 per line and variant. Each has
+`line`, `headsign`, `variant`, `vehicle`, `eta_s`, `at`, `delay_s`, `position_at`, `source`,
+`trip_id`, `scheduled`, `stops_away` and `distance_m`.
+
+- `source: live`: a bus of those lines that still has the stop ahead, from a fix of the last
+  5 minutes. `at` is its fix plus the driving time to the stop (typical speeds per 200 m of the
+  shape, else the timetable's running time); an unmatched bus is placed on its shape and has no
+  `trip_id`. A bus not past the stop by its last fix is never overdue: late, it is due now.
+- `source: schedule`: a trip that has not left yet and has no bus (`vehicle` is `""`). None
+  while the static GTFS is expired.
+
+The request raises the polling priority of the stop's lines that have a live bus in
+`arrivals`; a line with none keeps its usual rate. No OASA request of its own. Cached 15 s.
+Full rules: [`CONTRACT.md`](CONTRACT.md#get-v1stopsstop_id-rev-8).
+
+```bash
+curl -s https://transit.haroldpoi.dev/v1/stops/61000 | jq -r '.arrivals[] | [.line, .source, .eta_s/60|floor] | @tsv'
+```
 
 ## OASA's predictions at a stop
 

@@ -1,0 +1,52 @@
+{
+  "stop": {"id": "61000", "name": "ΑΚΑΔΗΜΙΑ", "lat": 37.9799, "lon": 23.7333},
+  "lines": ["022", "025", "026", "608"],
+  "arrivals": [
+    {
+      "line": "608",
+      "headsign": "ΝΕΚΡ. ΖΩΓΡΑΦΟΥ - ΑΚΑΔΗΜΙΑ - ΓΑΛΑΤΣΙ",
+      "variant": "5346",
+      "vehicle": "61191",
+      "eta_s": 25,
+      "at": 1793019999,
+      "delay_s": -177,
+      "position_at": 1793019859,
+      "source": "live",
+      "trip_id": "960_day_1_1625_1443",
+      "scheduled": 1793020176,
+      "stops_away": 1,
+      "distance_m": 444
+    },
+    {
+      "line": "022",
+      "headsign": "ΜΑΡΑΣΛΕΙΟΣ - ΚΑΝΙΓΓΟΣ",
+      "variant": "5401",
+      "vehicle": "60122",
+      "eta_s": 328,
+      "at": 1793020302,
+      "delay_s": 0,
+      "position_at": 1793019851,
+      "source": "live",
+      "trip_id": null,
+      "scheduled": null,
+      "stops_away": 4,
+      "distance_m": 1230
+    },
+    {
+      "line": "026",
+      "headsign": "ΒΟΤΑΝΙΚΟΣ",
+      "variant": "5420",
+      "vehicle": "",
+      "eta_s": 526,
+      "at": 1793020500,
+      "delay_s": 0,
+      "position_at": 0,
+      "source": "schedule",
+      "trip_id": "1032_day_1_2402_1540",
+      "scheduled": 1793020500,
+      "stops_away": null,
+      "distance_m": null
+    }
+  ],
+  "updated_at": 1793019974
+}

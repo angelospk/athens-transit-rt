@@ -164,7 +164,8 @@ func keys(t *testing.T, b []byte) []string {
 	for k, v := range m {
 		out = append(out, k)
 		if arr, ok := v.([]any); ok && len(arr) > 0 {
-			for k2 := range arr[0].(map[string]any) {
+			obj, _ := arr[0].(map[string]any) // nil for an array of strings
+			for k2 := range obj {
 				out = append(out, k+"."+k2)
 			}
 		}

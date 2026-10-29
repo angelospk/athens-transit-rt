@@ -14,8 +14,8 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 7 (2026-10-28): `path_speeds` also follow today's traffic (same shape and units)
-(rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
+Revision: 8 (2026-10-29): `GET /v1/stops/{stop_id}` (a stop board)
+(rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
 `path` on vehicles)
 
 ## Hosts
@@ -226,6 +226,64 @@ Client rules:
 6. Cloudflare rate-limits per IP (`429`, back off ≥ 10 s). A desktop view at MapLibre 13 is ~15
    tiles; do not refetch tiles that are still fresh.
 
+### `GET /v1/stops/{stop_id}` (rev 8)
+
+The buses on their way to one stop and about when they get there (a stop board), from the
+line polls the backend already makes: no OASA request of its own. The lines with a live bus
+in `arrivals` are marked watched, as a line request does (polled about every 30 s for 10 min);
+the others keep their usual rate. `stop_id` is the GTFS `stop_id`, as in
+`static/v1/lines/{line_id}.json` → `stops`.
+
+```json
+{
+  "stop": {"id": "61000", "name": "ΑΚΑΔΗΜΙΑ", "lat": 37.9799, "lon": 23.7333},
+  "lines": ["022", "025", "026", "608"],
+  "arrivals": [
+    {
+      "line": "608", "headsign": "ΝΕΚΡ. ΖΩΓΡΑΦΟΥ - ΑΚΑΔΗΜΙΑ - ΓΑΛΑΤΣΙ", "variant": "5346",
+      "vehicle": "61191", "eta_s": 25, "at": 1793019999, "delay_s": -177,
+      "position_at": 1793019859, "source": "live", "trip_id": "960_day_1_1625_1443",
+      "scheduled": 1793020176, "stops_away": 1, "distance_m": 444
+    },
+    {
+      "line": "026", "headsign": "ΒΟΤΑΝΙΚΟΣ", "variant": "5420",
+      "vehicle": "", "eta_s": 526, "at": 1793020500, "delay_s": 0,
+      "position_at": 0, "source": "schedule", "trip_id": "1032_day_1_2402_1540",
+      "scheduled": 1793020500, "stops_away": null, "distance_m": null
+    }
+  ],
+  "updated_at": 1793019974
+}
+```
+
+- `lines`: every line with a trip that calls here, sorted (lines with no bus coming too).
+  `updated_at`: when the answer was computed.
+- `source: "live"`: a bus of those lines with a fix from the last 5 min whose route passes the
+  stop ahead of it: its next pass (the first one on a loop), never a stop where its trip ends.
+  A bus seen on two lines counts on the line of its newest fix only. Matched buses are placed
+  by their trip; unmatched ones on the shape of their `variant` with that variant's stops, when
+  the pass is clear (as for `speed`), else left out.
+- `at`: `position_at` plus the time to drive the `distance_m` metres along the shape: per 200 m
+  the typical speed of the last 14 days at that day type and hour (as `path_speeds`), where
+  there is none the timetable's running time (matched) or 3.5 m/s (unmatched); waits at stops
+  and lights are included. A matched bus waiting at its first stop leaves at its scheduled
+  departure, or now when that is past. An unmatched bus standing at its first stop has no
+  time and is left out. A bus not past the stop by its last fix is never overdue: late, it is
+  due now (`at` = now). `eta_s` = `at` − now.
+- `delay_s`: the matched bus's delay (positive = late); `0` when unmatched. `trip_id` and
+  `scheduled` (the trip's timetable time at the stop) are `null` when unmatched.
+  `stops_away`: `1` when the stop is the bus's next one.
+- `source: "schedule"`: a trip of those lines that has not left its first stop yet, passes the
+  stop within 60 min and has no matched bus; `at` = `scheduled`, `vehicle` `""`, `delay_s` and
+  `position_at` `0`, `stops_away` and `distance_m` `null`. None while the static GTFS is expired
+  (`gtfs_expires` in `/v1/status` is past): buses still match it, but its times may not be
+  OASA's any more. A client that shows only buses filters on `source`.
+- Up to 60 min ahead, sorted by `at`, at most 3 rows per `line` and `variant`. `arrivals` may
+  be `[]`.
+- Headers: `Cache-Control: public, max-age=15`. Refetch every 15-30 s while shown.
+- `404` `{"error":"unknown_stop"}` (`max-age=60`) for an id not in the current GTFS. `503`
+  `{"error":"warming_up"}` before the static GTFS is loaded.
+
 ### `GET /v1/status`
 
 ```json
@@ -287,5 +345,5 @@ Published by GitHub Actions in the backend repo when OASA publishes a new GTFS.
 
 `docs/fixtures/` in the backend repo holds one example of every response above
 (`line-040.json`, `vehicles.json`, `vehicles-tile-13-4636-3160.json`,
-`vehicles-tile-9-289-197.json`, `status.json`, `lines.json`, `lines-040.json`). The frontend
+`vehicles-tile-9-289-197.json`, `stop-61000.json`, `status.json`, `lines.json`, `lines-040.json`). The frontend
 develops against copies of these until the live API is up.

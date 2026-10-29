@@ -1,19 +1,33 @@
 package server
 
 import (
+	"math"
 	"net/http"
 	"slices"
 	"sort"
 	"time"
 
+	"github.com/angelospk/athens-transit-rt/internal/geo"
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
 	"github.com/angelospk/athens-transit-rt/internal/match"
+	"github.com/angelospk/athens-transit-rt/internal/segspeed"
 )
 
+// Stop boards: the buses on their way to one stop and about when they get there, from what the
+// line polls already hold (no OASA request), and while the timetable is valid the trips that
+// have not left yet.
 const (
-	stopMaxAge = 15
-	staleFix   = 5 * time.Minute // an older fix is not promised at a stop: the bus may be gone
-	maxEta     = 2 * time.Hour
+	stopMaxAge      = 15
+	staleFix        = 5 * time.Minute // an older fix is not promised at a stop: the bus may be gone
+	boardHorizon    = time.Hour       // arrivals up to this far ahead
+	boardAtStopM    = 30              // GPS noise: a vehicle this far past a stop is still at it
+	boardPerVariant = 3               // rows per line and variant, soonest first
+	// boardDefaultMS is the speed where neither typical speeds nor a timetable say anything
+	// (an unmatched vehicle off the history): about the lines through the centre, stops included.
+	boardDefaultMS = 3.5
+	// boardMinBinMS: a slower typical bin counts this fast. The history counts layovers at
+	// terminals as driving time there.
+	boardMinBinMS = 0.5
 )
 
 type StopInfo struct {
@@ -23,16 +37,22 @@ type StopInfo struct {
 	Lon  float64 `json:"lon"`
 }
 
-// StopArrival is a matched bus on its way to the stop: its timetable time there plus its delay.
+// StopArrival is a bus on its way to the stop (source "live") or a trip that has not left its
+// first stop yet and has no bus (source "schedule": vehicle "", delay_s and position_at 0).
 type StopArrival struct {
-	Line       string `json:"line"`
-	Headsign   string `json:"headsign"`
-	Variant    string `json:"variant"`
-	Vehicle    string `json:"vehicle"`
-	EtaS       int    `json:"eta_s"`
-	At         int64  `json:"at"`
-	DelayS     int    `json:"delay_s"`
-	PositionAt int64  `json:"position_at"`
+	Line       string  `json:"line"`
+	Headsign   string  `json:"headsign"`
+	Variant    string  `json:"variant"`
+	Vehicle    string  `json:"vehicle"`
+	EtaS       int     `json:"eta_s"`
+	At         int64   `json:"at"`
+	DelayS     int     `json:"delay_s"`
+	PositionAt int64   `json:"position_at"`
+	Source     string  `json:"source"`
+	TripID     *string `json:"trip_id"`    // null: an unmatched bus
+	Scheduled  *int64  `json:"scheduled"`  // the trip's timetable time at the stop
+	StopsAway  *int    `json:"stops_away"` // 1: the stop is the bus's next one
+	DistanceM  *int    `json:"distance_m"` // along the route
 }
 
 type StopResponse struct {
@@ -68,42 +88,71 @@ func stopLines(f *gtfs.Feed) map[int32][]string {
 	return out
 }
 
-// arrivalsAt lists the matched buses of results still to call at stop, soonest first.
-func arrivalsAt(f *gtfs.Feed, results []match.Result, stop int32, now time.Time) []StopArrival {
-	out := []StopArrival{}
-	for i := range results {
-		r := &results[i]
-		if !r.Matched() || now.Sub(r.Time) >= staleFix {
+// boardPos is where a vehicle is on a stop pattern, recorded with each poll. trip is the
+// matched trip, or for an unmatched vehicle the most common trip of its shape (pattern and
+// headsign only). ok is false when the vehicle could not be placed.
+type boardPos struct {
+	g       *geo.Geometry
+	trip    int32
+	along   float64
+	next    int  // index in the pattern of the first stop ahead
+	waiting bool // at the first stop, not left yet
+	ok      bool
+}
+
+// boardPosOf places a matched vehicle by its match, an unmatched one by its position on the
+// shape (s from motionOf, -1 when ambiguous) when its shape's stops fit the shape.
+func boardPosOf(w *world, r *match.Result, shape int32, s float64, speed *float64) boardPos {
+	f := w.feed
+	if r.Matched() {
+		g := w.matcher.Geometry(f.Trip(r.Trip))
+		if g == nil {
+			return boardPos{}
+		}
+		next := r.NextIndex
+		if r.Waiting {
+			next = 0
+		}
+		return boardPos{g: g, trip: r.Trip, along: r.Along, next: next, waiting: r.Waiting, ok: true}
+	}
+	if shape < 0 || s < 0 {
+		return boardPos{}
+	}
+	trip := shapeTrip(f, r.Line, shape)
+	if trip < 0 {
+		return boardPos{}
+	}
+	g := w.matcher.Geometry(f.Trip(trip))
+	if g == nil || !g.FromShape { // s is along the shape; a line through the stops is another scale
+		return boardPos{}
+	}
+	next := sort.SearchFloat64s(g.StopAlong, s-boardAtStopM)
+	if next == len(g.StopAlong) {
+		return boardPos{}
+	}
+	waiting := next == 0 && math.Abs(s-g.StopAlong[0]) <= match.TerminalRadiusM && (speed == nil || *speed == 0)
+	return boardPos{g: g, trip: trip, along: s, next: next, waiting: waiting, ok: true}
+}
+
+// shapeTrip is the first trip of the line's most common stop pattern on a shape (the static
+// variant's stops, staticsite), -1 when the line has no trip on it.
+func shapeTrip(f *gtfs.Feed, line string, shape int32) int32 {
+	count, first := map[int32]int{}, map[int32]int32{}
+	best := int32(-1)
+	for _, ti := range f.TripsForLine(line) {
+		t := &f.Trips[ti]
+		if t.Shape != shape {
 			continue
 		}
-		t := f.Trip(r.Trip)
-		from := r.NextIndex
-		if r.Waiting {
-			from = 0
+		if count[t.Pattern] == 0 {
+			first[t.Pattern] = ti
 		}
-		stops := f.Patterns[t.Pattern].Stops
-		for k := from; k < len(stops); k++ {
-			if stops[k] != stop {
-				continue
-			}
-			at := r.Day.Add(time.Duration(int(f.StopTime(t, k).Arr)+r.Delay) * time.Second)
-			if at.Sub(now) > maxEta {
-				break
-			}
-			if at.Before(now) {
-				at = now // late by its last fix: due now
-			}
-			a := StopArrival{Line: r.Line, Headsign: f.Headsign(t), Vehicle: r.VehicleID, EtaS: int(at.Sub(now) / time.Second),
-				At: at.Unix(), DelayS: r.Delay, PositionAt: r.Time.Unix()}
-			if t.Shape >= 0 {
-				a.Variant = f.Shapes[t.Shape].ID
-			}
-			out = append(out, a)
-			break
+		count[t.Pattern]++
+		if best < 0 || count[t.Pattern] > count[f.Trips[best].Pattern] {
+			best = first[t.Pattern]
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].EtaS < out[j].EtaS })
-	return out
+	return best
 }
 
 func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +172,32 @@ func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
 	if lines == nil {
 		lines = []string{}
 	}
-	arr := []StopArrival{}
+	arr := a.stopBoard(wd, s, lines, now)
+	// Only the lines with a bus on the way are asked of OASA more often: a big stop has 16 lines.
+	seen := map[string]bool{}
+	for _, x := range arr {
+		if x.Source == "live" && !seen[x.Line] {
+			seen[x.Line] = true
+			a.sched.Watch(x.Line)
+		}
+	}
+	st := f.Stops[s]
+	writeJSON(w, http.StatusOK, stopMaxAge, StopResponse{Stop: StopInfo{st.ID, st.Name, st.Lat, st.Lon},
+		Lines: lines, Arrivals: arr, UpdatedAt: now.Unix()})
+}
+
+// boardVehicle is one vehicle of a line's last poll, with its place.
+type boardVehicle struct {
+	line string
+	r    *match.Result
+	pos  boardPos
+}
+
+// stopBoard lists the buses on their way to the stop (each once, by its newest fix) and, while
+// the timetable is valid, the trips that leave later and have no bus yet; soonest first, at
+// most boardPerVariant per line and variant.
+func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []StopArrival {
+	f := w.feed
 	a.mu.RLock()
 	// A bus that changed lines keeps its old line's result for a while: only its newest fix counts.
 	type fix struct {
@@ -142,30 +216,189 @@ func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var buses []boardVehicle
+	running := map[[2]int64]bool{} // trip, service day of every matched bus of these lines
 	for _, l := range lines {
 		d := a.lines[l]
 		if d == nil || d.feed != f {
 			continue
 		}
-		var mine []match.Result
-		for _, r := range d.results {
-			if newest[r.VehicleID].line == l {
-				mine = append(mine, r)
+		for i := range d.results {
+			r := &d.results[i]
+			if newest[r.VehicleID].line != l || now.Sub(r.Time) >= staleFix {
+				continue
 			}
+			if r.Matched() {
+				running[[2]int64{int64(r.Trip), r.Day.Unix()}] = true
+			}
+			if i >= len(d.board) {
+				continue
+			}
+			buses = append(buses, boardVehicle{l, r, d.board[i]})
 		}
-		arr = append(arr, arrivalsAt(f, mine, s, now)...)
 	}
 	a.mu.RUnlock()
-	sort.SliceStable(arr, func(i, j int) bool { return arr[i].EtaS < arr[j].EtaS })
-	// Only the lines with a bus on the way are asked of OASA more often: a big stop has 16 lines.
-	seen := map[string]bool{}
-	for _, x := range arr {
-		if !seen[x.Line] {
-			seen[x.Line] = true
-			a.sched.Watch(x.Line)
+
+	tab := a.segs.Load()
+	if tab.Feed() != worldVersion(w) {
+		tab = nil
+	}
+	horizon := now.Add(boardHorizon).Unix()
+	var rows []StopArrival
+	for _, b := range buses {
+		if row, ok := liveArrival(f, tab, stop, b, now); ok && row.At <= horizon {
+			rows = append(rows, row)
 		}
 	}
-	st := f.Stops[s]
-	writeJSON(w, http.StatusOK, stopMaxAge, StopResponse{Stop: StopInfo{st.ID, st.Name, st.Lat, st.Lon},
-		Lines: lines, Arrivals: arr, UpdatedAt: now.Unix()})
+	// An expired timetable still matches vehicles (PlanningTime), but its times are not OASA's.
+	if end := f.FeedEnd(); end.IsZero() || !gtfs.Midnight(now).After(end) {
+		for _, l := range lines {
+			rows = append(rows, scheduleArrivals(f, l, stop, now, running)...)
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].At != rows[j].At {
+			return rows[i].At < rows[j].At
+		}
+		if rows[i].Line != rows[j].Line {
+			return rows[i].Line < rows[j].Line
+		}
+		return rows[i].Vehicle < rows[j].Vehicle
+	})
+	out := []StopArrival{}
+	per := map[[2]string]int{}
+	for _, row := range rows {
+		k := [2]string{row.Line, row.Variant}
+		if per[k] < boardPerVariant {
+			per[k]++
+			row.EtaS = int(max(0, row.At-now.Unix()))
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// liveArrival is the bus's next pass of the stop (not as the last stop of its pattern): from
+// its fix, the time to drive there (boardTravel); a matched bus waiting at its first stop
+// leaves at its scheduled departure, or now when that is past. An unmatched bus standing at its
+// first stop has no time and is left out. Not past the stop by its last fix, it is never
+// overdue: late, it is due now.
+func liveArrival(f *gtfs.Feed, tab *segspeed.Table, stop int32, b boardVehicle, now time.Time) (StopArrival, bool) {
+	p, r := b.pos, b.r
+	if !p.ok {
+		return StopArrival{}, false
+	}
+	t := f.Trip(p.trip)
+	stops := f.Patterns[t.Pattern].Stops
+	first := p.next // a stop just reached still counts: the bus is at it
+	if first > 0 && p.along-p.g.StopAlong[first-1] <= boardAtStopM {
+		first--
+	}
+	j := slices.Index(stops[first:], stop)
+	if j < 0 || first+j == len(stops)-1 {
+		return StopArrival{}, false
+	}
+	j += first
+	from := p.along
+	if p.waiting {
+		from = p.g.StopAlong[0]
+	}
+	dist := max(0, p.g.StopAlong[j]-from)
+	row := StopArrival{Line: b.line, Headsign: f.Headsign(t), Vehicle: r.VehicleID, PositionAt: r.Time.Unix(),
+		Source: "live", StopsAway: ptr(j - first + 1), DistanceM: ptr(int(math.Round(dist)))}
+	if t.Shape >= 0 {
+		row.Variant = f.Shapes[t.Shape].ID
+	}
+	start, timetable := r.Time, (*gtfs.Trip)(nil)
+	if r.Matched() {
+		row.TripID = ptr(t.ID)
+		row.Scheduled = ptr(r.Day.Unix() + int64(f.StopTime(t, j).Arr))
+		row.DelayS = r.Delay
+		timetable = t
+		if p.waiting {
+			start = maxTime(r.Day.Add(time.Duration(f.Start(t))*time.Second), now)
+		}
+	} else if p.waiting {
+		return StopArrival{}, false // departure unknown
+	}
+	secs := boardTravel(f, p.g, f.ShapeID(t), tab, segspeed.Slot(start, gtfs.Athens), timetable, from, p.g.StopAlong[j])
+	row.At = max(start.Unix()+int64(math.Round(secs)), now.Unix())
+	return row, true
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+// boardTravel is the seconds to drive from `from` to `to` along g: per 200 m bin of the shape
+// the typical speed where the history has one (a FromShape geometry; at least boardMinBinMS),
+// elsewhere the timetable's running time over that stretch (trip, nil for none), or
+// boardDefaultMS. Waits at stops and lights are in both.
+func boardTravel(f *gtfs.Feed, g *geo.Geometry, shape string, tab *segspeed.Table, slot int, trip *gtfs.Trip, from, to float64) float64 {
+	if !g.FromShape {
+		tab = nil
+	}
+	if trip != nil && f.NumStops(trip) < 2 {
+		trip = nil
+	}
+	secs := 0.0
+	for x := from; x < to; {
+		bin := int(math.Floor(x / segspeed.BinM))
+		end := min(to, float64(bin+1)*segspeed.BinM)
+		if v, ok := tab.Speed(shape, bin, slot); ok {
+			secs += (end - x) / max(v, boardMinBinMS)
+		} else if trip != nil {
+			secs += schedAt(f, g, trip, end, end == to) - schedAt(f, g, trip, x, false)
+		} else {
+			secs += (end - x) / boardDefaultMS
+		}
+		x = end
+	}
+	return secs
+}
+
+// schedAt is the trip's scheduled time (seconds of its service day) at a point along g, between
+// the stops' times as the matcher measures delay. At a stop it is the departure, or with arrive
+// the arrival: the wait at the stop asked for is not driving time to it.
+func schedAt(f *gtfs.Feed, g *geo.Geometry, t *gtfs.Trip, along float64, arrive bool) float64 {
+	p := g.Progress(along)
+	if k := int(p); arrive && float64(k) == p && k > 0 {
+		return float64(f.StopTime(t, k).Arr)
+	}
+	seg := min(int(p), f.NumStops(t)-2)
+	a, b := f.StopTime(t, seg), f.StopTime(t, seg+1)
+	return float64(a.Dep) + (p-float64(seg))*float64(b.Arr-a.Dep)
+}
+
+// scheduleArrivals is the line's trips that have not left their first stop yet, pass the stop
+// within boardHorizon (the first pass, not as the last stop) and no matched bus runs.
+func scheduleArrivals(f *gtfs.Feed, line string, stop int32, now time.Time, running map[[2]int64]bool) []StopArrival {
+	var out []StopArrival
+	// Asked at the horizon, the candidates are the trips of its service day and the day before
+	// that started by then: at 23:50 tomorrow's trips from 00:00 too. Those already gone are
+	// skipped below.
+	for _, c := range f.CandidateTrips(line, now.Add(boardHorizon), 0, 48*3600) {
+		t := f.Trip(c.Trip)
+		if running[[2]int64{int64(c.Trip), c.Day.Unix()}] || c.Day.Add(time.Duration(f.Start(t))*time.Second).Before(now) {
+			continue
+		}
+		stops := f.Patterns[t.Pattern].Stops
+		j := slices.Index(stops[:len(stops)-1], stop)
+		if j < 0 {
+			continue
+		}
+		at := c.Day.Unix() + int64(f.StopTime(t, j).Arr)
+		if at > now.Add(boardHorizon).Unix() {
+			continue
+		}
+		row := StopArrival{Line: line, Headsign: f.Headsign(t), TripID: ptr(t.ID), At: at, Scheduled: ptr(at), Source: "schedule"}
+		if t.Shape >= 0 {
+			row.Variant = f.Shapes[t.Shape].ID
+		}
+		out = append(out, row)
+	}
+	return out
 }

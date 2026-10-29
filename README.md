@@ -122,6 +122,12 @@ fixed set (~1,100 tiles over Attica), so the origin load behind the cache does n
 clients. Measured on a recorded rush-hour snapshot (922 vehicles): build 11.5 → 23 ms per 30 s,
 held bytes 355 → 875 KB; [spec](docs/superpowers/specs/2026-10-08-vehicle-tiles.md).
 
+`/v1/stops/{stop_id}` (a stop board) also reads only what was polled: each poll keeps every
+vehicle's place on its stop pattern, and a request adds the time to drive to the stop (typical
+speeds per 200 m of the shape, else the timetable's running time) to each vehicle of the stop's
+lines that is on its way there. No OASA request of its own; the lines with a bus on the way are
+marked watched.
+
 `/v1/status` reports `ok: false` when no line poll succeeded in the last 5 minutes (while lines
 are scheduled). During an OASA outage the last good data stays served; `updated_at` shows its age.
 

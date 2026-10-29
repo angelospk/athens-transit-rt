@@ -73,6 +73,7 @@ type lineData struct {
 	feed     *gtfs.Feed
 	results  []match.Result
 	vehicles []Vehicle
+	board    []boardPos // per result, for the stop boards
 }
 
 type App struct {
@@ -319,12 +320,13 @@ func (a *App) onLine(p sched.LinePoll) {
 	results := w.matcher.MatchLine(p.Line, p.Obs)
 	a.noteSeen(w, results, p.Done)
 	vehicles := make([]Vehicle, len(results))
+	board := make([]boardPos, len(results))
 	ver := ""
 	if a.hist != nil {
 		ver = a.gtfsVersion()
 	}
 	for i := range results {
-		vehicles[i] = a.vehicleView(w, &results[i])
+		vehicles[i], board[i] = a.vehicleView(w, &results[i])
 		if a.hist != nil {
 			a.hist.Add(historyRow(w, p.Line, &results[i], ver))
 		}
@@ -336,7 +338,7 @@ func (a *App) onLine(p sched.LinePoll) {
 	if p.Failed == p.Routes {
 		return // keep the previous data; nothing new is known
 	}
-	a.lines[p.Line] = &lineData{updated: p.Done, feed: w.feed, results: results, vehicles: vehicles}
+	a.lines[p.Line] = &lineData{updated: p.Done, feed: w.feed, results: results, vehicles: vehicles, board: board}
 	a.lastPublish, a.lastOK = p.Done, p.Done
 }
 
@@ -362,41 +364,45 @@ type Vehicle struct {
 
 func ptr[T any](v T) *T { return &v }
 
-func (a *App) vehicleView(w *world, r *match.Result) Vehicle {
+// vehicleView is the vehicle's contract entry and its place for the stop boards.
+func (a *App) vehicleView(w *world, r *match.Result) (Vehicle, boardPos) {
 	f := w.feed
 	v := Vehicle{ID: r.VehicleID, Lat: r.Lat, Lon: r.Lon, PositionAt: r.Time.Unix(), RouteCode: r.RouteCode}
 	if r.Bearing != 0 { // 0 means "unknown" more often than "due north"
 		v.Bearing = ptr(r.Bearing)
 	}
+	var along float64
 	if !r.Matched() {
 		s := bestShape(f, w.mapper.ShapesFor(r.Line, r.RouteCode), r.Line)
 		if s >= 0 {
 			v.Variant = ptr(f.Shapes[s].ID)
 		}
-		v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds = a.motionOf(w, r, s)
-		return v
+		v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds, along = a.motionOf(w, r, s)
+		return v, boardPosOf(w, r, s, along, v.Speed)
 	}
 	t := f.Trip(r.Trip)
 	if t.Shape >= 0 {
 		v.Variant = ptr(f.Shapes[t.Shape].ID)
 	}
-	v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds = a.motionOf(w, r, t.Shape)
+	v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds, _ = a.motionOf(w, r, t.Shape)
 	v.TripID = ptr(t.ID)
 	v.TripLabel = ptr(TripLabel(f, t))
 	v.DelayS = ptr(r.Delay)
 	v.NextStopID = ptr(f.Stops[feed.NextStop(f, r).Stop].ID)
-	return v
+	return v, boardPosOf(w, r, t.Shape, r.Along, v.Speed)
 }
 
 // motionOf records the vehicle's position along its shape and returns its speed, the path
-// ahead, its continuation, the stops on them and (matched, with history) typical speeds ahead. A matched trip whose stops fit its shape has its position from the matcher; others are
-// projected onto the shape when the pass is clear.
-func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, path, beyond [][2]float64, at []int, steps []*float64) {
+// ahead, its continuation, the stops on them, (matched, with history) typical speeds ahead and
+// its position along the shape line (-1 when not placed). A matched trip whose stops fit its
+// shape has its position from the matcher; others are projected onto the shape when the pass is
+// clear.
+func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, path, beyond [][2]float64, at []int, steps []*float64, along float64) {
 	pos := geo.XY(r.Lat, r.Lon)
 	if r.Matched() {
 		if g := w.matcher.Geometry(w.feed.Trip(r.Trip)); g != nil && g.FromShape {
 			if geo.Dist(pos, g.Line.At(r.Along)) > motionMaxOffM {
-				return nil, nil, nil, nil, nil
+				return nil, nil, nil, nil, nil, -1
 			}
 			// Waiting to start: only up to the first stop (usually nothing: it is there).
 			stops := g.StopAlong[r.NextIndex:]
@@ -412,15 +418,15 @@ func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, 
 			if !r.Waiting {
 				steps = a.roads.Blend(steps, g.Line, r.Along, r.Time.Unix()) // today's traffic, any line
 			}
-			return speed, path, beyond, at, steps
+			return speed, path, beyond, at, steps, r.Along
 		}
 	}
 	if shape < 0 {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, -1
 	}
 	line := w.matcher.ShapeLine(shape)
 	if len(line.XY) < 2 {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, -1
 	}
 	cands := line.Candidates(pos[0], pos[1], motionMaxOffM, r.Bearing, r.Bearing != 0)
 	s, ok := a.motion.pick(r.VehicleID, line, cands, r.Time)
@@ -428,12 +434,12 @@ func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, 
 		if atTerminus(cands, line.Length()) { // a loop's start, put at both of its ends
 			a.starts.observe(w.feed, r.VehicleID, r.Line, shape, 0, line.Length(), r.Time)
 		}
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, -1
 	}
 	speed = a.motion.observeAs(r.VehicleID, line, s, r.Time, !r.Waiting)
 	a.starts.observe(w.feed, r.VehicleID, r.Line, shape, s, line.Length(), r.Time)
 	path, _, _ = pathAhead(line, s, speed, nil)
-	return speed, path, nil, nil, nil
+	return speed, path, nil, nil, nil, s
 }
 
 // historyRow is one fix for the history: trip, shape and position along it when matched.

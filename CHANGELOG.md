@@ -9,6 +9,13 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `GET /v1/stops/{stop_id}` (contract rev 8): arrival times now come from each bus's position
+  and the typical driving speed to the stop (else the timetable's running time) instead of the
+  timetable time plus delay; unmatched buses placed on their shape are listed too, and while
+  the static GTFS is valid so are the trips that have not left yet (`source: schedule`). New
+  fields `source`, `trip_id`, `scheduled`, `stops_away`, `distance_m`; up to 60 min ahead
+  (was 2 h), at most 3 per line and variant. Existing fields are unchanged. Stop boards by
+  @imertz (#6).
 - `GET /v1/stops/{stop_id}/arrivals`: OASA's own predictions for a stop (line, route code,
   vehicle, minutes), soonest first, cached 30 s per stop with `Cache-Control` until that cache
   expires. The OASA calls take at most one request slot in four, so the line polls keep at least
