@@ -14,9 +14,9 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 8 (2026-10-29): `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
-([below](#unified-api-v2-rev-8))
-(rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
+Revision: 9 (2026-10-29): `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles
+(rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
+([below](#unified-api-v2-rev-8)); rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
 `path` on vehicles)
 
 ## Hosts
@@ -57,6 +57,7 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
       "trip_label": "00:35 ΠΕΙΡΑΙΑΣ → ΣΥΝΤΑΓΜΑ",
       "delay_s": 140,
       "next_stop_id": "400012",
+      "at_terminus": false,
       "speed": 6.4,
       "path": [[37.9755, 23.7348], [37.97601, 23.73502], [37.9781, 23.7356]],
       "path_beyond": [[37.9781, 23.7356], [37.98145, 23.73668], [37.98466, 23.73771]],
@@ -69,6 +70,10 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
 
 - `trip_id`, `trip_label`, `delay_s`, `next_stop_id` are `null` when the vehicle is
   not matched to a scheduled trip. `bearing` may be `null`.
+- `at_terminus` (rev 9): `true` when the vehicle is matched and waiting at the first stop of
+  its trip (within 100 m of it, before the scheduled departure); its `delay_s` is then a
+  departure delay, not a running delay. `false` otherwise. Older responses lack the key:
+  treat a missing key as `false`.
 - `variant` keys into `static/v1/lines/{line_id}.json` → `variants` (for shape + stops).
   It may be `null` if no static variant matches.
 - `speed` (rev 3): smoothed speed along the route in m/s, one decimal, 0..20. It is the
@@ -486,6 +491,7 @@ and compare them; they never parse them.
   "position": {"kind": "estimate", "lat": 37.9722, "lon": 23.7325, "bearing": 205, "at": 1793205600},
   "delay_s": null,
   "next_stop": "stasy:ακροπολη-metro",
+  "at_terminus": false,
   "motion": {
     "path": [[37.9722, 23.7325], [37.96882, 23.72963]],
     "path_beyond": [[37.96882, 23.72963], [37.96421, 23.72651]],
@@ -505,6 +511,9 @@ and compare them; they never parse them.
 - `delay_s`: `null` when there is no live signal (always for metro/tram).
 - `run`: Run id, `null` when the Vehicle is not matched to a Run.
 - `next_stop`: Stop id, `null` when unmatched.
+- `at_terminus` (rev 9): `true` when a bus or trolley is matched and waiting at the first Stop
+  of its Run (the `/v1` meaning); always `false` for metro, tram and suburban. Present in tiles
+  at zoom 9 too.
 - `motion`: how the client moves the marker between snapshots. `null` when there is nothing to
   move along (standing with no Run, no geometry).
   - `path`, `path_beyond`, `path_stops`, `speed`, `path_speeds`: the rev 3-7 meanings, unchanged

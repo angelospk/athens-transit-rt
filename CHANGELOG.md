@@ -9,6 +9,10 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `at_terminus` (contract rev 9) on `/v1/lines/{id}` vehicles and on `/v2` Vehicles: `true`
+  when a bus is matched and waiting at the first stop of its trip, so clients can show
+  "waiting at the terminus" and leave its departure delay out of the line's running delay
+  ([#1](https://github.com/angelospk/athens-transit-rt/issues/1)).
 - `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule
   (where a marker stands at a time), so the app and the web map test their movers against the
   same cases. The backend checks the knot rules on every train of its test feed through a day.
