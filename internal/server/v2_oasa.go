@@ -225,23 +225,18 @@ func (o *oasaAdapter) Stop(id string) (*model.Stop, error) {
 }
 
 // Arrivals are the stop board's rows (/v1/stops/{id}: buses on the way, then trips that have
-// not left), 2 h ahead, at most 4 per line and headsign and 30 in all. The lines with a bus on
-// the way are polled more often, as for /v1.
+// not left) and OASA's own predictions for the buses the board does not have (#22), 2 h ahead,
+// at most 4 per line and headsign and 30 in all. The lines with a bus of ours on the way are
+// polled more often, as for /v1.
 func (o *oasaAdapter) Arrivals(_ context.Context, stopID string, now time.Time) ([]model.Arrival, error) {
 	w, i, err := o.stop(stopID)
 	if err != nil {
 		return nil, err
 	}
-	out := []model.Arrival{}
-	per := map[[2]string]int{}
-	watched := map[string]bool{}
+	var rows []model.Arrival
+	ours := map[[2]string]bool{} // line, vehicle
 	for _, row := range o.a.stopRows(w, i, w.stopLines[i], now, v2Horizon,
 		func(l string) (telematics.DailySchedule, bool) { return o.a.dailyCached(l, gtfs.Midnight(now)) }) {
-		k := [2]string{row.Line, row.Headsign}
-		if per[k] >= v2PerHeadsign {
-			continue
-		}
-		per[k]++
 		ar := model.Arrival{Line: oasaPrefix + row.Line, Stop: stopID, Headsign: row.Headsign, At: row.At,
 			ScheduledAt: row.Scheduled, Source: model.SourceTable}
 		if row.TripID != nil {
@@ -253,17 +248,79 @@ func (o *oasaAdapter) Arrivals(_ context.Context, stopID string, now time.Time) 
 			if row.TripID != nil {
 				ar.DelayS = model.Ptr(row.DelayS)
 			}
-			if !watched[row.Line] {
-				watched[row.Line] = true
-				o.a.sched.Watch(row.Line)
-			}
+			ours[[2]string{row.Line, row.Vehicle}] = true
 		}
 		ar.Status = model.StatusOf(live, ar.DelayS)
+		rows = append(rows, ar)
+	}
+	rows = append(rows, o.predicted(w, i, stopID, now, ours)...)
+	sort.SliceStable(rows, func(a, b int) bool { return rows[a].At < rows[b].At })
+	out := []model.Arrival{}
+	per := map[[2]string]int{}
+	watched := map[string]bool{}
+	for _, ar := range rows {
+		k := [2]string{ar.Line, ar.Headsign}
+		if per[k] >= v2PerHeadsign {
+			continue
+		}
+		per[k]++
+		if line := strings.TrimPrefix(ar.Line, oasaPrefix); ar.VehicleLabel != nil && ours[[2]string{line, *ar.VehicleLabel}] && !watched[line] {
+			watched[line] = true // a bus of ours on the way
+			o.a.sched.Watch(line)
+		}
 		if out = append(out, ar); len(out) == v2MaxArrivals {
 			break
 		}
 	}
 	return out, nil
+}
+
+// predicted is OASA's own predictions for stop i (getStopArrivals) as live Arrivals, without the
+// buses already in ours (line, vehicle) and route codes of no known line. It never waits for
+// OASA: a stale cache starts one background call (shared with /v1/stops/{id}/arrivals, one per
+// stop at a time, in the scheduler's queue) and the last good answer, up to staleArrivalsMax
+// old, is used meanwhile.
+func (o *oasaAdapter) predicted(w *world, i int32, stopID string, now time.Time, ours map[[2]string]bool) []model.Arrival {
+	native := w.feed.Stops[i].ID
+	o.a.refreshArrivals(native)
+	e, ok := o.a.cachedArrivals(native, staleArrivalsMax)
+	if !ok {
+		return nil
+	}
+	lineOf := o.a.routeLines()
+	var out []model.Arrival
+	for _, p := range e.list {
+		line := lineOf[p.RouteCode]
+		if line == "" || ours[[2]string{line, p.VehCode}] {
+			continue
+		}
+		ar := model.Arrival{Line: oasaPrefix + line, Stop: stopID, Headsign: routeHeadsign(w, line, p.RouteCode),
+			At: max(e.at.Unix()+int64(p.Minutes)*60, now.Unix()), Source: model.SourceLive,
+			Vehicle: model.Ptr(oasaPrefix + p.VehCode), VehicleLabel: model.Ptr(p.VehCode)}
+		ar.Status = model.StatusOf(true, nil)
+		if ar.At <= now.Add(v2Horizon).Unix() {
+			out = append(out, ar)
+		}
+	}
+	return out
+}
+
+// routeHeadsign is the headsign of the line's busiest shape of an OASA route code: from the
+// RouteMapper's cached answer (refreshLines asks for every route code of the active lines), else
+// the shape whose id is the route code; "" for none. It never makes the mapper call OASA.
+func routeHeadsign(w *world, line, routeCode string) string {
+	heads := lineShapes(w.feed, line)
+	if shapes, ok := w.mapper.Cached(line, routeCode); ok {
+		if s := bestShape(w.feed, shapes, line); s >= 0 {
+			return heads[s]
+		}
+	}
+	for s, head := range heads {
+		if w.feed.Shapes[s].ID == routeCode {
+			return head
+		}
+	}
+	return ""
 }
 
 // vehicle is a /v1 vehicle of a line poll in the /v2 shape.

@@ -168,7 +168,7 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
 | `GET /v2/lines/{id}` | one Line, its Patterns (stop order + shape) and Stops | 1 h |
 | `GET /v2/lines/{id}/vehicles` | the Line's vehicles now | until `next_update_at` |
 | `GET /v2/stops` | every Stop, compact rows `[id, name, lat, lon, modes, lines]` | 1 h |
-| `GET /v2/stops/{id}` | one Stop, its Lines and the next Arrivals (2 h, 4 per Line + headsign, 30 in all) | 15 s |
+| `GET /v2/stops/{id}` | one Stop, its Lines and the next Arrivals (2 h, 4 per Line + headsign, 30 in all); OASA stops add OASA's own predictions for buses the backend does not have | 15 s |
 | `GET /v2/vehicles`, `/v2/vehicles/tiles/{z}/{x}/{y}` | buses and trolleys (as `/v1/vehicles` and its tiles) | until `next_update_at` |
 | `GET /v2/vehicles/rail` | metro and tram trains | 15 s |
 | `GET /v2/vehicles/suburban` | suburban trains (opens the railway.gov.gr stream) | 5 s with trains, else 15 s |

@@ -100,6 +100,15 @@ func (rm *RouteMapper) ShapesFor(line, routeCode string) map[int32]bool {
 	return result
 }
 
+// Cached returns the shapes of a route code only when ShapesFor already answered for it: it
+// never asks for the route's stops.
+func (rm *RouteMapper) Cached(line, routeCode string) (map[int32]bool, bool) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	v, ok := rm.cache[[2]string{line, routeCode}]
+	return v, ok
+}
+
 func (rm *RouteMapper) store(key [2]string, v map[int32]bool) {
 	rm.mu.Lock()
 	rm.cache[key] = v
