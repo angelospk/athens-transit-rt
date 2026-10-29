@@ -10,10 +10,14 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 
 ### Live API
 - `/v2` metro and tram Stops have proper names and English names: "Σύνταγμα" / "Syntagma"
-  instead of STASY's "ΣΥΝΤΑΓΜΑ" and `null` (126 of 127 Stops with `name_en`). They come from a
+  instead of STASY's "ΣΥΝΤΑΓΜΑ" and `null` (all 126 Stops have `name_en`). They come from a
   hand-checked table built from OpenStreetMap (`internal/railgeo/stasy_stops.json`,
   regenerate with `scripts/stasy-stop-names.py`). A Stop new to the STASY feed keeps STASY's
   name, has no English name and is logged at load; a renamed Stop gets a permanent alias there.
+  ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ, the point where M3 airport trains move onto the suburban tracks, is
+  merged into Δουκίσσης Πλακεντίας: its id is an alias of that Stop, it is not in `/v2/stops`,
+  Patterns and Runs list Πλακεντίας once, and a train stands there from its arrival at the
+  station to its departure from the point.
 - `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule
   (where a marker stands at a time), so the app and the web map test their movers against the
   same cases. The backend checks the knot rules on every train of its test feed through a day.

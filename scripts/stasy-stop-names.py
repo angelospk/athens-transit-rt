@@ -47,8 +47,6 @@ OVERRIDES = {
     "stasy:νικαια-metro": [None, "Nikaia"],
     "stasy:παλληνη-metro": [None, "Pallini"],
     "stasy:σ.-λαρισησ-metro": ["Σταθμός Λαρίσης", "Larissa Station"],
-    # Not matched to an OSM station (the nearest is Δουκίσσης Πλακεντίας, 91 m away): open question.
-    "stasy:συνδεση-προαστιακου-metro": ["Σύνδεση Προαστιακού", None],
     "stasy:ταυροσ-metro": ["Ταύρος", "Tavros"],
     "stasy:34ου-συνταγματοσ-tram": [None, "34ou Syntagmatos"],
     "stasy:αγγ.-μεταξα-tram": [None, "Angelou Metaxa"],
@@ -60,6 +58,13 @@ OVERRIDES = {
     "stasy:σεφ-(νεο-φαληρο)-tram": [None, "SEF (Neo Faliro)"],
     "stasy:σκυλιτση-tram": [None, "Skylitsi"],
     "stasy:συνταγμα-(κεντρο)-tram": [None, "Syntagma (Kentro)"],
+}
+
+# Points of the feed that are no station passengers know, merged into a Stop: the server keeps
+# them out of /v2/stops and counts their times as the Stop's. ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ is where M3
+# airport trains move onto the suburban tracks, 91 m from Δουκίσσης Πλακεντίας (#12).
+MERGED = {
+    "stasy:συνδεση-προαστιακου-metro": "stasy:δ.-πλακεντιασ-metro",
 }
 
 
@@ -92,6 +97,8 @@ def main():
     osm = get(OVERPASS, urllib.parse.urlencode({"data": QUERY}).encode())["elements"]
     out, unmatched = {}, []
     for sid, name, lat, lon, modes, _ in stops:
+        if sid in MERGED:
+            continue
         mode = modes[0]
         hits = [(metres(lat, lon, x["lat"], x["lon"]), x["tags"]) for x in osm
                 if "name" in x["tags"] and fold(x["tags"]["name"]) == fold(name)]
@@ -118,7 +125,7 @@ def main():
         old = json.load(open(OUT, encoding="utf-8")).get("aliases", {})
     except FileNotFoundError:
         pass
-    body["aliases"] = old  # renamed stops: old id -> current id, kept forever
+    body["aliases"] = {**old, **MERGED}  # renamed and merged stops: old id -> current id, kept forever
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(body, f, ensure_ascii=False, indent=1)
         f.write("\n")

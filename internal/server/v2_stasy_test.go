@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -292,4 +293,125 @@ func polylineMetres(pts [][2]float64) float64 {
 		d += geo.Dist(geo.XY(pts[i-1][0], pts[i-1][1]), geo.XY(pts[i][0], pts[i][1]))
 	}
 	return d
+}
+
+const plakentias = "stasy:δ.-πλακεντιασ-metro"
+
+// stasyAirportApp adds M3 trains through ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ, the point 91 m past Δουκίσσης
+// Πλακεντίας where airport trains move onto the suburban tracks, as the STASY feed lists it:
+// M3-1 ΣΥΝΤΑΓΜΑ 10:00, Δ. ΠΛΑΚΕΝΤΙΑΣ 10:10-10:11, ΣΥΝΔΕΣΗ 10:12, ΠΑΛΛΗΝΗ 10:30; M3-2 back,
+// ΠΑΛΛΗΝΗ 10:00, ΣΥΝΔΕΣΗ 10:05, Δ. ΠΛΑΚΕΝΤΙΑΣ 10:06-10:07, ΣΥΝΤΑΓΜΑ 10:20.
+func stasyAirportApp(t *testing.T, now time.Time) *App {
+	t.Helper()
+	add := map[string]string{
+		"stops.txt": "D1,Δ. ΠΛΑΚΕΝΤΙΑΣ,38.02419,23.83364\nS1,ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ,38.02500,23.83420\n" +
+			"G1,ΠΑΛΛΗΝΗ,38.00470,23.86950\n",
+		"routes.txt": "R3,M3,ΑΓ. ΜΑΡΙΝΑ - ΑΕΡΟΔΡΟΜΙΟ,1,,\n",
+		"trips.txt":  "R3,wd,M3-1,ΠΑΛΛΗΝΗ,0\nR3,wd,M3-2,ΣΥΝΤΑΓΜΑ,1\n",
+		"stop_times.txt": "M3-1,10:00:00,10:00:00,P1,1\nM3-1,10:10:00,10:11:00,D1,2\nM3-1,10:12:00,10:12:00,S1,3\n" +
+			"M3-1,10:30:00,10:30:00,G1,4\nM3-2,10:00:00,10:00:00,G1,1\nM3-2,10:05:00,10:05:00,S1,2\n" +
+			"M3-2,10:06:00,10:07:00,D1,3\nM3-2,10:20:00,10:20:00,P1,4\n",
+	}
+	return stasyAppEdit(t, now, func(dir string) {
+		for name, rows := range add {
+			f, err := os.OpenFile(filepath.Join(dir, name), os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.WriteString(rows); err != nil {
+				t.Fatal(err)
+			}
+			f.Close()
+		}
+	})
+}
+
+// ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ is no station passengers know: it is merged into Δουκίσσης Πλακεντίας
+// (an alias in the name table). It is no Stop of /v2/stops, a Pattern lists Πλακεντίας once,
+// and a train is at Πλακεντίας from its arrival at the first of the two to its departure from
+// the second (#12).
+func TestV2STASYJunctionMergedIntoPlakentias(t *testing.T) {
+	a := stasyAirportApp(t, wed1000)
+	const junction = "stasy:συνδεση-προαστιακου-metro"
+	var idx struct {
+		Stops []model.IndexEntry `json:"stops"`
+	}
+	v2get(t, a, "/v2/stops", &idx)
+	for _, e := range idx.Stops {
+		if e.ID == junction {
+			t.Fatalf("junction listed: %s", asJSON(e))
+		}
+	}
+	var s v2Stop
+	v2get(t, a, "/v2/stops/"+esc(junction), &s)
+	if s.Stop == nil || s.Stop.ID != plakentias {
+		t.Fatalf("alias %s", asJSON(s.Stop))
+	}
+	// Its place is the station's own, not moved towards the junction point.
+	v2get(t, a, "/v2/stops/"+esc(plakentias), &s)
+	st := s.Stop
+	if st == nil || st.Name != "Δουκίσσης Πλακεντίας" || st.Lat != 38.02419 || st.Lon != 23.83364 {
+		t.Fatalf("stop %s", asJSON(st))
+	}
+	var got []string
+	for _, ar := range s.Arrivals {
+		got = append(got, ar.Line+" "+ar.Headsign+" "+time.Unix(ar.At, 0).In(gtfs.Athens).Format("15:04"))
+	}
+	// One Arrival per train, at the departure from the junction point (out) or from the
+	// station (back).
+	if want := "stasy:M3 ΣΥΝΤΑΓΜΑ 10:07,stasy:M3 ΠΑΛΛΗΝΗ 10:12"; strings.Join(got, ",") != want {
+		t.Fatalf("arrivals %v", got)
+	}
+
+	var d v2LineDetail
+	v2get(t, a, "/v2/lines/"+esc("stasy:M3"), &d)
+	var pats []string
+	for _, p := range d.Patterns {
+		pats = append(pats, strings.Join(p.Stops, ","))
+	}
+	sort.Strings(pats)
+	pallini := "stasy:παλληνη-metro"
+	if want := []string{pallini + "," + plakentias + "," + syntagma, syntagma + "," + plakentias + "," + pallini}; strings.Join(pats, " ") != strings.Join(want, " ") {
+		t.Fatalf("patterns %v", pats)
+	}
+	if _, ok := d.Stops[junction]; ok || len(d.Stops) != 3 {
+		t.Fatalf("stops %s", asJSON(d.Stops))
+	}
+
+	var r struct {
+		Run *model.Run `json:"run"`
+	}
+	v2get(t, a, "/v2/runs/"+esc("stasy:run:M3-1:2026-10-28"), &r)
+	if r.Run == nil || len(r.Run.Stops) != 3 || r.Run.Stops[1].Stop != plakentias ||
+		r.Run.Stops[1].At != time.Date(2026, 10, 28, 10, 12, 0, 0, gtfs.Athens).Unix() {
+		t.Fatalf("run %s", asJSON(r.Run))
+	}
+
+	// Both trains stand at Πλακεντίας: M3-1 between 10:10 and 10:12, M3-2 between 10:05 and 10:07.
+	ad := a.adapter("stasy:x").(*stasyAdapter)
+	for _, c := range []struct {
+		at, leave time.Time
+		run       string
+		next      string
+	}{
+		{time.Date(2026, 10, 28, 10, 11, 30, 0, gtfs.Athens), time.Date(2026, 10, 28, 10, 12, 0, 0, gtfs.Athens),
+			"stasy:run:M3-1:2026-10-28", pallini},
+		{time.Date(2026, 10, 28, 10, 5, 30, 0, gtfs.Athens), time.Date(2026, 10, 28, 10, 7, 0, 0, gtfs.Athens),
+			"stasy:run:M3-2:2026-10-28", syntagma},
+	} {
+		vs, err := ad.Vehicles(c.at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v *model.Vehicle
+		for i := range vs {
+			if vs[i].ID == c.run {
+				v = &vs[i]
+			}
+		}
+		if v == nil || *v.NextStop != c.next || v.Motion == nil || model.CheckKnots(v.Motion.Knots) != "" ||
+			v.Motion.Knots[1] != [2]int64{0, c.leave.Unix()} { // standing until it leaves Πλακεντίας
+			t.Fatalf("%s at %s: %s", c.run, c.at.Format("15:04:05"), asJSON(v))
+		}
+	}
 }

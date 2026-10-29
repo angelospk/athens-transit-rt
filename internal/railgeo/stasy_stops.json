@@ -465,10 +465,6 @@
    "name": "Συγγρού-Φιξ",
    "name_en": "Syngrou-Fix"
   },
-  "stasy:συνδεση-προαστιακου-metro": {
-   "name": "Σύνδεση Προαστιακού",
-   "name_en": null
-  },
   "stasy:συνταγμα-(κεντρο)-tram": {
    "name": "Σύνταγμα (Κέντρο)",
    "name_en": "Syntagma (Kentro)"
@@ -510,5 +506,7 @@
    "name_en": "Cholargos"
   }
  },
- "aliases": {}
+ "aliases": {
+  "stasy:συνδεση-προαστιακου-metro": "stasy:δ.-πλακεντιασ-metro"
+ }
 }

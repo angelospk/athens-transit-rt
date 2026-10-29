@@ -372,7 +372,11 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
   (`internal/railgeo/stasy_stops.json`, `scripts/stasy-stop-names.py`): metro "Σύνταγμα",
   not STASY's "ΣΥΝΤΑΓΜΑ"; tram names as STASY writes them. A Stop the table lacks (new or
   renamed in the feed) keeps the STASY name with `name_en: null` and is logged; a renamed Stop
-  gets a permanent alias in the table (13, review #9 items 4 and 7).
+  gets a permanent alias in the table (13, review #9 items 4 and 7). A point of the feed that
+  is no station is merged into its Stop by an alias too: ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ, where M3
+  airport trains move onto the suburban tracks 91 m past Δουκίσσης Πλακεντίας, is not in
+  `/v2/stops`; a Pattern or Run lists Πλακεντίας once, arriving at the station and leaving at
+  the point's departure, and its Arrivals are Πλακεντίας Arrivals.
 - `/v2/vehicles/rail` is metro and tram only, cached 15 s. Suburban trains are in
   `/v2/vehicles/suburban`, cached 5 s while trains are in it, else 15 s (review #9, item 11).
 
