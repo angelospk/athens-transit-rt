@@ -1,6 +1,8 @@
 package server
 
 import (
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -210,10 +212,92 @@ func TestEndMatches(t *testing.T) {
 		{"ΓΑΛΑΤΣΙ - ΑΚΑΔΗΜΙΑ - ΝΕΚΡ. ΖΩΓΡΑΦΟΥ", "ΖΩΓΡΑΦΟΥ", true},
 		{"ΓΑΛΑΤΣΙ - ΑΚΑΔΗΜΙΑ - ΝΕΚΡ. ΖΩΓΡΑΦΟΥ", "ΓΑΛΑΤΣΙ", false},
 		{"ΣΤ. ΚΑΤΩ ΠΑΤΗΣΙΑ", "ΣΤ. ΚΑΤΩ ΠΑΤΗΣΙΑ (ΚΥΚΛΙΚΗ)", true},
+		{"ΣΤ. ΣΥΓΓΡΟΥ ΦΙΞ - ΑΓ. ΚΟΣΜΑΣ (ΜΕΣΩ ΠΑΡΑΛΙΑΚΗΣ)", "ΑΓ.ΚΟΣΜΑΣ (ΜΕΣΩ ΠΑΡΑΛΙΑΚΗΣ) (ΚΥΚΛΙΚΗ)", true},
+		{"ΣΤ. ΚΑΤΕΧΑΚΗ - ΠΟΛΥΤΕXNΕΙΟΥΠΟΛΗ", "ΠΟΛΥΤΕΧΝΕΙΟΥΠΟΛΗ (ΚΥΚΛΙΚΗ)", true}, // Latin X, N
+		{"ΠΕΡΑΜΑ - ΣΤ.ΝΙΚΑΙΑ", "ΣΤ. ΝΙΚΑΙΑ (ΚΥΚΛΙΚΗ)", true},
+		{"ΠΑΓΚΡΑΤΙ - ΓΚΥΖH", "ΓΚΥΖΗ", true},                  // Latin H
+		{"ΑΓ. ΑΝΑΡΓΥΡΟΙ - ΠΟΛΥΤΕΧΝEIΟ", "ΠΟΛΥΤΕΧΝΕΙΟ", true}, // Latin E, I
+		{"ΠΕΡΑΜΑ - ΣΤ.ΝΙΚΑΙΑ", "ΠΕΡΑΜΑ", false},
 	} {
 		if got := endMatches(c.gtfs, c.daily); got != c.want {
 			t.Errorf("endMatches(%q, %q) = %v", c.gtfs, c.daily, got)
 		}
+	}
+}
+
+func TestShapesOfDirection(t *testing.T) {
+	two := map[int32]string{3: "ΠΕΙΡΑΙΑΣ - ΣΥΝΤΑΓΜΑ", 4: "ΣΥΝΤΑΓΜΑ - ΠΕΙΡΑΙΑΣ"}
+	one := map[int32]string{7: "ΣΤ. ΚΑΤΕΧΑΚΗ - ΖΩΓΡΑΦΟΥ"}
+	for _, c := range []struct {
+		shapes   map[int32]string
+		headsign string
+		circular bool
+		want     []int32
+	}{
+		{two, "ΣΥΝΤΑΓΜΑ", false, []int32{3}},
+		{two, "ΚΗΦΙΣΙΑ", false, nil},
+		{two, "ΚΥΚΛΙΚΗ", true, []int32{3, 4}},  // a loop: every shape, whatever its name
+		{one, "ΑΓ. ΚΟΣΜΑΣ", false, []int32{7}}, // one shape only: the line is a loop
+	} {
+		got := shapesOf(c.shapes, c.headsign, c.circular)
+		sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+		if fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("shapesOf(%v, %q, %v) = %v, want %v", c.shapes, c.headsign, c.circular, got, c.want)
+		}
+	}
+}
+
+// OASA gives the new route code late, when the bus is already at the stand or past it (909: the
+// stand is ~625 m along shape 4484). Its last fix on the old shape of the line was at the start.
+func TestStartAfterLateRouteSwitch(t *testing.T) {
+	rs := newRunStarts()
+	t0 := at("08:00")
+	rs.observe(feedA, "v", "909", 0, 8700, 8726, t0)                     // end of the inbound shape
+	rs.observe(feedA, "v", "909", 1, 627, 10388, t0.Add(3*time.Minute))  // flips at the stand
+	rs.observe(feedA, "v", "909", 1, 1400, 10388, t0.Add(6*time.Minute)) // 300 m past the first fix: gone
+	rs.observe(feedA, "v", "909", 1, 3000, 10388, t0.Add(9*time.Minute)) // the same run
+	got, _ := rs.of(feedA, "909", 1, t0.Add(10*time.Minute))
+	if len(got) != 1 || !got[0].Equal(t0) {
+		t.Fatalf("starts %v", got)
+	}
+}
+
+func TestStartAfterLateRouteSwitchWaits(t *testing.T) {
+	// Still at the stand after the switch: the start is its last fix there.
+	rs := newRunStarts()
+	t0 := at("08:00")
+	rs.observe(feedA, "v", "909", 0, 8700, 8726, t0)
+	rs.observe(feedA, "v", "909", 1, 627, 10388, t0.Add(2*time.Minute))
+	rs.observe(feedA, "v", "909", 1, 640, 10388, t0.Add(8*time.Minute))
+	rs.observe(feedA, "v", "909", 1, 1000, 10388, t0.Add(10*time.Minute))
+	got, _ := rs.of(feedA, "909", 1, t0.Add(11*time.Minute))
+	if len(got) != 1 || !got[0].Equal(t0.Add(8*time.Minute)) {
+		t.Fatalf("starts %v", got)
+	}
+}
+
+func TestStartAfterLateRouteSwitchNot(t *testing.T) {
+	rs := newRunStarts()
+	t0 := at("08:00")
+	// Another line before: not a switch within the line.
+	rs.observe(feedA, "v1", "040", 0, 8700, 8726, t0)
+	rs.observe(feedA, "v1", "909", 1, 627, 10388, t0.Add(3*time.Minute))
+	rs.observe(feedA, "v1", "909", 1, 1400, 10388, t0.Add(6*time.Minute))
+	// The first fix on the new shape too far along: when it left is unknown.
+	rs.observe(feedA, "v2", "909", 0, 8700, 8726, t0)
+	rs.observe(feedA, "v2", "909", 1, 1600, 10388, t0.Add(3*time.Minute))
+	rs.observe(feedA, "v2", "909", 1, 2500, 10388, t0.Add(6*time.Minute))
+	// The last fix on the old shape too long before.
+	rs.observe(feedA, "v3", "909", 0, 8700, 8726, t0)
+	rs.observe(feedA, "v3", "909", 1, 627, 10388, t0.Add(16*time.Minute))
+	rs.observe(feedA, "v3", "909", 1, 1400, 10388, t0.Add(19*time.Minute))
+	// Not yet 300 m past the first fix on the new shape.
+	rs.observe(feedA, "v4", "909", 0, 8700, 8726, t0)
+	rs.observe(feedA, "v4", "909", 1, 700, 10388, t0.Add(3*time.Minute))
+	rs.observe(feedA, "v4", "909", 1, 950, 10388, t0.Add(4*time.Minute))
+	got, _ := rs.of(feedA, "909", 1, t0.Add(30*time.Minute))
+	if len(got) != 0 {
+		t.Fatalf("starts %v", got)
 	}
 }
 
