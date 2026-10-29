@@ -9,6 +9,9 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `/v2` metro Stops Δημοτικό Θέατρο, Μανιάτικα, Νίκαια and Παλλήνη have proper names (they kept
+  STASY's capitals), and the daily live check accepts ΚΑΤ, an acronym
+  ([#39](https://github.com/angelospk/athens-transit-rt/issues/39)).
 - Docs: CONTRACT.md's `/v2` text now says what the code does (unmatched buses are Arrivals;
   ose.mpass is not used; when `stasy` and `proastiakos` are `stale`). The draft contract is a
   record of what changed; MIGRATION and UI-SPEC carry their real status, and MIGRATION's
