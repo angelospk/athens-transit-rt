@@ -507,3 +507,49 @@ func TestWatchWhilePublishingUsesWatchedInterval(t *testing.T) {
 		t.Fatalf("next poll due after %v", due.Sub(t0))
 	}
 }
+
+// Work someone is waiting for (SubmitFirst) goes before queued background work such as the
+// metadata bootstrap, in the order submitted among themselves.
+func TestSubmitFirstJumpsTheQueue(t *testing.T) {
+	c := &clock{t0}
+	s := newSched(4, &fakeFetch{}, c)
+	var order []string
+	for _, name := range []string{"meta1", "meta2"} {
+		s.Submit(func(context.Context) error { order = append(order, name); return nil })
+	}
+	for _, name := range []string{"user1", "user2"} {
+		s.SubmitFirst(func(context.Context) error { order = append(order, name); return nil })
+	}
+	for r := s.pick(); r != nil; r = s.pick() {
+		s.execute(context.Background(), r)
+	}
+	if got := strings.Join(order, " "); got != "user1 user2 meta1 meta2" {
+		t.Fatalf("order %q", got)
+	}
+}
+
+type reportSlots struct {
+	fakeSlots
+	got  []time.Duration
+	errs int
+}
+
+func (r *reportSlots) Report(d time.Duration, err error) {
+	r.got = append(r.got, d)
+	if err != nil {
+		r.errs++
+	}
+}
+
+// A background job (a daily schedule is a big answer, slow by nature) must not slow the line polls
+// down by its latency; its errors still count.
+func TestBackgroundLatencyIsNotLoad(t *testing.T) {
+	slots := &reportSlots{}
+	s := New(DefaultConfig(), slots, &fakeFetch{}, func(LinePoll) {})
+	slow := func(context.Context) error { time.Sleep(20 * time.Millisecond); return nil }
+	s.execute(context.Background(), &request{bg: slow})
+	s.execute(context.Background(), &request{bg: func(context.Context) error { return fmt.Errorf("boom") }})
+	if len(slots.got) != 2 || slots.got[0] != 0 || slots.got[1] != 0 || slots.errs != 1 {
+		t.Fatalf("reports %v errors %d", slots.got, slots.errs)
+	}
+}

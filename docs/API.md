@@ -20,9 +20,14 @@ The list of endpoints, their parameters and response schemas is the OpenAPI 3.1 
 [`openapi/openapi.yaml`](openapi/openapi.yaml), with an interactive reference ("try it") at
 <https://angelospk.github.io/athens-transit-rt/>. This page has usage notes and examples.
 
-Live: `/v1/lines/{line_id}`, `/v1/vehicles`, `/v1/vehicles/tiles/{z}/{x}/{y}`, `/v1/stops/{stop_id}`,
-`/v1/gtfs-rt/{vehicle_positions,trip_updates}.{pb,json}`, `/v1/status`, `/v1/stats`,
-`/v1/stats/days/{YYYY-MM-DD}`, `/healthz`. Static data (line list, shapes, stops) is on GitHub Pages:
+Live: `/v1/lines/{line_id}`, `/v1/lines/{line_id}/schedule`, `/v1/vehicles`,
+`/v1/vehicles/tiles/{z}/{x}/{y}`, `/v1/gtfs-rt/{vehicle_positions,trip_updates}.{pb,json}`,
+`/v1/stops/{stop_id}`, `/v1/stops/{stop_id}/arrivals`, `/v1/status`, `/v1/stats`,
+`/v1/stats/days/{YYYY-MM-DD}`, `/v1/rail/stasy/departures`,
+`/v1/rail/stasy/vehicles`, `/v1/rail/stasy/trips/{id}`, `/v1/rail/suburban/stations`,
+`/v1/rail/suburban/stations/{id}/departures`, `/v1/rail/suburban/vehicles`,
+`/v1/rail/suburban/trains/{no}`, `/healthz`. Static
+data (line list, shapes, stops) is on GitHub Pages:
 `https://angelospk.github.io/athens-transit-rt/static/v1/lines.json` and
 `.../static/v1/lines/{line_id}.json`.
 
@@ -124,27 +129,185 @@ position. Use plain URLs: a query string gives `400`, so every client shares the
 A map view at MapLibre zoom 13 needs 2-15 tiles of 1-8 KB (gzip) instead of the 60+ KB of
 `/v1/vehicles`. Client rules: [`CONTRACT.md`](CONTRACT.md#get-v1vehiclestileszxy-rev-5).
 
-## Arrivals at a stop
+## A stop and its arrivals
 
-`GET /v1/stops/{stop_id}` (contract rev 7) lists the vehicles on their way to one stop, like the
-signs at the stops: `{"stop_id","name","updated_at","next_update_at","lines":[...],"arrivals":[...]}`.
-`stop_id` is the GTFS `stop_id` (the stops in `static/v1/lines/{line_id}.json`). Each arrival
-has `line`, `variant`, `headsign`, `trip_id`, `vehicle`, `eta` (Unix s), `scheduled`,
-`position_at`, `stops_away`, `distance_m` and `source`: `live` for a vehicle (its position plus
-the typical driving time to the stop), `schedule` for a trip that has not left yet (none while
-the static GTFS is expired). Up to 60 min ahead, at most 3 per line and variant. It costs no
-OASA request and does not raise any line's polling priority, so positions are as fresh as
-`/v1/vehicles`; refetch at `next_update_at`. Unknown stop: `404` `{"error":"unknown_stop"}`.
-Full rules: [`CONTRACT.md`](CONTRACT.md#get-v1stopsstop_id-rev-7).
+`GET /v1/stops/{stop_id}` returns the stop (`id`, `name`, `lat`, `lon`), the `lines` that call
+there and `arrivals`, soonest first, up to 60 min ahead, at most 3 per line and variant. Each has
+`line`, `headsign`, `variant`, `vehicle`, `eta_s`, `at`, `delay_s`, `position_at`, `source`,
+`trip_id`, `scheduled`, `stops_away` and `distance_m`.
+
+- `source: live`: a bus of those lines that still has the stop ahead, from a fix of the last
+  5 minutes. `at` is its fix plus the driving time to the stop (typical speeds per 200 m of the
+  shape, else the timetable's running time); an unmatched bus is placed on its shape and has no
+  `trip_id`. A bus not past the stop by its last fix is never overdue: late, it is due now.
+- `source: schedule`: a trip that has not left yet and has no bus (`vehicle` is `""`). None
+  while the static GTFS is expired.
+
+The request raises the polling priority of the stop's lines that have a live bus in
+`arrivals`; a line with none keeps its usual rate. No OASA request of its own. Cached 15 s.
+Full rules: [`CONTRACT.md`](CONTRACT.md#get-v1stopsstop_id-rev-8).
 
 ```bash
-curl -s https://transit.haroldpoi.dev/v1/stops/61000 | jq '.arrivals[] | [.line, .headsign, ((.eta - now) / 60 | floor)]'
+curl -s https://transit.haroldpoi.dev/v1/stops/61000 | jq -r '.arrivals[] | [.line, .source, .eta_s/60|floor] | @tsv'
 ```
+
+## OASA's predictions at a stop
+
+`GET /v1/stops/{stop_id}/arrivals` gives OASA's own predictions for a stop, soonest first:
+
+```bash
+curl -s https://transit.haroldpoi.dev/v1/stops/240084/arrivals
+# {"stop_id":"240084","stop_name":"ΠΛ. ΔΑΒΑΚΗ","updated_at":1793210650,
+#  "arrivals":[{"line":"5","route_code":"1992","vehicle":"88019","minutes":28}]}
+```
+
+`stop_id` is the GTFS `stop_id` (the OASA stop code), as in the stops of
+`static/v1/lines/{line_id}.json`. The predictions come from OASA (`getStopArrivals`), so they
+work without a GTFS trip match, also while the static GTFS is expired and `/v1/stops/{stop_id}`
+has no matched buses to list. `line` is empty when the route code is not in OASA's line list.
+
+Each stop costs one OASA call per 30 s: answers are cached 30 s per stop, requests for the same
+stop at the same moment share one call, and `Cache-Control` lasts until that cache expires
+(`max-age` 5-30). The calls share the server's OASA budget with the line polls but get at most
+one request slot in four, so the vehicle positions keep at least three quarters of it. At most
+16 such calls wait at once; past that the answer is `503 busy`. When OASA or the queue cannot
+answer, the stop's last good answer up to 2 minutes old is served instead, with its own
+`updated_at` and `max-age=5`. Unknown stop ids get `404` without asking OASA.
+
+## Schedules
+
+Three read-only endpoints add timetables to the live positions. None of them raises any polling
+priority.
+
+### Line schedule (OASA buses, trolleys)
+
+`GET /v1/lines/{line_id}/schedule` returns the trips of a line on a day, today in Athens time by
+default. `?date=YYYY-MM-DD` reads another day, up to 7 days ahead.
+
+```json
+{
+  "line": "040", "date": "2026-10-28", "expired": false, "source": "oasa-daily",
+  "directions": [
+    {"direction": 0, "headsign": "ΠΕΙΡΑΙΑΣ",
+     "departures": [{"t": "05:30", "trip": "", "seen": true}]}
+  ]
+}
+```
+
+- `source`: today's timetable is OASA's daily schedule (`getDailySchedule`, `oasa-daily`) when
+  OASA answers; the server fetches every line's once a day in the background, and a request falls
+  back to the GTFS (`gtfs`) when it is not there yet. Other days are always from the GTFS.
+- `t` is the departure from the trip's first stop in GTFS style: a trip after midnight shows
+  `24:10`.
+- `directions` groups the trips by `direction_id` and headsign. `trip` is the GTFS `trip_id`
+  (empty for `oasa-daily`: the daily schedule has no trip ids).
+- `seen` (today only): did the run leave?
+  - `gtfs`: `true` when the matcher has assigned a vehicle to that trip since midnight.
+  - `oasa-daily`: `true` when a bus of the line was seen leaving the start of a shape that ends
+    where the direction does (last fix within 300 m of the start, then 600 m or more along it within
+    15 min), from 3 min before to 20 min after the run's time; each start counts for one run.
+    `false` when no bus left in that window and 20 min have passed. Missing when not known yet,
+    or when the run was due before the server started watching (after a restart).
+- `expired` is `true` when the day is outside the static GTFS validity. The trips are then those
+  of the same weekday inside the feed, so the timetable may not be the one OASA runs.
+- `404 {"error":"unknown_line"}` for a line the feed does not have, `400 {"error":"bad_date"}`
+  for a malformed or out-of-range date. Cached 60 s.
+
+### Metro and tram departures (STASY)
+
+`GET /v1/rail/stasy/departures?stop=<name>&n=6` returns the next `n` (1-20, default 6)
+departures per line and headsign at every stop with that name, from now. The server loads the
+STASY GTFS (metro M1-M3, tram T6/T7) at start and checks it once a day.
+
+```json
+{"stop": "ΣΥΝΤΑΓΜΑ", "indicative": false,
+ "departures": [{"line": "M2", "route_color": "#e30613", "headsign": "ΕΛΛΗΝΙΚΟ", "t": "14:05", "in_s": 240}]}
+```
+
+- The name is matched without case, accents or final sigma: `συνταγμα`, `ΣΥΝΤΑΓΜΑ` and
+  `Σύνταγμα` are the same stop.
+- `in_s` is the seconds from now to the departure.
+- `headsign` is the feed's `trip_headsign`, or the last stop of the trip when the feed leaves it
+  empty (it leaves most of them empty).
+- `indicative: true` when the STASY timetable has expired and the same weekday inside it was
+  used instead: show those times as indicative.
+- `503 {"error":"warming_up"}` until the first load finishes, `404 {"error":"unknown_stop"}`,
+  `400 {"error":"missing_stop"}`. Cached 30 s.
+
+`GET /v1/rail/stasy/vehicles` returns every metro and tram train running now by the timetable.
+STASY has no live data, so these are estimates: each train is between the stop it left (`from`,
+at its departure) and the next one (`to`, at its arrival), times in unix seconds. Move it between
+the two on your own clock. A train standing at a stop has that stop as both `from` (its arrival)
+and `to` (its departure).
+
+```json
+{"updated_at": 1793205600, "indicative": false,
+ "vehicles": [{"trip": "1012345", "line": "M2", "route_color": "#e30613", "headsign": "ΕΛΛΗΝΙΚΟ",
+               "from": {"name": "ΣΥΝΤΑΓΜΑ", "lat": 37.975, "lon": 23.735, "at": 1793205540},
+               "to": {"name": "ΑΚΡΟΠΟΛΗ", "lat": 37.969, "lon": 23.729, "at": 1793205660}}]}
+```
+
+`GET /v1/rail/stasy/trips/{id}` returns one run (`trip` of a vehicle) with every stop and its
+departure in `stops` (same fields as `from`; the last stop has its arrival). A run past midnight is yesterday's while it still runs.
+`404 {"error":"unknown_trip"}`. Both: `503 {"error":"warming_up"}` until the first load; vehicles
+cached 15 s, trips 60 s.
+
+### Proastiakos stations and departures
+
+`GET /v1/rail/suburban/stations` lists the suburban stations with their corridors (`id`, `name`,
+`corridors`), from railway.gov.gr, cached 24 h.
+
+`GET /v1/rail/suburban/stations/{id}/departures` returns the next 10 trains at one station
+(`?n=` 1-20).
+
+```json
+{"station": "Πειραιάς",
+ "departures": [{"train": "1203", "from": "Άγιοι Ανάργυροι", "to": "Κιάτο", "t": "05:32",
+                 "delay_min": null, "platform": "4", "status": "scheduled"}]}
+```
+
+- `t` is the scheduled departure in Athens time. `status` is the state of the run (`scheduled`,
+  `in_progress`, `delayed`, `completed`); cancelled runs are left out.
+- The server keeps one cached board per day and serves it when railway.gov.gr fails. Without a
+  cached board it falls back to the ose.mpass screen of the station, for the stations whose
+  screen number is known (the Attica ones).
+- `delay_min` is the live delay of the train when the vehicles stream (below) is open, else the
+  board's (up to 10 minutes old).
+- `502 {"error":"upstream_unavailable"}` when neither source answers. Cached 60 s.
+
+`GET /v1/rail/suburban/vehicles` returns the trains in service with their last GPS position,
+from the railway.gov.gr train tracker. The server opens the tracker's stream on the first
+request and closes it 3 minutes after the last one, so the first request after a pause gets
+`503 {"error":"warming_up"}` for a few seconds. Cached 5 s.
+
+```json
+{"updated_at": 1793205600,
+ "trains": [{"train": "1226", "corridor": "PIRAIR", "service": "Suburban", "lat": 38.0487,
+             "lon": 23.7314, "course": 10.5, "speed_kmh": 80.4, "delay_min": 0,
+             "from": "Πειραιάς", "to": "Αεροδρόμιο", "next_station": "Κάτω Αχαρναί",
+             "position_at": 1793205590}]}
+```
+
+- Trains of all Greece are listed; `corridor` tells the line. Locomotives with no run are left out.
+- `position_at` is the time of the GPS fix; some fixes are minutes old. `course` is degrees from
+  north, `null` when unknown.
+
+`GET /v1/rail/suburban/trains/{no}` returns today's run of a train with every stop: the run under
+way, else the next one, else the last.
+
+```json
+{"train": "1226", "from": "Πειραιάς", "to": "Αεροδρόμιο", "status": "in_progress", "delay_min": 0,
+ "stops": [{"id": "6928c3…", "name": "Πειραιάς", "t": "17:05", "at": 1793203500,
+            "platform": "2", "delay_min": 0}]}
+```
+
+- `delay_min` of the run is the live one when the stream is open.
+- `404 {"error":"unknown_train"}`, `502 {"error":"upstream_unavailable"}`. Cached 30 s.
 
 ## Daily statistics
 
 A server that runs with `--history` sums each finished day (Europe/Athens, 00:00-24:00) about
-2-3 h after midnight. `GET /v1/stats` returns `{"version":1,"latest":"2026-10-06","days":[...]}`;
+4-5 h after midnight (it waits for the trips that run past midnight). `GET /v1/stats` returns `{"version":1,"latest":"2026-10-06","days":[...]}`;
 `GET /v1/stats/days/{date}` returns one day (`400` for a malformed date, `404` when missing).
 The same files, every day kept, are on the `stats` branch of this repository; prefer them:
 `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/latest.json`,
@@ -158,16 +321,41 @@ The same files, every day kept, are on the `stats` branch of this repository; pr
 | `files`, `fixes`, `vehicles`, `lines` | history archives read, GPS fixes, distinct vehicles, distinct lines |
 | `hours[h]` | 24 entries by local hour: `fixes`, `vehicles`, `lines`, `dist_m`, `time_s` |
 | `by_line[]` | every line with a fix: `line`, `fixes`, `vehicles`, `dist_m`, `time_s` |
+| `trips` | scheduled trips of the day and how many ran (below); missing when the server had no static GTFS of the day's history |
 
 Speed in km/h = `dist_m / time_s * 3.6`; `time_s` 0 means no speed. Sums, not averages, so
 several days add up exactly. A speed sample is two consecutive fixes of one vehicle on the
 same line, 5-120 s apart and at most 25 m/s, counted in the hour and line of the later fix;
 the distance is the straight line between them (a little short on curves) and stops and
 traffic lights count. A fix counts for the day and hour of its own fix time; a fix that
-reaches the server more than 1 h after the end of its day is not counted. A day without any
+reaches the server more than 3 h after the end of its day is not counted. A day without any
 history file (server down all day) has no file and is not listed. `vehicles` counts vehicles that sent a
 fix, which depends on the polling: a line nobody watches is polled about every 150 s. In the
 hour repeated when clocks go back, both hours are summed into one entry.
+
+### Trips that ran (`trips`)
+
+| Field | Meaning |
+|---|---|
+| `gtfs` | the static GTFS version (`gtfs_version` of `/v1/status`) the trips come from |
+| `gtfs_expired` | `true` when the day is outside that feed's validity: the planned trips are those of the same weekday inside it, so they may not be the timetable OASA really ran |
+| `min_coverage` | share of a trip's route a vehicle must cover for the trip to count as run (0.5) |
+| `planned`, `run`, `partial`, `missed`, `unmeasured` | trips the day planned, and how they split: covered at least `min_coverage`; seen but covered less; never seen; no usable shape, so not measured (`run + partial + missed + unmeasured = planned`) |
+| `by_line[]` | every line with a planned trip: `line`, the same five counts, `missed_trips` (GTFS `trip_id`s never seen, by start time; `null` when none) |
+
+A day plans every trip whose scheduled start falls in it (a trip at 24:10 of Monday's service
+counts for Tuesday). A history row counts for a trip when the matcher assigned the vehicle to
+that `trip_id` (same GTFS version) between 30 min before its scheduled start and 30 min after
+its scheduled end. Coverage is the distance along the shape between the first and the last of
+those rows, divided by the shape length between the trip's first and last stop. Share of trips
+run = `run / (planned - unmeasured)`.
+
+Limits: the matcher assigns each vehicle to the closest scheduled trip, so a late bus can take
+the slot of a cancelled one (`run` is an upper bound of the trips really run); a bus without
+working telematics looks like a missed trip (`missed` is an upper bound of cancellations); an
+outage of the server (an hour with few `fixes` in `hours[]`) makes its trips missed; with an
+expired feed, a line or trip the old timetable has but OASA no longer runs counts as missed. Rows of
+another GTFS version are ignored; when they are most of the day's rows, `trips` is left out.
 
 ## GTFS-Realtime details
 
@@ -210,14 +398,38 @@ docker run --rm -v "$PWD/rt:/w" --entrypoint java ghcr.io/mobilitydata/gtfs-real
 # results: rt/vp/*.pb.results.json (empty list = no errors and no warnings)
 ```
 
+## MCP (assistants)
+
+A read-only [Model Context Protocol](https://modelcontextprotocol.io) server lets Claude, ChatGPT
+and other assistants ask about the buses directly. URL: `https://<host>/mcp` (Streamable HTTP,
+stateless, no authentication, read-only). Names are Greek, times are Europe/Athens.
+
+| Tool | Returns |
+|---|---|
+| `search_lines` | lines whose number or name contains the text (accents and case ignored), up to 20 |
+| `line_now` | live buses of a line with delay and next stop name |
+| `line_timetable` | departures of a line for a day (default today) |
+| `find_stops` | stops whose name contains the text, with id and position, up to 15 |
+| `stop_arrivals` | OASA's own predictions at a stop (minutes, line, vehicle), cached 30 s |
+| `network_day` | statistics of a day: speed, trips run and missed, slowest and most-missed lines |
+| `suburban_departures` | next Proastiakos trains at a station, live |
+| `metro_departures` | next metro and tram departures at a station (STASY timetable) |
+
+- Claude: Settings > Connectors > Add custom connector, and paste the URL.
+- ChatGPT: turn on developer mode, add a connector (MCP server) and paste the URL.
+
 ## Errors and limits
 
 | Status | Body | Meaning |
 |---|---|---|
 | `404` | `{"error":"unknown_line"}` | no such line |
+| `404` | `{"error":"unknown_stop"}` | no such stop |
 | `404` | `{"error":"not_found"}` | unknown path or feed name |
+| `404` | `{"error":"unknown_stop"}` | no such stop in the GTFS |
 | `503` | `{"error":"warming_up"}` | the line was not polled yet after a start; retry in a few seconds |
 | `503` | `{"error":"feed_unavailable"}` | the GTFS-RT feed is not built yet after a start |
+| `503` | `{"error":"busy"}` | stop arrivals: the server's OASA request queue is full and nothing recent is cached; retry shortly |
+| `502` | `{"error":"upstream_unavailable"}` | OASA (or the rail source) failed and nothing recent is cached |
 | `429` | (from Cloudflare) | more than about 30 requests per 10 s from one IP; wait at least 10 s |
 
 - `/v1/status` reports `ok: false` when no line poll succeeded in the last 5 minutes. During an

@@ -50,13 +50,15 @@ tags:
   - name: Vehicles
     description: One shared snapshot of all vehicles, whole or cut into map tiles.
   - name: Stops
-    description: Arrivals at one stop, from the vehicles the server already follows.
+    description: Arrivals at one stop, from the buses the server follows or from OASA's own predictions.
   - name: GTFS-Realtime
     description: Whole-network GTFS-RT feeds for journey planners.
   - name: Service
     description: Health and GTFS version.
   - name: Statistics
     description: Daily network statistics (servers that run with `--history`).
+  - name: Rail
+    description: Metro and tram timetable (STASY GTFS) and live suburban rail (railway.gov.gr).
   - name: Static data
     description: |
       Lines, shapes and stops, on GitHub Pages. Rebuilt only when OASA publishes a new GTFS.
@@ -312,70 +314,6 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
-  /v1/stops/{stop_id}:
-    get:
-      tags: [Stops]
-      operationId: getStop
-      summary: Arrivals at one stop
-      description: |
-        The vehicles on their way to one stop and about when they get there, like the signs at
-        the stops (contract rev 7). Computed from the line polls the server already makes:
-        **no OASA request**, and no line is marked watched, so positions are as fresh as
-        `/v1/vehicles` (lines nobody watches: every ~150 s). `position_at` gives each fix's age.
-
-        - **Live rows** (`source: "live"`): every vehicle of the stop's lines with a fix from the
-          last 5 min whose route passes the stop ahead of it (the first pass on a loop; not a
-          stop where its trip ends). `eta` = `position_at` + the time to drive there: per 200 m
-          of the shape the typical speed of the last 14 days at that day type and hour (as
-          `path_speeds`), elsewhere the timetable's running time; waits at stops and lights are
-          included. A matched vehicle waiting at its first stop leaves at its scheduled
-          departure (now when that is past). An unmatched one waiting there has `eta: null`.
-        - **Timetable rows** (`source: "schedule"`): trips of the stop's lines that have not
-          left their first stop yet, pass the stop within 60 min and no matched vehicle runs.
-          None while the static GTFS is expired (`gtfs_expires` in `/v1/status` is past):
-          vehicles still match it, but its times may not be OASA's any more.
-        - Up to 60 min ahead, soonest first (`eta: null` last), at most 3 rows per `line` and
-          `variant`.
-
-        `Cache-Control: public, max-age=<seconds until the earliest next poll of the stop's
-        lines, min 5, max 300>` (120 when none of them runs now).
-      parameters:
-        - name: stop_id
-          in: path
-          required: true
-          description: GTFS `stop_id` (the stops of `static/v1/lines/{line_id}.json`).
-          schema:
-            type: string
-          example: "61000"
-      responses:
-        "200":
-          description: Arrivals at the stop.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/CacheControl"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StopResponse"
-        "404":
-          description: Not a `stop_id` of the current GTFS. `max-age=60`.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: unknown_stop
-        "503":
-          description: No static GTFS loaded yet. `max-age=5`.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              example:
-                error: warming_up
-        "429":
-          $ref: "#/components/responses/RateLimited"
-
   /v1/gtfs-rt/{feed}:
     get:
       tags: [GTFS-Realtime]
@@ -518,7 +456,7 @@ paths:
       operationId: getStatsIndex
       summary: Days with network statistics
       description: |
-        Each finished day (Europe/Athens, 00:00-24:00) is summed about 2-3 h after midnight. The
+        Each finished day (Europe/Athens, 00:00-24:00) is summed about 4-5 h after midnight. The
         same files, every day kept, are on the `stats` branch of the repository; prefer them:
         `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/index.json`.
         `Cache-Control: public, max-age=600`.
@@ -557,8 +495,9 @@ paths:
         not averages, so several days add up exactly. A speed sample is two consecutive fixes of
         one vehicle on the same line, 5-120 s apart and at most 25 m/s, counted in the hour and
         line of the later fix; the distance is the straight line between them, and stops and
-        traffic lights count. A fix that reaches the server more than 1 h after the end of its
-        day is not counted. In the hour repeated when clocks go back, both hours are one entry.
+        traffic lights count. A fix that reaches the server more than 3 h after the end of its
+        day is not counted. `trips`: scheduled trips of the day and how many ran (docs/API.md,
+        "Trips that ran"). In the hour repeated when clocks go back, both hours are one entry.
         Also on the `stats` branch: `.../stats/v1/days/{date}.json`.
         `Cache-Control: public, max-age=86400`.
       parameters:
@@ -638,6 +577,341 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /v1/lines/{line_id}/schedule:
+    get:
+      tags: [Lines]
+      operationId: getLineSchedule
+      summary: Timetable of a line for one day
+      description: |
+        The line's runs by direction and headsign: each run's departure from its first stop, GTFS
+        style (past midnight `24:10`). Today's timetable is OASA's daily schedule when available
+        (`source: oasa-daily`; an empty `trip` then, and for today `seen` says whether a bus was
+        seen leaving the start for that run), else the OASA GTFS (`source: gtfs`), where for today
+        `seen` says whether a bus of that run was matched. Other
+        days are always from the GTFS. With an expired GTFS the same weekday inside the feed is
+        used and `expired` is `true`. `Cache-Control: public, max-age=60`.
+      parameters:
+        - $ref: "#/components/parameters/LineId"
+        - name: date
+          in: query
+          required: false
+          description: Local date `YYYY-MM-DD`, today up to 7 days ahead. Default today.
+          schema: {type: string, format: date}
+      responses:
+        "200":
+          description: The timetable.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineSchedule"
+        "400":
+          description: "`bad_date`: not a date, or outside today..today+7."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "404":
+          description: "`unknown_line`."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: "`warming_up`: the GTFS is not loaded yet."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/stops/{stop_id}:
+    get:
+      tags: [Stops]
+      operationId: getStop
+      summary: A stop, its lines and the buses on their way to it
+      description: |
+        `lines` are the line numbers whose GTFS trips call at the stop. `arrivals`, soonest
+        first, up to 1 h ahead, at most 3 per line and variant:
+        - `source: live`: a bus of those lines that still has the stop ahead (not as the last
+          stop of its trip), from GPS fixes of the last 5 minutes. Its time is its fix plus the
+          driving time to the stop: typical speeds of the shape where the history has them,
+          else the timetable's running time, else 3.5 m/s. A matched bus waiting at its first
+          stop leaves at its scheduled departure; an unmatched bus is placed on its shape when
+          the pass is clear (no `trip_id`, `scheduled` or delay), and left out while it stands
+          at its first stop. A bus not past the stop by its last fix is never overdue: late, it
+          is due now (`eta_s` 0).
+        - `source: schedule`: a trip that has not left its first stop and has no bus yet
+          (`vehicle` "", `delay_s` and `position_at` 0). None while the static GTFS is expired.
+
+        Raises the polling priority of the stop's lines that have a live bus in `arrivals`, as
+        a line request does; a line with none keeps its usual rate. No OASA request of its own.
+        `Cache-Control: public, max-age=15`.
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          description: GTFS `stop_id`, as in the static line files.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The stop.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopArrivals"
+        "404":
+          description: "`unknown_stop`, or a path that is not clean (`not_found`)."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: "`warming_up`: no GTFS loaded yet after a start."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/stops/{stop_id}/arrivals:
+    get:
+      tags: [Lines]
+      operationId: getStopArrivals
+      summary: Next buses at a stop (OASA's predictions)
+      description: |
+        OASA's own predictions (`getStopArrivals`), soonest first. They do not need a GTFS trip
+        match. One OASA call per stop per 30 s: answers are cached 30 s and `Cache-Control` lasts
+        until that cache expires (`public, max-age` 5-30). The calls share the server's OASA
+        budget with the line polls and get at most one request slot in four, so they never slow
+        the vehicle positions below three quarters of the budget. When OASA or the request queue
+        cannot answer, the stop's last good answer up to 2 minutes old is served with its own
+        `updated_at` and `max-age=5`.
+      parameters:
+        - name: stop_id
+          in: path
+          required: true
+          description: GTFS `stop_id` (the OASA stop code), as in the static `lines/{id}.json` stops.
+          schema: {type: string}
+          example: "240084"
+      responses:
+        "200":
+          description: Predictions, possibly empty.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopPredictions"
+              example:
+                stop_id: "240084"
+                stop_name: "ΠΛ. ΔΑΒΑΚΗ"
+                updated_at: 1793210650
+                arrivals:
+                  - {line: "5", route_code: "1992", vehicle: "88019", minutes: 28}
+        "404":
+          description: "`unknown_stop`: no such stop in the GTFS (OASA is not asked)."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: "`upstream_unavailable`: OASA failed and no answer of the last 2 minutes is cached."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: |
+            `warming_up`: the GTFS is not loaded yet. `busy`: the server's OASA request queue is
+            full and no answer of the last 2 minutes is cached; try again shortly.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/rail/stasy/departures:
+    get:
+      tags: [Rail]
+      operationId: getStasyDepartures
+      summary: Next metro and tram departures at a station (timetable)
+      description: |
+        From the STASY static GTFS (the open data catalogue), not live. The next `n` departures per
+        line and headsign at every stop with that name (accents and case ignored).
+        `indicative` is `true` when the date is outside the timetable's validity.
+        `Cache-Control: public, max-age=30`.
+      parameters:
+        - name: stop
+          in: query
+          required: true
+          description: Station name, e.g. `ΣΥΝΤΑΓΜΑ` or `Σύνταγμα`.
+          schema: {type: string}
+        - name: n
+          in: query
+          required: false
+          description: Departures per line and headsign, 1-20. Default 6.
+          schema: {type: integer, minimum: 1, maximum: 20}
+      responses:
+        "200":
+          description: The departures, soonest first.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StasyDepartures"
+        "400":
+          description: "`missing_stop`."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "404":
+          description: "`unknown_stop`."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: "`warming_up`: the timetable is not loaded yet."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/rail/stasy/vehicles:
+    get:
+      tags: [Rail]
+      operationId: getStasyVehicles
+      summary: Metro and tram trains running now (from the timetable)
+      description: |
+        No live data exists for the metro and tram: every train the STASY timetable runs now, with
+        the stop it left (`from`, its departure `at`) and the next one (`to`, its arrival `at`), so a
+        client moves it between them on its own clock. A train standing at a terminus is not listed.
+        `indicative` as in the departures. `Cache-Control: public, max-age=15`.
+      responses:
+        "200":
+          description: The trains, by line and trip.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StasyVehicles"
+        "503":
+          description: "`warming_up`: the timetable is not loaded yet."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/rail/stasy/trips/{id}:
+    get:
+      tags: [Rail]
+      operationId: getStasyTrip
+      summary: One metro or tram run with every stop and its time
+      description: |
+        Today's run of a trip of `/v1/rail/stasy/vehicles` (yesterday's, while an overnight run is
+        still going). `Cache-Control: public, max-age=60`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The `trip` of a vehicle.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The run.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StasyTrip"
+        "404":
+          description: "`unknown_trip`: no such trip, or it does not run today."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: "`warming_up`: the timetable is not loaded yet."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/rail/suburban/stations:
+    get:
+      tags: [Rail]
+      operationId: getSuburbanStations
+      summary: Suburban rail (Proastiakos) stations
+      description: "From railway.gov.gr, cached 24 h. `Cache-Control: public, max-age=3600`."
+      responses:
+        "200":
+          description: The stations with their corridors.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stations]
+                properties:
+                  stations:
+                    type: array
+                    items: {$ref: "#/components/schemas/SuburbanStation"}
+        "502":
+          description: "`upstream_unavailable`: railway.gov.gr failed and nothing is cached."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/rail/suburban/stations/{id}/departures:
+    get:
+      tags: [Rail]
+      operationId: getSuburbanDepartures
+      summary: Next suburban trains of a station (live)
+      description: |
+        From railway.gov.gr, with the ose.mpass station screens as fallback; boards cached 10 min.
+        While the train stream is open (see `/v1/rail/suburban/vehicles`), `delay_min` is the live
+        delay of the train. `Cache-Control: public, max-age=60`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Station id from `/v1/rail/suburban/stations`.
+          schema: {type: string}
+        - name: n
+          in: query
+          required: false
+          description: Trains, 1-20. Default 10.
+          schema: {type: integer, minimum: 1, maximum: 20}
+      responses:
+        "200":
+          description: The next trains.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuburbanDepartures"
+        "502":
+          description: "`upstream_unavailable`: both sources failed and nothing is cached."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
   /static/v1/lines.json:
     servers:
       - url: https://angelospk.github.io/athens-transit-rt
@@ -699,6 +973,74 @@ paths:
         "404":
           description: No such line (GitHub Pages HTML error page).
 
+  /v1/rail/suburban/vehicles:
+    get:
+      tags: [Rail]
+      operationId: getSuburbanVehicles
+      summary: Trains in service with their GPS positions (live)
+      description: |
+        From railway.gov.gr's train tracker stream, which the server reads only while clients ask
+        (it closes 3 min after the last request). The positions come about once a second and are
+        about 10 s old at the source; `position_at` is the time of each fix. Locomotives with no run
+        are left out. Every corridor of Greece is listed, not only Attica. The first request after a
+        quiet spell gets `503 warming_up` for a few seconds. `Cache-Control: public, max-age=5`.
+      responses:
+        "200":
+          description: The trains, by train number.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuburbanVehicles"
+        "503":
+          description: "`warming_up`: no snapshot yet (or the last one is over 2 min old)."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/rail/suburban/trains/{no}:
+    get:
+      tags: [Rail]
+      operationId: getSuburbanTrain
+      summary: Today's run of a train with every stop and its time
+      description: |
+        From the day's board (cached 10 min): the run under way, else the next, else the last of the
+        day. `t` is the scheduled arrival (the departure at the origin). `delay_min` of the run is the
+        live delay while the stream is open. `Cache-Control: public, max-age=30`.
+      parameters:
+        - name: no
+          in: path
+          required: true
+          description: The `train` of a vehicle or departure, e.g. `1226`.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The run.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuburbanRun"
+        "404":
+          description: "`unknown_train`: no run of that number today."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: "`upstream_unavailable`: no board."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+
 components:
   parameters:
     LineId:
@@ -734,7 +1076,7 @@ components:
       properties:
         error:
           type: string
-          enum: [unknown_line, unknown_stop, not_found, warming_up, feed_unavailable, query_not_allowed, bad_date, internal]
+          enum: [unknown_line, not_found, warming_up, feed_unavailable, query_not_allowed, bad_date, internal, missing_stop, unknown_stop, unknown_trip, unknown_train, upstream_unavailable, busy]
 
     LatLon:
       type: array
@@ -921,89 +1263,6 @@ components:
             anyOf:
               - $ref: "#/components/schemas/CityVehicle"
               - $ref: "#/components/schemas/CityVehicleLite"
-
-    StopResponse:
-      type: object
-      required: [stop_id, name, updated_at, next_update_at, lines, arrivals]
-      properties:
-        stop_id:
-          type: string
-        name:
-          type: string
-          description: Stop name from the GTFS.
-        updated_at:
-          type: integer
-          description: Time the answer was computed.
-        next_update_at:
-          type: integer
-          description: Earliest next poll of one of the stop's lines. Refetch then, not earlier.
-        lines:
-          type: array
-          description: Every line with a trip that stops here (not only as its last stop), sorted.
-          items:
-            type: string
-        arrivals:
-          type: array
-          items:
-            $ref: "#/components/schemas/Arrival"
-      example:
-        stop_id: "61000"
-        name: ΑΚΑΔΗΜΙΑ
-        updated_at: 1793019974
-        next_update_at: 1793020094
-        lines: ["022", "025", "608"]
-        arrivals:
-          - line: "608"
-            variant: "5346"
-            headsign: ΝΕΚΡ. ΖΩΓΡΑΦΟΥ - ΑΚΑΔΗΜΙΑ - ΓΑΛΑΤΣΙ
-            trip_id: 960_day_1_1625_1443
-            vehicle: "61191"
-            eta: 1793019999
-            scheduled: 1793020176
-            position_at: 1793019859
-            stops_away: 1
-            distance_m: 444
-            source: live
-
-    Arrival:
-      type: object
-      required: [line, variant, headsign, trip_id, vehicle, eta, scheduled, position_at, stops_away, distance_m, source]
-      properties:
-        line:
-          type: string
-        variant:
-          type: [string, "null"]
-          description: Key into `static/v1/lines/{line}.json` `variants` (the GTFS shape id).
-        headsign:
-          type: string
-        trip_id:
-          type: [string, "null"]
-          description: "`null` for a live vehicle not matched to a trip."
-        vehicle:
-          type: [string, "null"]
-          description: Vehicle id as in `/v1/lines/{line_id}`; `null` for timetable rows.
-        eta:
-          type: [integer, "null"]
-          description: |
-            Expected arrival at the stop. `null` only for an unmatched vehicle waiting at its
-            first stop (departure unknown).
-        scheduled:
-          type: [integer, "null"]
-          description: The trip's timetable time at the stop; `null` when unmatched.
-        position_at:
-          type: [integer, "null"]
-          description: GPS time of the vehicle's fix; `null` for timetable rows.
-        stops_away:
-          type: [integer, "null"]
-          minimum: 1
-          description: "`1`: the stop is the vehicle's next one. `null` for timetable rows."
-        distance_m:
-          type: [integer, "null"]
-          minimum: 0
-          description: Metres along the route from the vehicle to the stop; `null` for timetable rows.
-        source:
-          type: string
-          enum: [live, schedule]
 
     Status:
       type: object
@@ -1192,6 +1451,42 @@ components:
               vehicles: {type: integer}
               dist_m: {type: integer}
               time_s: {type: integer}
+        trips:
+          type: object
+          description: |
+            Scheduled trips that start in the day (static GTFS) and how many ran. A trip ran when
+            the vehicles matched to it covered at least `min_coverage` of its shape between 30 min
+            before its start and 30 min after its end. Missing when the server had no static GTFS
+            of the day's history. `run + partial + missed + unmeasured = planned`.
+          required: [gtfs, gtfs_expired, min_coverage, planned, run, partial, missed, unmeasured, by_line]
+          properties:
+            gtfs: {type: string, description: Static GTFS version the trips come from.}
+            gtfs_expired:
+              type: boolean
+              description: The day is outside the feed's validity; its trips are those of the same weekday inside it.
+            min_coverage: {type: number, example: 0.5}
+            planned: {type: integer}
+            run: {type: integer, description: Covered at least min_coverage.}
+            partial: {type: integer, description: "Seen, but covered less."}
+            missed: {type: integer, description: Never seen.}
+            unmeasured: {type: integer, description: No usable shape.}
+            by_line:
+              type: array
+              description: Every line with a planned trip, by id.
+              items:
+                type: object
+                required: [line, planned, run, partial, missed, unmeasured, missed_trips]
+                properties:
+                  line: {type: string}
+                  planned: {type: integer}
+                  run: {type: integer}
+                  partial: {type: integer}
+                  missed: {type: integer}
+                  unmeasured: {type: integer}
+                  missed_trips:
+                    type: [array, "null"]
+                    description: GTFS trip_ids never seen, by start time.
+                    items: {type: string}
 
     StaticLines:
       type: object
@@ -1245,3 +1540,239 @@ components:
               name: {type: string}
               lat: {type: number}
               lon: {type: number}
+
+    LineSchedule:
+      type: object
+      required: [line, date, expired, source, directions]
+      properties:
+        line: {type: string}
+        date: {type: string, format: date}
+        source:
+          type: string
+          enum: [oasa-daily, gtfs]
+          description: Where the times come from, OASA's daily schedule (today only) or the GTFS.
+        expired:
+          type: boolean
+          description: The GTFS has expired; the times are the same weekday of the old timetable.
+        directions:
+          type: array
+          items:
+            type: object
+            required: [direction, headsign, departures]
+            properties:
+              direction: {type: integer, enum: [0, 1]}
+              headsign: {type: string}
+              departures:
+                type: array
+                items:
+                  type: object
+                  required: [t, trip]
+                  properties:
+                    t: {type: string, description: "Departure from the first stop, `HH:MM`, may pass 24:00."}
+                    trip: {type: string}
+                    seen:
+                      type: boolean
+                      description: >-
+                        Today only. `gtfs`: a bus of this run was matched. `oasa-daily`: a bus of the
+                        line left the start of this direction from 3 min before to 20 min after `t`
+                        (`false` once 20 min passed without one). Missing while unknown.
+
+    StasyDepartures:
+      type: object
+      required: [stop, indicative, departures]
+      properties:
+        stop: {type: string}
+        indicative: {type: boolean}
+        departures:
+          type: array
+          items:
+            type: object
+            required: [line, route_color, headsign, t, in_s]
+            properties:
+              line: {type: string, example: M2}
+              route_color: {type: string, example: "#e30613"}
+              headsign: {type: string}
+              t: {type: string, description: "`HH:MM`, may pass 24:00."}
+              in_s: {type: integer, description: Seconds from now.}
+
+    StasyPlace:
+      type: object
+      required: [name, lat, lon, at]
+      properties:
+        name: {type: string}
+        lat: {type: number}
+        lon: {type: number}
+        at: {type: integer, description: "Unix seconds. Vehicle moving: `from` at its departure, `to` at its arrival. Vehicle standing at a stop: `from` and `to` are that stop, at its arrival and its departure. Trip: each stop's departure, the last stop's arrival."}
+
+    StasyVehicles:
+      type: object
+      required: [updated_at, indicative, vehicles]
+      properties:
+        updated_at: {type: integer}
+        indicative: {type: boolean}
+        vehicles:
+          type: array
+          items:
+            type: object
+            required: [trip, line, route_color, headsign, from, to]
+            properties:
+              trip: {type: string}
+              line: {type: string, example: M2}
+              route_color: {type: string}
+              headsign: {type: string}
+              from: {$ref: "#/components/schemas/StasyPlace"}
+              to: {$ref: "#/components/schemas/StasyPlace"}
+
+    StasyTrip:
+      type: object
+      required: [trip, line, route_color, headsign, stops]
+      properties:
+        trip: {type: string}
+        line: {type: string}
+        route_color: {type: string}
+        headsign: {type: string}
+        stops:
+          type: array
+          items: {$ref: "#/components/schemas/StasyPlace"}
+
+    SuburbanVehicles:
+      type: object
+      required: [updated_at, trains]
+      properties:
+        updated_at: {type: integer}
+        trains:
+          type: array
+          items:
+            type: object
+            required: [train, corridor, service, lat, lon, course, speed_kmh, delay_min, from, to, next_station, position_at]
+            properties:
+              train: {type: string}
+              corridor: {type: string, example: PIRAIR}
+              service: {type: string, example: Suburban}
+              lat: {type: number}
+              lon: {type: number}
+              course: {type: [number, "null"], description: Degrees from north.}
+              speed_kmh: {type: number}
+              delay_min: {type: [integer, "null"]}
+              from: {type: string}
+              to: {type: string}
+              next_station: {type: string}
+              position_at: {type: integer}
+
+    StopArrivals:
+      type: object
+      required: [stop, lines, arrivals, updated_at]
+      properties:
+        stop:
+          type: object
+          required: [id, name, lat, lon]
+          properties:
+            id: {type: string}
+            name: {type: string}
+            lat: {type: number}
+            lon: {type: number}
+        lines:
+          type: array
+          items: {type: string}
+        arrivals:
+          type: array
+          items:
+            type: object
+            required: [line, headsign, variant, vehicle, eta_s, at, delay_s, position_at, source, trip_id, scheduled, stops_away, distance_m]
+            properties:
+              line: {type: string}
+              headsign: {type: string}
+              variant: {type: string, description: "Shape id of the trip (`variants` key of the static line file); empty when the trip has no shape."}
+              vehicle: {type: string, description: "Empty for `schedule`."}
+              eta_s: {type: integer, minimum: 0}
+              at: {type: integer, description: "Expected arrival, Unix seconds."}
+              delay_s: {type: integer, description: "Positive = late; 0 for an unmatched bus and for `schedule`."}
+              position_at: {type: integer, description: "Time of the bus's last GPS fix; 0 for `schedule`."}
+              source: {type: string, enum: [live, schedule]}
+              trip_id: {type: [string, "null"], description: "GTFS trip; null for an unmatched bus."}
+              scheduled: {type: [integer, "null"], description: "The trip's timetable time at the stop, Unix seconds; null for an unmatched bus."}
+              stops_away: {type: [integer, "null"], minimum: 1, description: "1 when the stop is the bus's next one; null for `schedule`."}
+              distance_m: {type: [integer, "null"], minimum: 0, description: "Along the route; null for `schedule`."}
+        updated_at: {type: integer}
+
+    StopPredictions:
+      type: object
+      required: [stop_id, stop_name, updated_at, arrivals]
+      properties:
+        stop_id:
+          type: string
+        stop_name:
+          type: string
+          description: Stop name from the GTFS.
+        updated_at:
+          type: integer
+          description: When OASA gave these predictions (Unix seconds).
+        arrivals:
+          type: array
+          items:
+            type: object
+            required: [line, route_code, vehicle, minutes]
+            properties:
+              line:
+                type: string
+                description: Line number; empty when the route code is not in OASA's line list.
+              route_code:
+                type: string
+                description: OASA route code (one direction or variant of the line).
+              vehicle:
+                type: string
+                description: OASA vehicle number (`veh_code` of `getStopArrivals`).
+              minutes:
+                type: integer
+                description: OASA's predicted minutes to arrival.
+
+    SuburbanRun:
+      type: object
+      required: [train, from, to, status, delay_min, stops]
+      properties:
+        train: {type: string}
+        from: {type: string}
+        to: {type: string}
+        status: {type: string}
+        delay_min: {type: [integer, "null"]}
+        stops:
+          type: array
+          items:
+            type: object
+            required: [id, name, t, at, platform, delay_min]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              t: {type: string, description: "Scheduled arrival, `HH:MM` Athens local."}
+              at: {type: integer}
+              platform: {type: [string, "null"]}
+              delay_min: {type: [integer, "null"]}
+
+    SuburbanStation:
+      type: object
+      required: [id, name, corridors]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        corridors:
+          type: array
+          items: {type: string}
+
+    SuburbanDepartures:
+      type: object
+      required: [station, departures]
+      properties:
+        station: {type: string}
+        departures:
+          type: array
+          items:
+            type: object
+            required: [train, from, to, t, delay_min, platform, status]
+            properties:
+              train: {type: string}
+              from: {type: string}
+              to: {type: string}
+              t: {type: string, description: "Scheduled time, `HH:MM` Athens local."}
+              delay_min: {type: [integer, "null"]}
+              platform: {type: [string, "null"]}
+              status: {type: string}

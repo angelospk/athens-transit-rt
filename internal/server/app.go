@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,13 +17,16 @@ import (
 	"time"
 
 	rt "github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/angelospk/athens-transit-rt/internal/feed"
 	"github.com/angelospk/athens-transit-rt/internal/geo"
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
 	"github.com/angelospk/athens-transit-rt/internal/history"
+	"github.com/angelospk/athens-transit-rt/internal/livespeed"
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/meta"
+	"github.com/angelospk/athens-transit-rt/internal/rail"
 	"github.com/angelospk/athens-transit-rt/internal/release"
 	"github.com/angelospk/athens-transit-rt/internal/sched"
 	"github.com/angelospk/athens-transit-rt/internal/segspeed"
@@ -44,6 +48,9 @@ type Config struct {
 	ReleaseURL    string        // snapshot release base URL ("" = release.DefaultBaseURL)
 	GTFSZip       string        // load this zip instead of the release snapshot (local use)
 	TelematicsURL string        // "" = telematics.BaseURL
+	STASYURL      string        // STASY timetable catalogue ("" = rail.DefaultSTASYCatalog)
+	SuburbanURL   string        // railway.gov.gr base URL ("" = rail.DefaultRailwayURL)
+	MPassURL      string        // ose.mpass.ltd API base URL ("" = rail.DefaultMPassURL)
 	Proxy         string        // proxy URL for OASA requests, e.g. socks5h://127.0.0.1:40001 ("" = direct)
 	ReleaseCheck  time.Duration // how often to look for a new snapshot
 	Sched         sched.Config
@@ -53,13 +60,11 @@ type Config struct {
 }
 
 type world struct {
-	feed     *gtfs.Feed
-	manifest *release.Manifest
-	matcher  *match.Matcher
-	mapper   *match.RouteMapper
-
-	stopsOnce sync.Once
-	stopLines map[int32][]string // stop -> lines that stop there (linesAt)
+	feed      *gtfs.Feed
+	manifest  *release.Manifest
+	matcher   *match.Matcher
+	mapper    *match.RouteMapper
+	stopLines map[int32][]string // stop index -> the lines calling there
 }
 
 // lineData is the last published state of one line.
@@ -83,6 +88,7 @@ type App struct {
 
 	matchMu sync.Mutex // serialises matching (matchers are not concurrency-safe) and motion
 	motion  *motion
+	roads   *livespeed.Grid // recent speeds per road piece, from every line
 
 	mu           sync.RWMutex
 	w            *world
@@ -104,11 +110,39 @@ type App struct {
 
 	hist *history.Writer                // nil: no fix history
 	segs atomic.Pointer[segspeed.Table] // typical speeds from the history; nil until built
+
+	stasy    *rail.STASYStore
+	suburban *rail.Suburban
+	trains   *rail.TrainStream // live Proastiakos positions, read only while clients ask
+
+	starts  *runStarts // buses leaving their start: seen flags of the daily timetable
+	seenMu  sync.Mutex
+	seen    map[string]bool // trips the matcher has assigned a vehicle to, today
+	seenDay string
+
+	daily      dailyFunc  // a request waits: urgent scheduler slots, at most maxQueued
+	dailyBg    dailyFunc  // the prefetch: background slots, after the polls and the metadata
+	dailyMu    sync.Mutex // guards dailyCache only; never held during a request
+	dailyCache map[string]dailyEntry
+	dailyCalls map[string]*dailyCall // fetches in flight, by line
+
+	stopArrivals func(ctx context.Context, stopCode string) ([]telematics.Arrival, error)
+	arrMu        sync.Mutex // guards arrCache and arrCalls only; never held during a request
+	arrCache     map[string]arrivalsEntry
+	arrCalls     map[string]*arrivalsCall // OASA calls in flight, by stop
+
+	queuedN atomic.Int32 // OASA calls queued by requests and not yet run or dropped
+
+	mcpOnce    sync.Once
+	mcpSrv     *mcp.Server
+	apiOnce    sync.Once
+	apiHandler http.Handler // the app's own REST handler, for the MCP tools
 }
 
 func New(cfg Config, log *slog.Logger) *App {
 	a := &App{cfg: cfg, log: log, now: time.Now, lines: map[string]*lineData{}, known: map[string]bool{},
-		motion: newMotion()}
+		roads: livespeed.New(), starts: newRunStarts()}
+	a.motion = newMotion(a.roads)
 	a.pacer = telematics.NewPacer(cfg.RPS)
 	a.client = telematics.New(cfg.TelematicsURL, nil) // the scheduler paces every request
 	a.client.MinGap = a.pacer.BaseInterval()
@@ -119,6 +153,9 @@ func New(cfg Config, log *slog.Logger) *App {
 				IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second})
 		}
 	}
+	a.daily = a.dailyQueued
+	a.dailyBg = a.dailyBackground
+	a.stopArrivals = a.stopArrivalsQueued
 	a.sched = sched.New(cfg.Sched, a.pacer, a.client, a.onLine)
 	a.meta = meta.Open(filepath.Join(cfg.StateDir, "telematics-meta.json"), a.client, a.sched.Submit,
 		func() { a.refreshLines() })
@@ -127,18 +164,36 @@ func New(cfg Config, log *slog.Logger) *App {
 		base = release.DefaultBaseURL
 	}
 	a.fetch = &release.Fetcher{BaseURL: base, Dir: cfg.StateDir, HTTP: &http.Client{Timeout: 2 * time.Minute}}
+	stasyURL := cfg.STASYURL
+	if stasyURL == "" {
+		stasyURL = rail.DefaultSTASYCatalog
+	}
+	a.stasy = &rail.STASYStore{CatalogURL: stasyURL, Dir: filepath.Join(cfg.StateDir, "stasy"),
+		HTTP: &http.Client{Timeout: 5 * time.Minute}, Log: log, Now: func() time.Time { return a.now() }}
+	a.suburban = &rail.Suburban{BaseURL: cfg.SuburbanURL, MPassURL: cfg.MPassURL,
+		// Well under the 30 s WriteTimeout of the HTTP server: the MPass fallback and the response
+		// still have to fit after a dead primary upstream.
+		HTTP: &http.Client{Timeout: 8 * time.Second}, Now: func() time.Time { return a.now() }}
+	// The stream has no end, so no client Timeout; only the wait for its headers is bounded.
+	stream := http.DefaultTransport.(*http.Transport).Clone()
+	stream.ResponseHeaderTimeout = 15 * time.Second
+	a.trains = &rail.TrainStream{BaseURL: cfg.SuburbanURL, HTTP: &http.Client{Transport: stream}, Log: log,
+		Now: func() time.Time { return a.now() }}
 	return a
 }
 
 // SetFeed installs a static feed (new matcher state; published results stay until replaced).
 func (a *App) SetFeed(f *gtfs.Feed, m *release.Manifest) {
 	mapper := match.NewRouteMapper(f, a.meta.Stops)
-	w := &world{feed: f, manifest: m, mapper: mapper, matcher: match.New(f, mapper, a.cfg.Matcher)}
+	w := &world{feed: f, manifest: m, mapper: mapper, matcher: match.New(f, mapper, a.cfg.Matcher), stopLines: stopLines(f)}
 	a.matchMu.Lock()
 	a.mu.Lock()
 	a.w = w
 	a.mu.Unlock()
-	a.motion = newMotion() // positions along the old feed's shapes mean nothing now
+	a.motion = newMotion(a.roads) // positions along the old feed's shapes mean nothing now
+	// Trip ids of the old feed mean nothing either. Cleared before matchMu opens, so a poll that
+	// starts right after cannot record its matches into a map that is dropped a moment later.
+	a.forgetSeen()
 	a.matchMu.Unlock()
 	a.vehMu.Lock()
 	a.vehSnap = nil
@@ -263,6 +318,7 @@ func (a *App) onLine(p sched.LinePoll) {
 		return
 	}
 	results := w.matcher.MatchLine(p.Line, p.Obs)
+	a.noteSeen(w, results, p.Done)
 	vehicles := make([]Vehicle, len(results))
 	board := make([]boardPos, len(results))
 	ver := ""
@@ -303,7 +359,7 @@ type Vehicle struct {
 	Path       [][2]float64 `json:"path"`        // [lat, lon] of the route ahead, to the next stop
 	PathBeyond [][2]float64 `json:"path_beyond"` // rev 4: on from path's end to the third stop
 	PathStops  []int        `json:"path_stops"`  // rev 4: metres along path + path_beyond of each stop
-	PathSpeeds []*float64   `json:"path_speeds"` // rev 6: typical m/s per 200 m step ahead
+	PathSpeeds []*float64   `json:"path_speeds"` // rev 6: typical m/s per 200 m step ahead; rev 7: with today's traffic
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -353,10 +409,14 @@ func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, 
 			if r.Waiting {
 				stops = g.StopAlong[:1]
 			}
-			speed = a.motion.observe(r.VehicleID, g.Line, r.Along, r.Time)
+			speed = a.motion.observeAs(r.VehicleID, g.Line, r.Along, r.Time, !r.Waiting)
+			a.starts.observe(w.feed, r.VehicleID, r.Line, shape, r.Along, g.Line.Length(), r.Time)
 			path, beyond, at = pathAhead(g.Line, r.Along, speed, stops)
 			if tab := a.segs.Load(); shape >= 0 && !r.Waiting && tab.Feed() == worldVersion(w) {
 				steps = tab.Steps(w.feed.Shapes[shape].ID, r.Along, g.Line.Length(), segspeed.Slot(r.Time, gtfs.Athens), stepFallback(speed))
+			}
+			if !r.Waiting {
+				steps = a.roads.Blend(steps, g.Line, r.Along, r.Time.Unix()) // today's traffic, any line
 			}
 			return speed, path, beyond, at, steps, r.Along
 		}
@@ -368,11 +428,16 @@ func (a *App) motionOf(w *world, r *match.Result, shape int32) (speed *float64, 
 	if len(line.XY) < 2 {
 		return nil, nil, nil, nil, nil, -1
 	}
-	s, ok := a.motion.pick(r.VehicleID, line, line.Candidates(pos[0], pos[1], motionMaxOffM, r.Bearing, r.Bearing != 0), r.Time)
+	cands := line.Candidates(pos[0], pos[1], motionMaxOffM, r.Bearing, r.Bearing != 0)
+	s, ok := a.motion.pick(r.VehicleID, line, cands, r.Time)
 	if !ok {
+		if atTerminus(cands, line.Length()) { // a loop's start, put at both of its ends
+			a.starts.observe(w.feed, r.VehicleID, r.Line, shape, 0, line.Length(), r.Time)
+		}
 		return nil, nil, nil, nil, nil, -1
 	}
-	speed = a.motion.observe(r.VehicleID, line, s, r.Time)
+	speed = a.motion.observeAs(r.VehicleID, line, s, r.Time, !r.Waiting)
+	a.starts.observe(w.feed, r.VehicleID, r.Line, shape, s, line.Length(), r.Time)
 	path, _, _ = pathAhead(line, s, speed, nil)
 	return speed, path, nil, nil, nil, s
 }
@@ -512,6 +577,7 @@ func (a *App) Run(ctx context.Context) error {
 		go a.dailyStats(ctx)
 		go a.typicalSpeeds(ctx)
 	}
+	go a.prefetchDaily(ctx)
 	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second}
 	errc := make(chan error, 2)
@@ -523,6 +589,8 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	go a.sched.Run(ctx)
 	go a.housekeeping(ctx)
+	go a.stasy.Run(ctx)
+	go a.trains.Run(ctx)
 	a.log.Info("listening", "addr", a.cfg.Listen, "metrics", a.cfg.MetricsListen, "rps", a.pacer.BaseRPS())
 	select {
 	case <-ctx.Done():
@@ -587,6 +655,7 @@ func (a *App) housekeeping(ctx context.Context) {
 			}
 			a.warnExpiry(false)
 			a.forget()
+			a.roads.Prune(a.now().Unix())
 			a.logStats()
 		case <-release.C:
 			if a.cfg.GTFSZip != "" {
@@ -624,7 +693,7 @@ func (a *App) logStats() {
 	a.log.Info("stats", "requests", reqs, "requests_last_min", reqs-a.lastRequests, "errors", a.client.Errors(),
 		"watched", st.LinesByTier[sched.Watched], "dense", st.LinesByTier[sched.Dense], "other", st.LinesByTier[sched.Other],
 		"stretch_other", fmt.Sprintf("%.2f", st.Stretch[sched.Other]), "rps_now", fmt.Sprintf("%.2f", a.pacer.RPS()),
-		"vehicles", vehicles, "matched", matched)
+		"vehicles", vehicles, "matched", matched, "road_cells", a.roads.Cells())
 	a.lastRequests = reqs
 }
 
@@ -644,4 +713,71 @@ func (a *App) forget() {
 		}
 	}
 	a.mu.Unlock()
+}
+
+// maxQueued bounds the OASA calls that requests may have waiting in the scheduler at once.
+const maxQueued = 16
+
+var errQueueFull = errors.New("telematics: request queue full")
+
+// queued runs one OASA call as a background request of the scheduler: it takes a request slot
+// (budget, backoff, MaxInFlight) like the polls. At most maxQueued wait at once; past that the
+// caller is told at once. A call whose caller has left by its turn is dropped, not sent.
+func queued[T any](ctx context.Context, a *App, call func(ctx context.Context) (T, error)) (T, error) {
+	type answer struct {
+		v   T
+		err error
+	}
+	var zero T
+	if a.queuedN.Add(1) > maxQueued {
+		a.queuedN.Add(-1)
+		return zero, errQueueFull
+	}
+	ch := make(chan answer, 1)
+	a.sched.SubmitFirst(func(sctx context.Context) error { // a caller waits: before the metadata work
+		defer a.queuedN.Add(-1)
+		if ctx.Err() != nil {
+			return nil // nobody waits for it any more
+		}
+		v, err := call(sctx)
+		ch <- answer{v, err}
+		return err
+	})
+	select {
+	case r := <-ch:
+		return r.v, r.err
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
+}
+
+// dailyBackground fetches OASA's daily schedule of a line code in a background slot of the
+// scheduler (FIFO with the metadata work, every few slots): no cap, the prefetch asks one at a time.
+func (a *App) dailyBackground(ctx context.Context, code string) (telematics.DailySchedule, error) {
+	type answer struct {
+		d   telematics.DailySchedule
+		err error
+	}
+	ch := make(chan answer, 1)
+	a.sched.Submit(func(sctx context.Context) error {
+		if ctx.Err() != nil {
+			return nil
+		}
+		d, err := a.client.DailySchedule(sctx, code)
+		ch <- answer{d, err}
+		return err
+	})
+	select {
+	case r := <-ch:
+		return r.d, r.err
+	case <-ctx.Done():
+		return telematics.DailySchedule{}, ctx.Err()
+	}
+}
+
+// dailyQueued fetches OASA's daily schedule of a line code through queued.
+func (a *App) dailyQueued(ctx context.Context, code string) (telematics.DailySchedule, error) {
+	return queued(ctx, a, func(sctx context.Context) (telematics.DailySchedule, error) {
+		return a.client.DailySchedule(sctx, code)
+	})
 }

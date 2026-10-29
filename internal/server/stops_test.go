@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
+	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/sched"
 )
 
@@ -26,52 +27,125 @@ func stopBody(t *testing.T, a *App, id string) (StopResponse, int) {
 	return sr, maxAge(t, res)
 }
 
-func eta(r Arrival) int64 {
-	if r.ETA == nil {
-		return -1
+// liveRows are the arrivals with a bus.
+func liveRows(sr StopResponse) []StopArrival {
+	var out []StopArrival
+	for _, r := range sr.Arrivals {
+		if r.Source == "live" {
+			out = append(out, r)
+		}
 	}
-	return *r.ETA
+	return out
+}
+
+func asJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // The test line: S0..S4 every ~880 m due east, trips every 10 min from 10:00, 5 min a stop.
-// Vehicle 44548 is between S2 and S3 at 10:19:50, matched to T00 (next stop S3); vehicle 9 is
-// far away. At S3 it arrives after half a stop's scheduled running time; the trips that have
-// not left yet follow, from the timetable, three rows per variant in all.
-func TestStopBoardLiveAndSchedule(t *testing.T) {
+// Vehicle 44548 is between S2 and S3 at 10:19:50, matched to T00 (next stop S3), 440 s late;
+// vehicle 9 is far away. At S3 it arrives after half a stop's scheduled running time (10:22:20,
+// 140 s after 10:20); the trips that have not left yet follow, from the timetable, three rows
+// per variant in all.
+func TestStopArrivals(t *testing.T) {
 	a := newApp(t, monday1020)
 	poll(a, monday1020)
-	sr, ma := stopBody(t, a, "S3")
-	if sr.StopID != "S3" || sr.Name != "STOP 3" || !reflect.DeepEqual(sr.Lines, []string{"L"}) || sr.UpdatedAt != monday1020.Unix() ||
-		sr.NextUpdateAt < monday1020.Unix()+5 || ma < 5 || ma > 300 {
-		t.Fatalf("header %+v, max-age %d", sr, ma)
-	}
-	if len(sr.Arrivals) != 3 {
-		t.Fatalf("arrivals %+v", sr.Arrivals)
-	}
-	live := sr.Arrivals[0]
-	fix := monday1020.Add(-10 * time.Second).Unix()
-	if live.Source != "live" || *live.Vehicle != "44548" || *live.TripID != "T00" || *live.Variant != "SH" || live.Headsign != "EAST" ||
-		*live.StopsAway != 1 || *live.PositionAt != fix || math.Abs(float64(*live.DistanceM)-440) > 10 ||
-		*live.Scheduled != time.Date(2026, 10, 5, 10, 15, 0, 0, gtfs.Athens).Unix() || math.Abs(float64(eta(live)-fix-150)) > 3 {
-		b, _ := json.Marshal(live)
-		t.Fatalf("live row %s", b)
-	}
-	// T01 left at 10:10 with no vehicle: not shown. T02 leaves now, T03 at 10:30.
-	for i, want := range []string{"T02", "T03"} {
-		r := sr.Arrivals[i+1]
-		at := time.Date(2026, 10, 5, 10, 35+10*i, 0, 0, gtfs.Athens).Unix()
-		if r.Source != "schedule" || *r.TripID != want || eta(r) != at || *r.Scheduled != at || r.Vehicle != nil ||
-			r.PositionAt != nil || r.StopsAway != nil || r.DistanceM != nil || *r.Variant != "SH" {
-			b, _ := json.Marshal(r)
-			t.Fatalf("schedule row %d %s", i, b)
+
+	t.Run("the buses on their way, then the trips that have not left", func(t *testing.T) {
+		sr, ma := stopBody(t, a, "S3")
+		if ma != stopMaxAge || sr.Stop.ID != "S3" || sr.Stop.Name != "STOP 3" || strings.Join(sr.Lines, ",") != "L" ||
+			sr.UpdatedAt != monday1020.Unix() || len(sr.Arrivals) != 3 {
+			t.Fatalf("max-age %d, %s", ma, asJSON(sr))
 		}
+		live := sr.Arrivals[0]
+		fix := monday1020.Add(-10 * time.Second).Unix()
+		if live.Source != "live" || live.Line != "L" || live.Vehicle != "44548" || *live.TripID != "T00" || live.Variant != "SH" ||
+			live.Headsign != "EAST" || live.DelayS != 440 || live.PositionAt != fix || *live.StopsAway != 1 ||
+			math.Abs(float64(*live.DistanceM)-440) > 10 ||
+			*live.Scheduled != time.Date(2026, 10, 5, 10, 15, 0, 0, gtfs.Athens).Unix() ||
+			math.Abs(float64(live.At-fix-150)) > 3 || live.EtaS != int(live.At-monday1020.Unix()) {
+			t.Fatalf("live row %s", asJSON(live))
+		}
+		// T01 left at 10:10 with no bus: not shown. T02 leaves now, T03 at 10:30.
+		for i, want := range []string{"T02", "T03"} {
+			r := sr.Arrivals[i+1]
+			at := time.Date(2026, 10, 5, 10, 35+10*i, 0, 0, gtfs.Athens).Unix()
+			if r.Source != "schedule" || *r.TripID != want || r.At != at || *r.Scheduled != at || r.Vehicle != "" ||
+				r.PositionAt != 0 || r.StopsAway != nil || r.DistanceM != nil || r.Variant != "SH" {
+				t.Fatalf("schedule row %d %s", i, asJSON(r))
+			}
+		}
+		if !a.sched.IsWatched("L") {
+			t.Error("a stop with a bus on the way must mark its line watched")
+		}
+	})
+
+	t.Run("a stop the bus has passed: its lines, the timetable only", func(t *testing.T) {
+		sr, _ := stopBody(t, a, "S0")
+		if strings.Join(sr.Lines, ",") != "L" || len(sr.Arrivals) != 3 || len(liveRows(sr)) != 0 {
+			t.Fatalf("got %s", asJSON(sr))
+		}
+	})
+
+	t.Run("every trip ends at S4: its line, nobody gets on there", func(t *testing.T) {
+		sr, _ := stopBody(t, a, "S4")
+		if strings.Join(sr.Lines, ",") != "L" || sr.Arrivals == nil || len(sr.Arrivals) != 0 {
+			t.Fatalf("got %s", asJSON(sr))
+		}
+	})
+
+	t.Run("an unknown stop", func(t *testing.T) {
+		res, body := get(t, a, "/v1/stops/NOPE")
+		if res.StatusCode != 404 || !strings.Contains(string(body), `"unknown_stop"`) {
+			t.Fatalf("%d %s", res.StatusCode, body)
+		}
+	})
+}
+
+func TestStopArrivalsLateBusIsDueNow(t *testing.T) {
+	// 4 minutes on, the bus is still before S3 by its last fix (due 10:22:20): due now, never a negative wait.
+	a := newApp(t, monday1020)
+	poll(a, monday1020)
+	a.now = func() time.Time { return monday1020.Add(4 * time.Minute) }
+	sr, _ := stopBody(t, a, "S3")
+	if l := liveRows(sr); len(l) != 1 || l[0].EtaS != 0 || l[0].At != monday1020.Add(4*time.Minute).Unix() {
+		t.Fatalf("got %s", asJSON(sr))
 	}
-	// S0: the vehicle has passed it. S4: every trip ends there, so nobody gets on.
-	if sr, _ := stopBody(t, a, "S0"); len(sr.Arrivals) != 3 || sr.Arrivals[0].Source != "schedule" {
-		t.Fatalf("S0 %+v", sr.Arrivals)
+}
+
+func TestStopArrivalsDropOldFixes(t *testing.T) {
+	// A bus not heard of for longer than staleFix may be gone: not promised.
+	a := newAppWith(t, sched.DefaultConfig(), func() time.Time { return monday1020.Add(staleFix) })
+	poll(a, monday1020)
+	if sr, _ := stopBody(t, a, "S3"); len(liveRows(sr)) != 0 {
+		t.Fatalf("got %s", asJSON(sr))
 	}
-	if sr, _ := stopBody(t, a, "S4"); len(sr.Lines) != 0 || len(sr.Arrivals) != 0 {
-		t.Fatalf("S4 %+v", sr)
+}
+
+func TestStopArrivalsBusThatChangedLines(t *testing.T) {
+	// 44548 reports on another line after its fix on L: its L result is old news.
+	a := newApp(t, monday1020)
+	poll(a, monday1020)
+	a.mu.Lock()
+	a.lines["Α1"] = &lineData{updated: monday1020, feed: a.w.feed, results: []match.Result{{VehicleID: "44548", Line: "Α1", Trip: -1, Time: monday1020}}}
+	a.mu.Unlock()
+	if sr, _ := stopBody(t, a, "S3"); len(liveRows(sr)) != 0 {
+		t.Fatalf("got %s", asJSON(sr))
+	}
+}
+
+func TestStopWatchesOnlyLinesWithABusOnTheWay(t *testing.T) {
+	// S0 is behind the only bus of L: nothing comes but the timetable, so L is not asked of OASA more often.
+	a := newApp(t, monday1020)
+	poll(a, monday1020)
+	get(t, a, "/v1/stops/S0")
+	if a.sched.IsWatched("L") {
+		t.Fatal("a stop with no bus on the way must not mark its lines watched")
+	}
+	get(t, a, "/v1/stops/S3")
+	if !a.sched.IsWatched("L") {
+		t.Fatal("a stop with a bus on the way must mark its line watched")
 	}
 }
 
@@ -81,103 +155,75 @@ func TestStopBoardTypicalSpeeds(t *testing.T) {
 	a.segs.Store(typicalTable(t, monday1020, a.gtfsVersion()))
 	poll(a, monday1020)
 	sr, _ := stopBody(t, a, "S3")
-	if r := sr.Arrivals[0]; r.Source != "live" || math.Abs(float64(eta(r)-*r.PositionAt)-float64(*r.DistanceM)/5) > 3 {
-		b, _ := json.Marshal(r)
-		t.Fatalf("live row %s", b)
+	if r := sr.Arrivals[0]; r.Source != "live" || math.Abs(float64(r.At-r.PositionAt)-float64(*r.DistanceM)/5) > 3 {
+		t.Fatalf("live row %s", asJSON(r))
 	}
 }
 
-// A matched vehicle waiting at its first stop leaves at its scheduled departure: T03 at 10:30,
+// A matched bus waiting at its first stop leaves at its scheduled departure: T03 at 10:30,
 // at S2 ten minutes later.
 func TestStopBoardWaitingAtFirstStop(t *testing.T) {
 	now := time.Date(2026, 10, 5, 10, 25, 0, 0, gtfs.Athens)
 	a := newApp(t, now)
 	pollOne(a, now, "w", 23.7001, now.Add(-10*time.Second))
 	sr, _ := stopBody(t, a, "S2")
-	var r *Arrival
-	for i := range sr.Arrivals {
-		if sr.Arrivals[i].Vehicle != nil {
-			r = &sr.Arrivals[i]
-		}
-	}
+	l := liveRows(sr)
 	at := time.Date(2026, 10, 5, 10, 40, 0, 0, gtfs.Athens).Unix()
-	if r == nil || *r.TripID != "T03" || eta(*r) != at || *r.Scheduled != at || *r.StopsAway != 3 {
-		b, _ := json.Marshal(sr.Arrivals)
-		t.Fatalf("arrivals %s", b)
+	if len(l) != 1 || *l[0].TripID != "T03" || l[0].At != at || *l[0].Scheduled != at || *l[0].StopsAway != 3 {
+		t.Fatalf("arrivals %s", asJSON(sr.Arrivals))
 	}
 	for _, x := range sr.Arrivals {
 		if x.TripID != nil && *x.TripID == "T03" && x.Source == "schedule" {
-			t.Fatal("T03 listed twice: its vehicle and its timetable")
+			t.Fatal("T03 listed twice: its bus and its timetable")
 		}
 	}
 }
 
-// At night no trip fits, so the vehicle is unmatched: placed on its shape, it comes at the
-// default speed with no trip; standing at its first stop, with no time at all.
+// At night no trip fits, so the bus is unmatched: placed on its shape, it comes at the default
+// speed with no trip; standing at its first stop, it has no time and is left out.
 func TestStopBoardUnmatched(t *testing.T) {
 	now := time.Date(2026, 10, 5, 3, 0, 0, 0, gtfs.Athens)
 	a := newApp(t, now)
 	pollOne(a, now, "u", 23.715, now.Add(-10*time.Second))
-	sr, ma := stopBody(t, a, "S3")
-	if ma != inactiveMaxAge || len(sr.Arrivals) != 1 {
-		t.Fatalf("max-age %d, arrivals %+v", ma, sr.Arrivals)
+	sr, _ := stopBody(t, a, "S3")
+	if len(sr.Arrivals) != 1 {
+		t.Fatalf("arrivals %s", asJSON(sr.Arrivals))
 	}
 	r := sr.Arrivals[0]
-	if r.TripID != nil || r.Scheduled != nil || *r.Vehicle != "u" || *r.StopsAway != 2 ||
-		math.Abs(float64(eta(r)-*r.PositionAt)-float64(*r.DistanceM)/boardDefaultMS) > 2 {
-		b, _ := json.Marshal(r)
-		t.Fatalf("unmatched row %s", b)
+	if r.TripID != nil || r.Scheduled != nil || r.Vehicle != "u" || r.DelayS != 0 || *r.StopsAway != 2 ||
+		math.Abs(float64(r.At-r.PositionAt)-float64(*r.DistanceM)/boardDefaultMS) > 2 {
+		t.Fatalf("unmatched row %s", asJSON(r))
 	}
 	// Standing at S0 over two polls (speed 0).
 	a2 := newApp(t, now)
 	pollOne(a2, now, "s", 23.7001, now.Add(-60*time.Second))
 	pollOne(a2, now, "s", 23.7001, now.Add(-10*time.Second))
-	sr, _ = stopBody(t, a2, "S2")
-	if len(sr.Arrivals) != 1 || sr.Arrivals[0].ETA != nil || *sr.Arrivals[0].StopsAway != 3 {
-		b, _ := json.Marshal(sr.Arrivals)
-		t.Fatalf("waiting unmatched %s", b)
+	if sr, _ = stopBody(t, a2, "S2"); len(sr.Arrivals) != 0 {
+		t.Fatalf("waiting unmatched %s", asJSON(sr.Arrivals))
 	}
 }
 
-// After the timetable expired, vehicles still match (PlanningTime) and come; the timetable's
-// own trips are not listed, their times may not be OASA's any more.
+// After the timetable expired, buses still match (PlanningTime) and come; the timetable's own
+// trips are not listed, their times may not be OASA's any more.
 func TestStopBoardExpiredTimetable(t *testing.T) {
 	after := time.Date(2026, 10, 12, 10, 20, 0, 0, gtfs.Athens) // Monday; feed ended 2026-10-06
 	a := newApp(t, after)
 	poll(a, after)
 	sr, _ := stopBody(t, a, "S3")
 	if len(sr.Arrivals) != 1 || sr.Arrivals[0].Source != "live" || sr.Arrivals[0].TripID == nil {
-		b, _ := json.Marshal(sr.Arrivals)
-		t.Fatalf("arrivals %s", b)
+		t.Fatalf("arrivals %s", asJSON(sr.Arrivals))
 	}
 }
 
-// A matched vehicle standing at the stop (its next stop already the one after) arrives now.
+// A matched bus standing at the stop (its next stop already the one after) is due now.
 func TestStopBoardAtTheStop(t *testing.T) {
 	a := newApp(t, monday1020)
 	pollOne(a, monday1020, "at", 23.7201, monday1020.Add(-10*time.Second)) // ~9 m past S2
 	sr, _ := stopBody(t, a, "S2")
-	var r *Arrival
-	for i := range sr.Arrivals {
-		if sr.Arrivals[i].Vehicle != nil {
-			r = &sr.Arrivals[i]
-		}
-	}
-	if r == nil || r.TripID == nil || *r.TripID != "T01" || *r.StopsAway != 1 || *r.DistanceM != 0 || eta(*r) != *r.PositionAt {
-		b, _ := json.Marshal(sr.Arrivals)
-		t.Fatalf("arrivals %s", b)
-	}
-}
-
-// An old fix is left out, as on /v1/vehicles; an arrival well past is gone.
-func TestStopBoardOldFixes(t *testing.T) {
-	a := newAppWith(t, sched.DefaultConfig(), func() time.Time { return monday1020.Add(6 * time.Minute) })
-	poll(a, monday1020)
-	sr, _ := stopBody(t, a, "S3")
-	for _, r := range sr.Arrivals {
-		if r.Source == "live" {
-			t.Fatalf("old fix listed %+v", r)
-		}
+	l := liveRows(sr)
+	if len(l) != 1 || l[0].TripID == nil || *l[0].TripID != "T01" || *l[0].StopsAway != 1 || *l[0].DistanceM != 0 ||
+		l[0].EtaS != 0 || l[0].At != monday1020.Unix() {
+		t.Fatalf("arrivals %s", asJSON(sr.Arrivals))
 	}
 }
 
@@ -188,9 +234,6 @@ func TestStopBoardErrors(t *testing.T) {
 		if res.StatusCode != 404 || !json.Valid(body) || maxAge(t, res) > 60 {
 			t.Fatalf("%.40s: %d %s", p, res.StatusCode, body)
 		}
-	}
-	if _, body := get(t, a, "/v1/stops/NOPE"); !strings.Contains(string(body), `"unknown_stop"`) {
-		t.Fatalf("unknown stop: %s", body)
 	}
 	a.mu.Lock()
 	a.w = nil

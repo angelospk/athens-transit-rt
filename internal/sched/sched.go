@@ -150,6 +150,7 @@ type Scheduler struct {
 	lines      map[string]*lineState
 	pending    []*request
 	background []func(ctx context.Context) error
+	urgent     int // the first urgent entries of background are SubmitFirst work
 	stretch    [numTiers]float64
 	lastPlan   time.Time
 	sinceBG    int // line requests since the last background request
@@ -362,6 +363,15 @@ func (s *Scheduler) Submit(fn func(ctx context.Context) error) {
 	s.background = append(s.background, fn)
 }
 
+// SubmitFirst queues one background request that someone is waiting for (an API caller): it
+// goes before the queued background work, after the other waited-for requests.
+func (s *Scheduler) SubmitFirst(fn func(ctx context.Context) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.background = slices.Insert(s.background, s.urgent, fn)
+	s.urgent++
+}
+
 // pick returns the next request to send, or nil.
 func (s *Scheduler) pick() *request {
 	s.mu.Lock()
@@ -387,6 +397,9 @@ func (s *Scheduler) pick() *request {
 func (s *Scheduler) popBackground() *request {
 	fn := s.background[0]
 	s.background = s.background[1:]
+	if s.urgent > 0 {
+		s.urgent--
+	}
 	s.sinceBG = 0
 	s.sentBG++
 	return &request{bg: fn}
@@ -450,8 +463,9 @@ func (s *Scheduler) pickLine() *request {
 func (s *Scheduler) execute(ctx context.Context, r *request) {
 	start := time.Now()
 	if r.bg != nil {
-		err := r.bg(ctx)
-		s.slots.Report(time.Since(start), err)
+		// Only its errors: a background answer (a daily schedule) is big and slow by nature, and
+		// its latency counted as load kept the pace at its slowest while the prefetch ran.
+		s.slots.Report(0, r.bg(ctx))
 		return
 	}
 	vs, err := s.fetch.BusLocations(ctx, r.route.Code)

@@ -44,13 +44,23 @@ type StatusResponse struct {
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/lines/{id}", a.handleLine)
+	mux.HandleFunc("GET /v1/lines/{id}/schedule", a.handleSchedule)
 	mux.HandleFunc("GET /v1/status", a.handleStatus)
+	mux.HandleFunc("GET /v1/stops/{id}", a.handleStop)
+	mux.HandleFunc("GET /v1/stops/{id}/arrivals", a.handleStopArrivals)
 	mux.HandleFunc("GET /v1/vehicles", a.handleVehicles)
 	mux.HandleFunc("GET /v1/vehicles/tiles/{z}/{x}/{y}", a.handleTile)
-	mux.HandleFunc("GET /v1/stops/{id}", a.handleStop)
 	mux.HandleFunc("GET /v1/gtfs-rt/{name}", a.handleGTFSRT)
+	mux.HandleFunc("GET /v1/rail/stasy/departures", a.handleSTASYDepartures)
+	mux.HandleFunc("GET /v1/rail/stasy/vehicles", a.handleSTASYVehicles)
+	mux.HandleFunc("GET /v1/rail/stasy/trips/{id}", a.handleSTASYTrip)
+	mux.HandleFunc("GET /v1/rail/suburban/stations", a.handleSuburbanStations)
+	mux.HandleFunc("GET /v1/rail/suburban/stations/{id}/departures", a.handleSuburbanDepartures)
+	mux.HandleFunc("GET /v1/rail/suburban/vehicles", a.handleSuburbanVehicles)
+	mux.HandleFunc("GET /v1/rail/suburban/trains/{no}", a.handleSuburbanTrain)
 	mux.HandleFunc("GET /v1/stats", a.handleStatsIndex)
 	mux.HandleFunc("GET /v1/stats/days/{date}", a.handleStatsDay)
+	mux.Handle("/mcp", a.mcpHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write([]byte("ok\n"))
@@ -115,6 +125,9 @@ type gzipWriter struct {
 }
 
 func (g *gzipWriter) Write(b []byte) (int, error) { return g.zw.Write(b) }
+
+// Unwrap lets http.ResponseController reach the connection (read deadlines, flushing).
+func (g *gzipWriter) Unwrap() http.ResponseWriter { return g.ResponseWriter }
 
 func writeJSON(w http.ResponseWriter, status, maxAge int, v any) {
 	b, err := json.Marshal(v)

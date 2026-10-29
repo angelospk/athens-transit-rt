@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -51,6 +52,13 @@ func newAppWith(t *testing.T, cfg sched.Config, clock func() time.Time) *App {
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	a.now = clock
 	a.sched.SetClock(a.now)
+	// Tests never reach OASA: the daily schedule is down unless a test sets it (GTFS fallback).
+	a.daily = func(context.Context, string) (telematics.DailySchedule, error) {
+		return telematics.DailySchedule{}, errors.New("no daily schedule in tests")
+	}
+	a.stopArrivals = func(context.Context, string) ([]telematics.Arrival, error) {
+		return nil, errors.New("no stop arrivals in tests")
+	}
 	a.SetFeed(gtfstest.StraightLine{Stops: 5, Trips: 6, First: 10 * 3600, Headway: 10, Leg: 5}.Feed(t), nil)
 	return a
 }

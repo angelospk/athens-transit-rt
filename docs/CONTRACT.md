@@ -14,9 +14,9 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 7 (2026-10-26): `GET /v1/stops/{stop_id}` (arrivals at one stop)
-(rev 6: `path_speeds` on vehicles; rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on
-vehicles; rev 3: `GET /v1/vehicles`; `speed` and `path` on vehicles)
+Revision: 8 (2026-10-29): `GET /v1/stops/{stop_id}` (a stop board)
+(rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
+`path` on vehicles)
 
 ## Hosts
 
@@ -99,9 +99,11 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
   covers metres `200·i` to `200·(i+1)` ahead, the last one may be shorter (shape's end), at
   most 8 steps (1.6 km). It comes from the last 14 days of fixes of vehicles on the same shape,
   per 200 m of the shape, day type (weekday, Saturday, Sunday) and local hour, falling back to
-  all hours; waits at stops and lights are included. A step with no history is `null`. `null`
-  when unmatched, waiting to start, the backend runs without fix history, or nothing ahead is
-  known. Use (rev 6 clients): move along `path` then `path_beyond` from `position_at` at
+  all hours; waits at stops and lights are included. Rev 7: where buses of any line crossed
+  the same road in the same direction in the last 20 minutes (at least 2 buses, per 100 m of
+  road), that road counts at 0.7 × their speed + 0.3 × the typical one (their speed alone
+  without history). A step with neither is `null`. `null` when unmatched, waiting to start,
+  or nothing ahead is known. Clients need no change. Use (rev 6 clients): move along `path` then `path_beyond` from `position_at` at
   the step speeds (a `null` step at `speed`, or 1.5 m/s without one), instead of the stop
   waits; stop at the end of the points, as before. Metres are along the shape; the 5 m
   simplified points are a few metres shorter, so a client may simply walk them.
@@ -224,62 +226,61 @@ Client rules:
 6. Cloudflare rate-limits per IP (`429`, back off ≥ 10 s). A desktop view at MapLibre 13 is ~15
    tiles; do not refetch tiles that are still fresh.
 
-### `GET /v1/stops/{stop_id}` (rev 7)
+### `GET /v1/stops/{stop_id}` (rev 8)
 
-The vehicles on their way to one stop and about when they get there (a stop board). Computed
-from the line polls the backend already makes: it causes **no OASA request** and does **not**
-mark any line watched, so positions are as fresh as `/v1/vehicles` (up to ~2.5 min old for
-lines nobody watches; `position_at` gives each fix's age). `stop_id` is the GTFS `stop_id`, as
-in `static/v1/lines/{line_id}.json` → `stops`.
+The buses on their way to one stop and about when they get there (a stop board), from the
+line polls the backend already makes: no OASA request of its own. The lines with a live bus
+in `arrivals` are marked watched, as a line request does (polled about every 30 s for 10 min);
+the others keep their usual rate. `stop_id` is the GTFS `stop_id`, as in
+`static/v1/lines/{line_id}.json` → `stops`.
 
 ```json
 {
-  "stop_id": "61000",
-  "name": "ΑΚΑΔΗΜΙΑ",
-  "updated_at": 1793019974,
-  "next_update_at": 1793020094,
-  "lines": ["022", "025", "608"],
+  "stop": {"id": "61000", "name": "ΑΚΑΔΗΜΙΑ", "lat": 37.9799, "lon": 23.7333},
+  "lines": ["022", "025", "026", "608"],
   "arrivals": [
     {
-      "line": "608", "variant": "5346", "headsign": "ΝΕΚΡ. ΖΩΓΡΑΦΟΥ - ΑΚΑΔΗΜΙΑ - ΓΑΛΑΤΣΙ",
-      "trip_id": "960_day_1_1625_1443", "vehicle": "61191",
-      "eta": 1793019999, "scheduled": 1793020176, "position_at": 1793019859,
-      "stops_away": 1, "distance_m": 444, "source": "live"
+      "line": "608", "headsign": "ΝΕΚΡ. ΖΩΓΡΑΦΟΥ - ΑΚΑΔΗΜΙΑ - ΓΑΛΑΤΣΙ", "variant": "5346",
+      "vehicle": "61191", "eta_s": 25, "at": 1793019999, "delay_s": -177,
+      "position_at": 1793019859, "source": "live", "trip_id": "960_day_1_1625_1443",
+      "scheduled": 1793020176, "stops_away": 1, "distance_m": 444
     },
     {
-      "line": "026", "variant": "5420", "headsign": "ΒΟΤΑΝΙΚΟΣ",
-      "trip_id": "1032_day_1_2402_1340", "vehicle": null,
-      "eta": 1793020500, "scheduled": 1793020500, "position_at": null,
-      "stops_away": null, "distance_m": null, "source": "schedule"
+      "line": "026", "headsign": "ΒΟΤΑΝΙΚΟΣ", "variant": "5420",
+      "vehicle": "", "eta_s": 526, "at": 1793020500, "delay_s": 0,
+      "position_at": 0, "source": "schedule", "trip_id": "1032_day_1_2402_1540",
+      "scheduled": 1793020500, "stops_away": null, "distance_m": null
     }
-  ]
+  ],
+  "updated_at": 1793019974
 }
 ```
 
-- `lines`: every line with a trip that stops here other than as its last stop, sorted (lines
-  with no vehicle coming too). `updated_at`: when the answer was computed.
-- `source: "live"`: a vehicle of those lines with a fix from the last 5 min whose route passes
-  the stop ahead of it: its next pass (the first one on a loop), never a stop where its trip
-  ends. Matched vehicles are placed by their trip; unmatched ones on the shape of their
-  `variant` with that variant's stops, when the pass is clear (as for `speed`), else left out.
-- `eta`: `position_at` plus the time to drive the `distance_m` metres along the shape: per
-  200 m the typical speed of the last 14 days at that day type and hour (as `path_speeds`),
-  where there is none the timetable's running time (matched) or 3.5 m/s (unmatched); waits at
-  stops and lights are included. A matched vehicle waiting at its first stop leaves at its
-  scheduled departure, or now when that is past. `null` only for an unmatched vehicle waiting
-  at its first stop (departure unknown). An `eta` more than 30 s past is left out.
-- `scheduled`: the matched trip's timetable time at the stop (`null` when unmatched).
-  `stops_away`: `1` when the stop is the vehicle's next one.
+- `lines`: every line with a trip that calls here, sorted (lines with no bus coming too).
+  `updated_at`: when the answer was computed.
+- `source: "live"`: a bus of those lines with a fix from the last 5 min whose route passes the
+  stop ahead of it: its next pass (the first one on a loop), never a stop where its trip ends.
+  A bus seen on two lines counts on the line of its newest fix only. Matched buses are placed
+  by their trip; unmatched ones on the shape of their `variant` with that variant's stops, when
+  the pass is clear (as for `speed`), else left out.
+- `at`: `position_at` plus the time to drive the `distance_m` metres along the shape: per 200 m
+  the typical speed of the last 14 days at that day type and hour (as `path_speeds`), where
+  there is none the timetable's running time (matched) or 3.5 m/s (unmatched); waits at stops
+  and lights are included. A matched bus waiting at its first stop leaves at its scheduled
+  departure, or now when that is past. An unmatched bus standing at its first stop has no
+  time and is left out. A bus not past the stop by its last fix is never overdue: late, it is
+  due now (`at` = now). `eta_s` = `at` − now.
+- `delay_s`: the matched bus's delay (positive = late); `0` when unmatched. `trip_id` and
+  `scheduled` (the trip's timetable time at the stop) are `null` when unmatched.
+  `stops_away`: `1` when the stop is the bus's next one.
 - `source: "schedule"`: a trip of those lines that has not left its first stop yet, passes the
-  stop within 60 min and has no matched vehicle; `eta` = `scheduled`. None while the static GTFS
-  is expired (`gtfs_expires` in `/v1/status` is past): vehicles still match it, but its times
-  may not be OASA's any more.
-- Up to 60 min ahead, sorted by `eta` (`null` last), at most 3 rows per `line` and `variant`.
-  `arrivals` may be `[]`.
-- Headers: `Cache-Control: public, max-age=<seconds until the earliest next poll of the stop's
-  lines, min 5, max 300>`; `next_update_at` is that poll (at least 5 s ahead). When none of the
-  lines runs now: `max-age=120`. Refetch at `next_update_at + 1..3 s`, never faster than every
-  5 s, at most every 60 s while the tab is hidden.
+  stop within 60 min and has no matched bus; `at` = `scheduled`, `vehicle` `""`, `delay_s` and
+  `position_at` `0`, `stops_away` and `distance_m` `null`. None while the static GTFS is expired
+  (`gtfs_expires` in `/v1/status` is past): buses still match it, but its times may not be
+  OASA's any more. A client that shows only buses filters on `source`.
+- Up to 60 min ahead, sorted by `at`, at most 3 rows per `line` and `variant`. `arrivals` may
+  be `[]`.
+- Headers: `Cache-Control: public, max-age=15`. Refetch every 15-30 s while shown.
 - `404` `{"error":"unknown_stop"}` (`max-age=60`) for an id not in the current GTFS. `503`
   `{"error":"warming_up"}` before the static GTFS is loaded.
 

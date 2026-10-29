@@ -33,8 +33,56 @@ stream are not ported: the map lives in [athens-transit-map](https://github.com/
   usage: [API reference](https://angelospk.github.io/athens-transit-rt/),
   [`docs/API.md`](docs/API.md). The feeds pass the MobilityData GTFS Realtime validator
   with 0 errors ([details](docs/API.md#validation)).
+- Line timetables (`/v1/lines/{id}/schedule`): today from OASA's daily schedule, prefetched once a
+  day for every line, with `seen` per run from the buses seen leaving their start; other days from
+  the GTFS.
+- Live road speeds: the recent passes of every line per 100 m piece of road, blended into each
+  bus's `path_speeds`, so a line's ETA follows today's traffic on shared roads.
+- Metro and tram departures from the STASY GTFS, and suburban rail (Proastiakos) live departures
+  and delays.
+- Trains for a map: metro and tram placed from the STASY timetable (between two stops, with their
+  times), and the Proastiakos trains with their GPS positions from the railway.gov.gr tracker.
+- An MCP server at `/mcp` (Streamable HTTP, read-only) so assistants can ask about lines, buses,
+  stops, timetables, statistics and rail ([details](docs/API.md)).
 - Tools from upstream as subcommands: `compare`, `record` (SQLite, upstream schema), `replay`
   (including `--blocks`).
+
+## Use the public instance
+
+Base URL `https://transit.haroldpoi.dev`, no key. Reference with try-it:
+<https://angelospk.github.io/athens-transit-rt/>, details in [`docs/API.md`](docs/API.md).
+
+```bash
+curl -s https://transit.haroldpoi.dev/v1/lines/040                # live buses of a line
+curl -s https://transit.haroldpoi.dev/v1/lines/040/schedule       # today's timetable, seen per run
+curl -s -G https://transit.haroldpoi.dev/v1/rail/stasy/departures \
+  --data-urlencode stop=ΣΥΝΤΑΓΜΑ -d n=4                         # metro/tram (stop name URL-encoded)
+curl -s https://transit.haroldpoi.dev/v1/rail/suburban/stations   # suburban rail stations
+curl -s https://transit.haroldpoi.dev/v1/rail/suburban/vehicles   # suburban trains, GPS
+```
+
+Please ask for at most 5 lines at a time and keep the caching headers: every client shares one
+request budget towards OASA.
+
+### MCP (Claude, ChatGPT and other assistants)
+
+URL: `https://transit.haroldpoi.dev/mcp` (Streamable HTTP, no login, read-only). Tools: `search_lines`,
+`line_now`, `line_timetable`, `find_stops`, `stop_arrivals`, `network_day`, `metro_departures`,
+`suburban_departures` ([what each returns](docs/API.md#mcp-assistants)).
+
+- Claude Code: `claude mcp add --transport http athens-transit https://transit.haroldpoi.dev/mcp`
+- Claude (claude.ai, desktop): Settings › Connectors › Add custom connector, paste the URL.
+- ChatGPT: turn on developer mode, add a connector (MCP server) with the URL and no authentication.
+- Any client: check that it answers with
+
+  ```bash
+  curl -s https://transit.haroldpoi.dev/mcp -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+  ```
+
+Then ask, for example, «Πού είναι τώρα τα λεωφορεία του 040;» or «Πότε φεύγει το επόμενο μετρό από
+το Σύνταγμα;».
 
 ## Architecture
 
@@ -77,7 +125,8 @@ held bytes 355 → 875 KB; [spec](docs/superpowers/specs/2026-10-08-vehicle-tile
 `/v1/stops/{stop_id}` (a stop board) also reads only what was polled: each poll keeps every
 vehicle's place on its stop pattern, and a request adds the time to drive to the stop (typical
 speeds per 200 m of the shape, else the timetable's running time) to each vehicle of the stop's
-lines that is on its way there. No OASA request, no line marked watched.
+lines that is on its way there. No OASA request of its own; the lines with a bus on the way are
+marked watched.
 
 `/v1/status` reports `ok: false` when no line poll succeeded in the last 5 minutes (while lines
 are scheduled). During an OASA outage the last good data stays served; `updated_at` shows its age.
@@ -131,9 +180,15 @@ curl -s 127.0.0.1:8096/metrics | jq '{max_1s, max_10s, sent_by_tier, lines_by_ti
 
 ## Self-hosting (Docker)
 
-**OASA answers only home (residential) internet connections in Greece.** Requests from
-data-centre and cloud addresses time out (tested: Oracle Cloud, Google Apps Script, Cloudflare
-WARP, Webshare proxies, a Greek hosting provider). Run the container on a machine at home.
+**OASA answers only IP addresses in Greece.** Requests from elsewhere time out (tested:
+Oracle Cloud, Google Apps Script, Cloudflare WARP and Workers outside Athens, Webshare proxies,
+Hetzner, netcup, Cyprus and Bulgaria, even home connections there). Data-centre addresses in
+Greece work: on 2026-10-28, 10 of 10 Globalping probes in Greece got answers, 7 of them in data
+centres (Synapsecom, MVPS, Novelcomm, Fusioned, Euclid Services, Datacamp), and an MVPS VPS in
+Thessaloniki (1 vCPU, 2 GB) runs the container below. Run it on a machine at home in Greece or
+on a VPS whose address is in Greece; check first with
+`curl -m 20 "https://telematics.oasa.gr/api/?act=getBusLocation&p1=2045"`, which returns
+JSON when OASA answers.
 
 ```bash
 curl -O https://raw.githubusercontent.com/angelospk/athens-transit-rt/main/compose.yaml
