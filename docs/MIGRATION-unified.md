@@ -1,8 +1,9 @@
-# Migration plan (DRAFT): one model for every mode
+# Migration plan: one model for every mode
 
-Status: **draft for Harold's approval, 2026-10-29.** Phase 1 (this design) is done when Harold
-approves [GLOSSARY.md](GLOSSARY.md), [CONTRACT-rev8-draft.md](CONTRACT-rev8-draft.md) and
-[UI-SPEC-unified.md](UI-SPEC-unified.md). Estimates are working hours of agent-assisted work,
+Status: **phase 1 (design) approved and phase 2 (backend) done, 2026-10-29**; phases 3 (app)
+and 4 (web) are next. Design: [GLOSSARY.md](GLOSSARY.md), the `/v2` section of
+[CONTRACT.md](CONTRACT.md#unified-api-v2-rev-8) and [UI-SPEC-unified.md](UI-SPEC-unified.md);
+review and follow-ups: [issue #9](https://github.com/angelospk/athens-transit-rt/issues/9). Estimates are working hours of agent-assisted work,
 already multiplied by 1.5-2.
 
 ## Phase 2: backend (`athens-transit-rt`), 33-45 h
@@ -65,31 +66,30 @@ fixtures and diff tests pass, `/v1` fixtures unchanged.
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| **Single host** (one backend instance; now moving to the Oracle VPS, see below) | All modes go dark together; today metro/tram on the web survive a backend outage only because geometry is bundled | Keep `/v1` and bundled assets until phase 3/4 end; clients cache the last `/v2/lines` and `/v2/stops` for offline display |
-| **OASA blocks data-centre IPs** (tested 2026-10-05: every cloud host timed out) | If the VPS cannot reach `telematics.oasa.gr`, bus data stops; `/v2` adds no new OASA calls but depends on the same polling | Not a phase 2 task: the hosting thread must confirm OASA works from the VPS. `/v2` `sources` shows `oasa: stale/down` honestly if it does not |
+| **Single host** (one backend instance, on the MVPS VPS in Greece since 2026-10-29; see below) | All modes go dark together; today metro/tram on the web survive a backend outage only because geometry is bundled | Keep `/v1` and bundled assets until phase 3/4 end; clients cache the last `/v2/lines` and `/v2/stops` for offline display |
+| **OASA answers only addresses in Greece** (2026-10-28: 10 of 10 Greek probes, data centres included, answered; 7 of 7 outside Greece timed out) | A host outside Greece gets no bus data; `/v2` adds no new OASA calls but depends on the same polling | The host is a VPS in Thessaloniki (MVPS) and reaches OASA directly. Moving it abroad needs a Greek egress again. `/v2` `sources` shows `oasa: stale` honestly if OASA stops answering |
 | **Cloudflare cache** (edge `max-age`; `/v2/stops/{id}` 15 s, vehicles ≤ 30 s, lines/stops 1 h) | An Arrival can be ~15 s + client poll old; an empty "warming up" list could stick for an hour | `at` is absolute and clients count down on their own clock; metro uses `knots`; incomplete responses are cached ≤ 5 s |
 | **Cloudflare rate limit** (~30 requests / 10 s per IP) | Shared IPs (mobile CGNAT, offices) may hit `429` with more clients | Budget per client at a z13 view: ~15 tiles / 30 s + 1 stop / 20 s + alerts 1 stop / 30 s each ≈ 0.7 req/s. Back off ≥ 10 s on `429`, as today |
 | **Suburban stream load** (~80 KB/s upstream while open) | Kept open by bus-only map traffic if rail were in the tiles | Decided: rail vehicles only in `/v2/vehicles/rail`, loaded only with a rail layer on; stream closes 3 min after the last request, as today |
 | **STASY renames stops / railway.gov.gr ids change** | Stored Favourites and Alerts point at dead ids | Name-based STASY ids, alias tables, client repair rule (UI spec §4) |
 | **Geometry drift** (OSM track vs STASY stop points) | Trains glide off the drawn line | Snap stops to the track in the build script; test that every STASY stop is within 60 m of its track |
 
-## Hosting impact (thread «Transit backend: state tar και token για μεταφορά στο VPS»)
+## Hosting
 
-Read on 2026-10-29, not touched. State on 2026-10-28 22:43 UTC: the backend state tar (260 MB) and
-the tunnel token went to the Mac for hand-off; `cloudflared-transit` on the mini PC is stopped
-and disabled; `transit.haroldpoi.dev` returned `530` until the VPS connects; the mini PC
-backend container still runs and still polls OASA in parallel.
+Since 2026-10-29 00:44 Athens, `transit.haroldpoi.dev` is served by a VPS in Thessaloniki (MVPS,
+1 vCPU, 2 GB) through the same Cloudflare Tunnel. The mini PC is a cold standby: its tunnel
+connector is stopped (two connectors would split traffic), and its backend container must stay
+stopped too (two backends poll OASA twice).
 
 Effect on this plan:
-- Phase 2 deploys go to whatever host runs the image after the move. The deploy step ("pull +
-  up" in `~/services/atrt`) may become the VPS owner's step, so each phase 2 release needs a
-  hand-off message instead of a self-serve deploy.
-- `/v2` adds no new state files (geometry is generated into the repo/GitHub Pages, aliases are in
-  code), so the state tar format does not change.
-- New outbound calls from the host: none beyond today (STASY CKAN, railway.gov.gr, OASA). The
-  OASA data-centre block is the one open hosting risk (table above).
-- Two backends polling OASA in parallel raise the ban risk until the mini PC container stops;
-  that is the hosting thread's decision, not this plan's.
+- **Deploys are automatic.** A timer on the VPS pulls `ghcr.io/angelospk/athens-transit-rt:latest`
+  every 10 minutes and recreates the container when the image changed, so every push to `main`
+  is live within about 10 minutes, as CHANGELOG.md says. It waits for `/v1/status` `ok` and rolls
+  back to the previous image when that fails; it skips 03:00-06:00 Athens, when the daily stats
+  are written. No hand-off message per release.
+- `/v2` adds no new state files (geometry and the Stop name table are embedded, aliases are in
+  code), so the state directory does not change.
+- New outbound calls from the host: none beyond today (STASY CKAN, railway.gov.gr, OASA).
 
 ## Decisions (Harold, 2026-10-29)
 

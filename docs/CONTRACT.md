@@ -390,7 +390,7 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
 |---|---|---|---|---|
 | `oasa` | OASA static GTFS + telematics API | bus, trolley | `internal/gtfs`, `internal/telematics`, `internal/match`, `internal/server/stops.go` | GPS every 30-150 s; delay from the matcher |
 | `stasy` | STASY static GTFS (data.gov.gr CKAN) + OSM track geometry | metro, tram | `internal/rail/stasy*.go` | none: timetable only |
-| `proastiakos` | railway.gov.gr stations, schedule boards, train-stream (SSE); ose.mpass fallback | suburban | `internal/rail/proastiakos.go`, `trainstream.go` | GPS + delay while the stream is open |
+| `proastiakos` | railway.gov.gr stations, schedule boards, train-stream (SSE); ose.mpass is not used by `/v2` (25) | suburban | `internal/rail/proastiakos.go`, `trainstream.go` | GPS + delay while the stream is open |
 
 New per adapter (phase 2): a stable id scheme (§3), Line names and colours, geometry, and an
 alias table for ids that the upstream renames.
@@ -542,8 +542,9 @@ and compare them; they never parse them.
 ```
 
 - `at`: the expected time (leaving time for rail; see the Glossary). Always present.
-- `scheduled_at`: the timetable time; `null` when the Source has no timetable for it (an OASA bus
-  matched to no trip is not listed at all, as in rev 7).
+- `scheduled_at`: the timetable time; `null` when the Source has no timetable for it: an OASA bus
+  on its way but matched to no trip is listed with `scheduled_at`, `run` and `delay_s` `null`, as
+  `/v1/stops/{id}` lists it (2).
 - `delay_s`: the **observed** delay of the Vehicle (or the Source's reported delay for the
   Run), else `null`. Normally `at = scheduled_at + delay_s`, but `at` is clamped to now (a bus
   already due), so clients must not compute one from the other.
@@ -551,7 +552,7 @@ and compare them; they never parse them.
   precedence: stream delay (stream open) → board delay (board ≤ 10 min old) → timetable; the
   first two give `live`.
 - `run`: Run id, so the card can open the Run even before it starts; `null` only for an OASA
-  bus matched to no trip (not listed today).
+  bus matched to no trip.
 - `vehicle`, `vehicle_label`: `null` when no Vehicle is on the Run yet or none is known. Metro/tram:
   `vehicle` is set only while the Run is under way; `vehicle_label` is always `null`.
 - `platform`: `null` unless the Source gives one (only railway.gov.gr today).
@@ -574,8 +575,8 @@ because their signals differ:
 | Source | `stale` when | `indicative` when | `down` when |
 |---|---|---|---|
 | `oasa` | no successful line poll for 5 min (as `/v1/status` `ok:false`) | static GTFS expired and no OASA daily schedule of today cached for the response's lines (any line for the lists) | no data since start |
-| `stasy` | the daily check failed and the loaded timetable is from an earlier day | timetable expired (today's `indicative:true`) | no timetable loaded |
-| `proastiakos` | stream open but no event for 2 min, or board older than 30 min | never | no board and no ose.mpass answer |
+| `stasy` | not reported yet: the timetable store does not expose its last check (19) | timetable expired (today's `indicative:true`) | no timetable loaded |
+| `proastiakos` | board older than 30 min and its last refresh failed, or the stream open and silent for 2 min (a stream that never sent an event is not stale) (26) | never | no board, none cached (25) |
 
 `updated_at`: the last good data of that Source (GPS fix, stream event, board fetch, timetable
 load). Only the
@@ -686,8 +687,9 @@ Rules:
 - **`proastiakos`**: Line from the corridor table (names and colours in the adapter, as
   `suburban.json` has them); Stop from `corridor-stations` (ids merged, aliases kept); Pattern
   from the corridor path and its ordered stations; Vehicle from the train-stream (snapped to the
-  corridor path; `course` → `bearing`); Arrival from the board + stream delay; ose.mpass when the
-  board fails.
+  corridor path; `course` → `bearing`); Arrival from the board + stream delay; with no board and none
+  cached, no Arrivals and the Source is `down` (ose.mpass has no corridor, so it cannot give a
+  Line).
 
 ### 8. Not in rev 8
 

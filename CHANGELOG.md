@@ -9,6 +9,11 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Docs: CONTRACT.md's `/v2` text now says what the code does (unmatched buses are Arrivals;
+  ose.mpass is not used; when `stasy` and `proastiakos` are `stale`). The draft contract is a
+  record of what changed; MIGRATION and UI-SPEC carry their real status, and MIGRATION's
+  hosting section describes the VPS and its automatic deploys. A test keeps the error codes of
+  the code equal to the OpenAPI Error enum and every Source state in the contract.
 - **`/v2`: one model for every mode** (contract rev 8): buses, trolleys, metro, tram and the
   suburban railway as Line, Stop, Pattern, Vehicle, Arrival and Run, with `<source>:<native>`
   ids, permanent aliases and a `sources` freshness block in every body. Endpoints:
