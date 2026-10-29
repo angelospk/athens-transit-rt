@@ -27,6 +27,9 @@ jobs:
       API: ${{ vars.STATS_API || 'https://transit.haroldpoi.dev' }}
       GH_TOKEN: ${{ github.token }}
       REFRESH: ${{ inputs.refresh && 'true' || 'false' }}
+      # Earlier days stay in v1/days but are not listed: their seen/missed counts are not
+      # reliable. Keep equal to stats.FirstDay (internal/stats/stats.go).
+      FIRST_DAY: "2026-10-30"
     steps:
       - name: Check out the stats branch (or start it)
         run: |
@@ -48,6 +51,7 @@ jobs:
           jq -e '.version == 1 and (.days | type == "array")' ../index.json >/dev/null
           for d in $(jq -r '.days[]' ../index.json); do
             [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad day $d"; exit 1; }
+            [[ "$d" < "$FIRST_DAY" ]] && continue
             [ -f "v1/days/$d.json" ] && [ "$REFRESH" != true ] && continue
             # One bad day must not block the others; it is tried again tomorrow.
             if ! curl -fsS --retry 3 --max-time 30 "$API/v1/stats/days/$d" -o "../$d.json" ||
@@ -61,11 +65,16 @@ jobs:
         working-directory: pub
         run: |
           set -euo pipefail
-          days=$(ls v1/days | sed -n 's/^\([0-9-]*\)\.json$/\1/p' | sort)
-          [ -n "$days" ] || { echo "no days yet"; exit 0; }
-          latest=$(echo "$days" | tail -1)
-          printf '%s\n' $days | jq -R . | jq -sc --arg l "$latest" '{version: 1, latest: $l, days: .}' > v1/index.json
-          cp "v1/days/$latest.json" v1/latest.json
+          days=$(ls v1/days | sed -n 's/^\([0-9-]*\)\.json$/\1/p' | sort | awk -v f="$FIRST_DAY" '$0 >= f')
+          if [ -z "$days" ]; then
+            # No day from FIRST_DAY yet: list none and show no earlier day as the latest.
+            jq -nc '{version: 1, latest: "", days: []}' > v1/index.json
+            rm -f v1/latest.json
+          else
+            latest=$(echo "$days" | tail -1)
+            printf '%s\n' $days | jq -R . | jq -sc --arg l "$latest" '{version: 1, latest: $l, days: .}' > v1/index.json
+            cp "v1/days/$latest.json" v1/latest.json
+          fi
           cat > README.md <<'MD'
           # athens-transit-rt daily statistics
 
@@ -75,7 +84,8 @@ jobs:
           (`trips`). Updated daily by the `stats` workflow.
 
           - `v1/latest.json`: the newest day
-          - `v1/index.json`: all days
+          - `v1/index.json`: all days from 2026-10-30 (earlier files in `v1/days` are kept but
+            not listed: their seen/missed trip counts are not reliable)
           - `v1/days/YYYY-MM-DD.json`: one day
 
           Speed (km/h) = `dist_m / time_s * 3.6`. Fields and method: `docs/API.md` on `main`.

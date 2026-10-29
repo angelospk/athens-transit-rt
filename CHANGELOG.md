@@ -9,6 +9,10 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Daily statistics start at 2026-10-30: `/v1/stats` lists no earlier day and
+  `/v1/stats/days/{date}` answers `404` for one, because their seen/missed trip counts are not
+  reliable (no daily OASA schedule, seen-flag bugs). The `stats` workflow writes `index.json`
+  and `latest.json` of the `stats` branch the same way; the earlier day files stay there (#32).
 - `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule
   (where a marker stands at a time), so the app and the web map test their movers against the
   same cases. The backend checks the knot rules on every train of its test feed through a day.

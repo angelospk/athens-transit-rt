@@ -63,11 +63,15 @@ func (a *App) handleStatsIndex(w http.ResponseWriter, r *http.Request) {
 	a.serveStatsFile(w, filepath.Join(a.statsDir(), "index.json"), statsIndexMaxAge)
 }
 
-// GET /v1/stats/days/{date}: one day (YYYY-MM-DD, Europe/Athens).
+// GET /v1/stats/days/{date}: one day (YYYY-MM-DD, Europe/Athens); not_found before stats.FirstDay.
 func (a *App) handleStatsDay(w http.ResponseWriter, r *http.Request) {
 	date := r.PathValue("date")
 	if _, _, err := stats.Bounds(date, time.UTC); err != nil {
 		writeJSON(w, http.StatusBadRequest, unknownMaxAge, map[string]string{"error": "bad_date"})
+		return
+	}
+	if date < stats.FirstDay {
+		writeJSON(w, http.StatusNotFound, unknownMaxAge, map[string]string{"error": "not_found"})
 		return
 	}
 	a.serveStatsFile(w, filepath.Join(a.statsDir(), "days", date+".json"), statsDayMaxAge)
