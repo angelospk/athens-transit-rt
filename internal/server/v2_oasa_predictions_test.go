@@ -17,7 +17,9 @@ func TestV2StopOasaPredictions(t *testing.T) {
 	a := newApp(t, now)
 	pollOne(a, now, "w", 23.72, now.Add(-10*time.Second))
 	calls := 0
+	gate := make(chan struct{}) // the OASA answer waits until the cold-cache response is checked
 	a.stopArrivals = func(_ context.Context, id string) ([]telematics.Arrival, error) {
+		<-gate
 		calls++
 		if id != "S3" {
 			t.Errorf("asked for stop %q", id)
@@ -39,6 +41,7 @@ func TestV2StopOasaPredictions(t *testing.T) {
 	if got := byVehicle(s); len(got["oasa:w"]) != 1 || len(got["oasa:z"]) != 0 {
 		t.Fatalf("cold cache: %s", asJSON(s.Arrivals))
 	}
+	close(gate)
 	if _, err := a.arrivals(context.Background(), "S3"); err != nil { // the background call
 		t.Fatal(err)
 	}
