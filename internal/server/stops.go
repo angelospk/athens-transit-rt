@@ -377,7 +377,10 @@ func schedAt(f *gtfs.Feed, g *geo.Geometry, t *gtfs.Trip, along float64, arrive 
 // within boardHorizon (the first pass, not as the last stop) and no matched bus runs.
 func scheduleArrivals(f *gtfs.Feed, line string, stop int32, now time.Time, running map[[2]int64]bool) []StopArrival {
 	var out []StopArrival
-	for _, c := range f.CandidateTrips(line, now, int32(boardHorizon/time.Second), 0) {
+	// Asked at the horizon, the candidates are the trips of its service day and the day before
+	// that started by then: at 23:50 tomorrow's trips from 00:00 too. Those already gone are
+	// skipped below.
+	for _, c := range f.CandidateTrips(line, now.Add(boardHorizon), 0, 48*3600) {
 		t := f.Trip(c.Trip)
 		if running[[2]int64{int64(c.Trip), c.Day.Unix()}] || c.Day.Add(time.Duration(f.Start(t))*time.Second).Before(now) {
 			continue

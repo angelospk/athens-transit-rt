@@ -301,3 +301,15 @@ func TestStopBoardGoneBusLeavesItsTripToTheTimetable(t *testing.T) {
 		t.Fatalf("bus on another line: live %v, schedule %v", live, sch)
 	}
 }
+
+// At 23:50 on Sunday the trips of Monday's service from 00:10 are within the hour.
+func TestStopBoardScheduleAcrossMidnight(t *testing.T) {
+	now := time.Date(2026, 10, 4, 23, 50, 0, 0, gtfs.Athens)
+	a := newApp(t, now)
+	a.SetFeed(gtfstest.StraightLine{Stops: 5, Trips: 6, First: 10 * 60, Headway: 10, Leg: 5}.Feed(t), nil)
+	sr, _ := stopBody(t, a, "S2")
+	at := time.Date(2026, 10, 5, 0, 20, 0, 0, gtfs.Athens).Unix()
+	if len(sr.Arrivals) == 0 || sr.Arrivals[0].Source != "schedule" || *sr.Arrivals[0].TripID != "T00" || sr.Arrivals[0].At != at {
+		t.Fatalf("arrivals %s", asJSON(sr.Arrivals))
+	}
+}
