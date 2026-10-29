@@ -1014,7 +1014,7 @@ paths:
         day. `t` is the scheduled arrival (the departure at the origin). `delay_min` of the run is the
         live delay while the stream is open. `Cache-Control: public, max-age=30`.
       parameters:
-        - name: no
+        - name: "no"
           in: path
           required: true
           description: The `train` of a vehicle or departure, e.g. `1226`.

@@ -10,6 +10,12 @@ the body against the response schema. The check is stricter than the spec: a JSO
 the spec does not document fails (the spec must list every field). `.pb` feeds must parse as
 a GTFS-Realtime FeedMessage. Every path of the spec must have a case.
 
+Then the /v2 data checks: every mode has Lines, a bus and a metro Stop have Arrivals, no
+Source is down, metro Stops have their proper names (one in capitals is missing from
+internal/railgeo/stasy_stops.json), and the rail trains' motion.knots keep the contract's
+rules. Run daily by .github/workflows/live-check.yml, which opens an issue on a failure; run it
+at a time with service (the Arrival checks need trains and buses running).
+
     uv run scripts/check-openapi-live.py            # or: scripts/check-openapi-live.py
 """
 
@@ -19,6 +25,7 @@ import pathlib
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import yaml
@@ -31,7 +38,9 @@ SPEC = pathlib.Path(__file__).resolve().parent.parent / "docs/openapi/openapi.ya
 
 # (spec path, concrete path, expected status[, schema of the closed spec to use instead of the
 # response schema: a tile must hold only entries of its zoom]). Error cases use answers that do not depend
-# on the moment (no warming_up, no feed_unavailable).
+# on the moment (no warming_up, no feed_unavailable). A {name} in a path is a value an earlier
+# case's answer gave (CAPTURE); an optional one (OPTIONAL) that is missing skips the case.
+SYNTAGMA_METRO = "/v2/stops/stasy:%CF%83%CF%85%CE%BD%CF%84%CE%B1%CE%B3%CE%BC%CE%B1-metro"
 CASES = [
     ("/v1/status", "/v1/status", 200),
     ("/healthz", "/healthz", 200),
@@ -56,7 +65,49 @@ CASES = [
     ("/static/v1/lines.json", "/static/v1/lines.json", 200),
     ("/static/v1/lines/{line_id}.json", "/static/v1/lines/040.json", 200),
     ("/static/v1/lines/{line_id}.json", "/static/v1/lines/%CE%911.json", 200),
+    ("/v1/lines/{line_id}/schedule", "/v1/lines/040/schedule", 200),
+    ("/v1/lines/{line_id}/schedule", "/v1/lines/040/schedule?date=1999-01-01", 400),
+    ("/v1/stops/{stop_id}", "/v1/stops/240084", 200),
+    ("/v1/stops/{stop_id}", "/v1/stops/nosuchstop", 404),
+    ("/v1/stops/{stop_id}/arrivals", "/v1/stops/240084/arrivals", 200),
+    ("/v1/stops/{stop_id}/arrivals", "/v1/stops/nosuchstop/arrivals", 404),
+    ("/v1/rail/stasy/vehicles", "/v1/rail/stasy/vehicles", 200),
+    ("/v1/rail/stasy/departures", "/v1/rail/stasy/departures?stop=%CE%A3%CE%A5%CE%9D%CE%A4%CE%91%CE%93%CE%9C%CE%91", 200),
+    ("/v1/rail/stasy/departures", "/v1/rail/stasy/departures", 400),
+    ("/v1/rail/stasy/trips/{id}", "/v1/rail/stasy/trips/{stasy_trip}", 200),
+    ("/v1/rail/stasy/trips/{id}", "/v1/rail/stasy/trips/nosuchtrip", 404),
+    ("/v1/rail/suburban/stations", "/v1/rail/suburban/stations", 200),
+    ("/v1/rail/suburban/stations/{id}/departures", "/v1/rail/suburban/stations/{sub_station}/departures", 200),
+    ("/v1/rail/suburban/vehicles", "/v1/rail/suburban/vehicles", 200),
+    ("/v1/rail/suburban/trains/{no}", "/v1/rail/suburban/trains/{sub_train}", 200),
+    ("/v2/lines", "/v2/lines", 200),
+    ("/v2/lines/{id}", "/v2/lines/oasa:040", 200),
+    ("/v2/lines/{id}", "/v2/lines/stasy:M2", 200),
+    ("/v2/lines/{id}", "/v2/lines/proastiakos:PIRAIR", 200),
+    ("/v2/lines/{id}", "/v2/lines/oasa:NOPE", 404),
+    ("/v2/lines/{id}/vehicles", "/v2/lines/oasa:040/vehicles", 200),
+    ("/v2/lines/{id}/vehicles", "/v2/lines/stasy:M2/vehicles", 200),
+    ("/v2/stops", "/v2/stops", 200),
+    ("/v2/stops/{id}", "/v2/stops/oasa:240084", 200),
+    ("/v2/stops/{id}", SYNTAGMA_METRO, 200),
+    ("/v2/stops/{id}", "/v2/stops/zzz:1", 404),
+    ("/v2/runs/{id}", "/v2/runs/{run}", 200),
+    ("/v2/runs/{id}", "/v2/runs/stasy:run:nosuchtrip:2020-01-01", 404),
+    ("/v2/vehicles", "/v2/vehicles", 200),
+    ("/v2/vehicles/tiles/{z}/{x}/{y}", "/v2/vehicles/tiles/13/4636/3160", 200),
+    ("/v2/vehicles/tiles/{z}/{x}/{y}", "/v2/vehicles/tiles/13/1/1", 404),
+    ("/v2/vehicles/rail", "/v2/vehicles/rail", 200),
 ]
+
+# Values that later cases need, taken from the answer of a case: path -> (name, getter).
+CAPTURE = {
+    "/v1/stats": ("latest", lambda d: d.get("latest")),
+    "/v1/rail/stasy/vehicles": ("stasy_trip", lambda d: next((v["trip"] for v in d.get("vehicles") or []), None)),
+    "/v1/rail/suburban/stations": ("sub_station", lambda d: next((s["id"] for s in d.get("stations") or []), None)),
+    "/v1/rail/suburban/vehicles": ("sub_train", lambda d: next((t["train"] for t in d.get("trains") or []), None)),
+    SYNTAGMA_METRO: ("run", lambda d: next((a["run"] for a in d.get("arrivals") or [] if a.get("run")), None)),
+}
+OPTIONAL = {"sub_train"}  # no suburban train runs at night
 
 # Object schemas that must not carry undocumented fields in the check. VehicleBase and Motion
 # are left out: they are parts of an allOf, so the closing goes on the allOf schemas.
@@ -104,6 +155,58 @@ def fetch(url):
         return e.code, e.headers, e.read()
 
 
+def check_knots(knots):
+    """The contract's motion.knots rules (as model.CheckKnots): "" when they hold."""
+    if not knots:
+        return "no knots"
+    if knots[0][0] != 0:
+        return f"first knot at {knots[0][0]} m"
+    for i in range(1, len(knots)):
+        if knots[i][1] <= knots[i - 1][1]:
+            return f"knot {i}: time {knots[i][1]} not after {knots[i - 1][1]}"
+        if knots[i][0] < knots[i - 1][0]:
+            return f"knot {i}: {knots[i][0]} m before {knots[i - 1][0]} m"
+    return ""
+
+
+def v2_checks(bodies):
+    """What the schema cannot say: the /v2 data is there for every mode and well formed."""
+    problems = []
+    lines = bodies.get("/v2/lines", {}).get("lines", [])
+    modes = {ln["mode"] for ln in lines}
+    for m in ("bus", "trolley", "metro", "tram", "suburban"):
+        if m not in modes:
+            problems.append(f"/v2/lines: no {m} Line")
+    for path, data in bodies.items():
+        for s in data.get("sources") or []:
+            if s.get("state") == "down":
+                problems.append(f"{path}: Source {s['id']} is down")
+    for path in ("/v2/stops/oasa:240084", SYNTAGMA_METRO):
+        if path in bodies and not bodies[path].get("arrivals"):
+            problems.append(f"{path}: no Arrivals")
+    caps = [e[1] for e in bodies.get("/v2/stops", {}).get("stops", [])
+            if e[0].startswith("stasy:") and e[0].endswith("-metro") and e[1] == e[1].upper()
+            and e[1] != e[1].lower()]
+    if caps:
+        problems.append(f"/v2/stops: {len(caps)} metro Stop(s) in capitals, missing from "
+                        f"internal/railgeo/stasy_stops.json (run scripts/stasy-stop-names.py): "
+                        + ", ".join(caps[:10]))
+    trains = bodies.get("/v2/vehicles/rail", {}).get("vehicles", [])
+    if not any(v["mode"] == "metro" for v in trains):
+        problems.append("/v2/vehicles/rail: no metro train")
+    for v in trains:
+        knots = (v.get("motion") or {}).get("knots")
+        if knots is None:
+            continue
+        msg = check_knots(knots)
+        if not msg and knots[0][1] != v["position"]["at"]:
+            msg = f"first knot at {knots[0][1]}, position.at {v['position']['at']}"
+        if msg:
+            problems.append(f"/v2/vehicles/rail: {v['id']}: {msg}")
+    print(f"/v2 data: {len(lines)} lines ({', '.join(sorted(modes))}), {len(trains)} rail trains")
+    return problems
+
+
 def main():
     spec = yaml.safe_load(SPEC.read_text())
     root = "urn:openapi"
@@ -112,18 +215,26 @@ def main():
 
     missing = set(spec["paths"]) - {c[0] for c in CASES}
     errors = [f"no case for spec path {p}" for p in sorted(missing)]
-    latest = None
+    got, bodies = {}, {}
     for spec_path, path, want, *override in CASES:
         item = spec["paths"][spec_path]
         server = item.get("servers", [{"url": default_server}])[0]["url"]
-        if "{latest}" in path:
-            if latest is None:
-                errors.append(f"{path}: skipped, /v1/stats gave no latest day")
-                continue
-            path = path.replace("{latest}", latest)
+        need = [n for n in got.keys() | {c[0] for c in CAPTURE.values()} if "{" + n + "}" in path]
+        if any(got.get(n) is None for n in need):
+            n = next(n for n in need if got.get(n) is None)
+            print(f"skip {path}: no {n} from an earlier answer")
+            if n not in OPTIONAL:
+                errors.append(f"{path}: skipped, no {n} from an earlier answer")
+            continue
+        for n in need:
+            path = path.replace("{" + n + "}", urllib.parse.quote(str(got[n]), safe=":"))
         url = server + path
         time.sleep(0.5)  # stay well under Cloudflare's ~30 requests per 10 s
         status, headers, body = fetch(url)
+        if status == 503 and want == 200 and b"warming_up" in body:
+            # A line or stream not polled until this request asked for it: ask again once.
+            time.sleep(15)
+            status, headers, body = fetch(url)
         ctype = (headers.get("Content-Type") or "").split(";")[0].strip()
         where = f"{path} -> {status} {ctype}"
         resp = item["get"]["responses"].get(str(status))
@@ -148,8 +259,11 @@ def main():
             data = json.loads(body)
             for e in list(v.iter_errors(data))[:5]:
                 problems.append(f"schema: {'/'.join(map(str, e.absolute_path))}: {e.message[:200]}")
-            if path == "/v1/stats":
-                latest = data.get("latest") if isinstance(data, dict) else None
+            if status == 200 and isinstance(data, dict):
+                bodies[path] = data
+                if path in CAPTURE:
+                    name, get = CAPTURE[path]
+                    got[name] = get(data)
             items = next((data[k] for k in ("vehicles", "entity", "lines", "days") if isinstance(data.get(k), list)), None)
             where += f" ({len(body)} bytes" + (f", {len(items)} items)" if items is not None else ")")
         elif ctype == "application/x-protobuf":
@@ -162,6 +276,7 @@ def main():
             problems.append(f"body {body[:40]!r}")
         print(("FAIL " if problems else "ok   ") + where)
         errors += [f"{path}: {p}" for p in problems]
+    errors += v2_checks(bodies)
     if errors:
         print("\n".join(["", f"{len(errors)} problem(s):"] + errors))
         sys.exit(1)
