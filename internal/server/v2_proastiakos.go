@@ -528,6 +528,7 @@ func (s *proastiakosAdapter) place(x *subIndex, c int, tr *rail.SuburbanTrain, v
 	default:
 		return
 	}
+	v.Direction = model.Ptr(dir)
 	track, pat := x.tracks[c][dir], &x.patterns[c][dir]
 	cd, ok := nearest(track.Line, xy, 0, false)
 	if !ok {

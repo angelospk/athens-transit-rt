@@ -14,9 +14,10 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 8 (2026-10-29): `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
-([below](#unified-api-v2-rev-8))
-(rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
+Revision: 12 (2026-10-29): `direction` on `/v2` Vehicles; STASY Pattern directions follow
+branches (M3 airport)
+(rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
+([below](#unified-api-v2-rev-8)); rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
 `path` on vehicles)
 
 ## Hosts
@@ -486,6 +487,7 @@ and compare them; they never parse them.
   "position": {"kind": "estimate", "lat": 37.9722, "lon": 23.7325, "bearing": 205, "at": 1793205600},
   "delay_s": null,
   "next_stop": "stasy:ακροπολη-metro",
+  "direction": 0,
   "motion": {
     "path": [[37.9722, 23.7325], [37.96882, 23.72963]],
     "path_beyond": [[37.96882, 23.72963], [37.96421, 23.72651]],
@@ -505,6 +507,11 @@ and compare them; they never parse them.
 - `delay_s`: `null` when there is no live signal (always for metro/tram).
 - `run`: Run id, `null` when the Vehicle is not matched to a Run.
 - `next_stop`: Stop id, `null` when unmatched.
+- `direction` (rev 12): the `direction` (0/1) of the Pattern the Vehicle runs, so a client can
+  put it on one of the Line's two tracks without a `/v2/runs` call. Metro and tram: always set.
+  Bus and trolley: the matched trip's direction, else the direction of the trip the bus was
+  placed on, else `null`. Suburban: set once the train is placed on its corridor, else `null`.
+  Present in tiles at zoom 9 too. Older responses lack the key: treat a missing key as `null`.
 - `motion`: how the client moves the marker between snapshots. `null` when there is nothing to
   move along (standing with no Run, no geometry).
   - `path`, `path_beyond`, `path_stops`, `speed`, `path_speeds`: the rev 3-7 meanings, unchanged
@@ -638,6 +645,12 @@ Rules:
   component). Tile zoom 9 entries drop `motion`
   (key absent), as rev 5 drops the path keys.
 - Metro/tram vehicles are placed at build time (every 30 s); their `knots` keep them moving.
+- Pattern `direction` (rev 12): every Line has two directions, 0 and 1, never more. OASA and
+  suburban: the GTFS / corridor direction. Metro/tram: the most common Pattern is 0; each other
+  Pattern is 0 or 1 by the order of two Stops it shares with a Pattern already decided, so a
+  branch that shares one Stop with the main Pattern (M3 airport) still gets the right one. M3:
+  every Pattern towards ΕΛ. ΒΕΝΙΖΕΛΟΣ or Δ. ΠΛΑΚΕΝΤΙΑΣ is 1, every one towards ΔΗΜΟΤΙΚΟ ΘΕΑΤΡΟ
+  is 0 (before rev 12 the airport Patterns could get 0 in both directions).
 - `/v2/runs/{id}` replaces `/v1/rail/stasy/trips/{id}` and `/v1/rail/suburban/trains/{no}` for
   the line card. It answers for any Run of the service day, started or not (`vehicle: null`
   before it starts). OASA: the matched trip's stops, timetable time plus observed delay.

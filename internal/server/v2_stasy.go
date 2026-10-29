@@ -246,17 +246,65 @@ func (x *stasyIndex) buildPatterns() {
 		}
 		p.track = stasyTrack(f.Routes[r].Short, pts)
 		p.m.Shape = p.track.Shape()
-		if num > 0 { // the direction of the most common pattern is 0
-			main := x.patterns[r][0].m.Stops
-			i, j := indexOf(main, p.m.Stops[0]), indexOf(main, p.m.Stops[len(p.m.Stops)-1])
-			if i >= 0 && j >= 0 && i > j {
-				p.m.Direction = 1
-			}
-		}
 		for _, ti := range c.trips {
 			x.tripPat[ti] = int32(num)
 		}
 		x.patterns[r] = append(x.patterns[r], p)
+	}
+	for r := range x.patterns {
+		stasyDirections(x.patterns[r])
+	}
+}
+
+// stasyDirections sets the direction of one route's patterns. The most common pattern is 0; a
+// branch (M3 airport) can share only one stop with it, so it is decided through another pattern:
+// a pattern takes the direction of a decided one with which it shares two stops, by their order.
+func stasyDirections(ps []stasyPattern) {
+	if len(ps) == 0 {
+		return
+	}
+	ps[0].m.Direction = 0
+	decided := make([]bool, len(ps))
+	decided[0] = true
+	// rel is the direction of p given by q: the first two stops of p that q has, in q's order or not.
+	rel := func(p, q *model.Pattern) (int, bool) {
+		first := -1
+		for _, s := range p.Stops {
+			k := indexOf(q.Stops, s)
+			switch {
+			case k < 0:
+			case first < 0:
+				first = k
+			case k > first:
+				return q.Direction, true
+			default:
+				return 1 - q.Direction, true
+			}
+		}
+		return 0, false
+	}
+	for changed := true; changed; {
+		changed = false
+		for i := 1; i < len(ps); i++ {
+			if decided[i] {
+				continue
+			}
+			for k := range ps {
+				if !decided[k] {
+					continue
+				}
+				if d, ok := rel(&ps[i].m, &ps[k].m); ok {
+					ps[i].m.Direction = d
+					decided[i], changed = true, true
+					break
+				}
+			}
+		}
+	}
+	for i := range ps {
+		if !decided[i] {
+			ps[i].m.Direction = 0
+		}
 	}
 }
 
@@ -515,7 +563,7 @@ func (x *stasyIndex) vehicle(p *stasyPattern, rows []rail.STASYStopTime, midnigh
 	v := model.Vehicle{ID: run, Line: x.lines[route].ID, Run: model.Ptr(run), Mode: x.modes[route], Headsign: model.Ptr(head),
 		Position: model.Position{Kind: model.Estimate, Lat: round5(lat), Lon: round5(lon), Bearing: trackBearing(tr.Line, pos),
 			At: now.Unix()},
-		NextStop: model.Ptr(p.m.Stops[j]), Source: stasyNS}
+		NextStop: model.Ptr(p.m.Stops[j]), Direction: model.Ptr(p.m.Direction), Source: stasyNS}
 	last := min(j+stasyAhead-1, len(rows)-1)
 	m := &model.Motion{Path: latLons(tr.Line.Slice(pos, tr.Along[j])), PathBeyond: [][2]float64{},
 		Knots: [][2]int64{{0, now.Unix()}}}

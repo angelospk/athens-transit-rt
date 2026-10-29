@@ -275,7 +275,7 @@ func TestV2ProastiakosVehicles(t *testing.T) {
 	if v.Line != "proastiakos:KIATO" || v.Mode != model.Suburban || *v.Label != "2539" || *v.Headsign != "Ρουφ" ||
 		*v.Run != "proastiakos:run:2539:2026-10-28" || v.Position.Kind != model.GPS || v.Position.Lat != 37.95888 ||
 		*v.Position.Bearing != 60 || v.Position.At != wed1000.Add(-10*time.Second).Unix() || *v.DelayS != 240 ||
-		*v.NextStop != rentis || v.Source != "proastiakos" || m == nil {
+		*v.NextStop != rentis || v.Source != "proastiakos" || m == nil || v.Direction == nil || *v.Direction != 0 {
 		t.Fatalf("2539 %s", asJSON(v))
 	}
 	// Path to Ρέντης, beyond it up to 1.5 km in all (Ταύρος is farther), at the GPS speed; no knots.
@@ -285,11 +285,12 @@ func TestV2ProastiakosVehicles(t *testing.T) {
 	}
 	// No next station from the stream: the course picks the direction (west, towards Πειραιάς).
 	w := by["proastiakos:2000"]
-	if w.NextStop == nil || *w.NextStop != rentis || w.Motion == nil || w.DelayS != nil || w.Motion.PathStops[0] <= 0 {
+	if w.NextStop == nil || *w.NextStop != rentis || w.Motion == nil || w.DelayS != nil || w.Motion.PathStops[0] <= 0 ||
+		w.Direction == nil || *w.Direction != 1 {
 		t.Fatalf("2000 %s", asJSON(w))
 	}
 	// Far from its corridor: GPS only, nothing to move along.
-	if f := by["proastiakos:3000"]; f.Motion != nil || f.NextStop != nil || f.Run != nil {
+	if f := by["proastiakos:3000"]; f.Motion != nil || f.NextStop != nil || f.Run != nil || f.Direction != nil {
 		t.Fatalf("3000 %s", asJSON(f))
 	}
 
