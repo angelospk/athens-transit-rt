@@ -37,6 +37,8 @@ const (
 // STASYRoute is one line of the metro/tram timetable (M1-M3, T6, T7).
 type STASYRoute struct {
 	ID, Short, Color string
+	Long             string // route_long_name, "ΓΡΑΜΜΗ 1" in the October 2026 files
+	Type             int    // GTFS route_type: 0 tram, 1 metro; -1 when the feed leaves it out
 }
 
 // STASYStop is one stop. Feeds list one entry per platform; a station name covers many.
@@ -255,7 +257,12 @@ func ParseSTASY(dir string) (*STASY, error) {
 			short = t.get("route_id")
 		}
 		routeIdx[t.get("route_id")] = int32(len(s.Routes))
-		s.Routes = append(s.Routes, STASYRoute{ID: t.get("route_id"), Short: short, Color: t.get("route_color")})
+		typ, err := strconv.Atoi(strings.TrimSpace(t.get("route_type")))
+		if err != nil {
+			typ = -1
+		}
+		s.Routes = append(s.Routes, STASYRoute{ID: t.get("route_id"), Short: short, Color: t.get("route_color"),
+			Long: strings.TrimSpace(t.get("route_long_name")), Type: typ})
 		return nil
 	}); err != nil {
 		return nil, err

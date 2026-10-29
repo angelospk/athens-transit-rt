@@ -36,3 +36,32 @@ one: choice, alternative, reason. The docs did not settle these points.
 10. **Step 3b (timetable bus Arrivals) reuses the rev 7 board rows** (`scheduleArrivals`, PR #6):
     `/v2` only widens them to 2 h and cuts 4 per Line + headsign, 30 in all. `/v1` keeps 1 h and
     3 per variant (a shared `stopRows` feeds both).
+
+## Session 1 (stasy adapter, rail geometry)
+
+11. **Rail geometry is embedded, not rebuilt here** (`internal/railgeo`: `metro.json`,
+    `suburban.json` copied from `athens-transit-map` commit 370af6a, `go:embed`). Alternative:
+    port `scripts/metro*.ts` to Go. Reason: smallest step; the files change only when OSM or a
+    corridor changes. To refresh: run the scripts in `athens-transit-map`, copy the two files.
+    The map repo keeps its copies until phase 4 removes them.
+12. **stasy Stop ids use `rail.Fold`**, the fold the `/v1` departures already use: lower case, no
+    accents, final sigma as σ, words joined by `-` ("stasy:πειραιασ-metro",
+    "stasy:συνταγμα-(κεντρο)-tram"). An unfolded id in a request resolves to the folded one.
+13. **stasy Stop `name`** is the first platform's name in the feed as written (metro names are
+    upper case, tram names mixed case). `name_en` is `null`: the STASY files have no English names.
+14. **stasy Line `name`** is the feed's `route_long_name` ("ΓΡΑΜΜΗ 1"), `"Γραμμή N"` when empty;
+    `name_en` null; mode from `route_type` (0 tram, else metro; `T` prefix when missing).
+15. **A train's last stop is not an Arrival** (metro/tram and, for the same reason, bus): nobody
+    boards there. `/v1` metro departures still list it.
+16. **Patterns** are the distinct Stop sequences of a route's trips, most trips first
+    (`stasy:M2-0`, `-1`, …). Direction 0 = the most common one's direction; a pattern whose ends
+    run the other way along it is 1. Pattern numbers can change with a new timetable (Pattern
+    ids are not stored by clients). Shape: the OSM track through the stops; when a stop is
+    farther than 150 m from every track (3 of 14 M3 patterns in the 2026-10 feed), straight lines.
+17. **stasy Run `passed`** = its timetable time is past (there is no other signal). Its Vehicle is
+    the Run itself while the Run is under way.
+18. **`/v2/vehicles/rail` is built per request** (75 trains in 2 ms on the real feed), cached
+    15 s; the knots move the trains in between.
+19. **stasy Source state**: `warming_up` until a timetable loads, `indicative` when it does not
+    cover today, else `ok`. `stale` (daily check failed) is not reported yet: the store does not
+    expose its last check.

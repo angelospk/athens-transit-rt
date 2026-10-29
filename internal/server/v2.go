@@ -101,6 +101,7 @@ func (a *App) routeV2(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v2/stops/{id}", a.handleV2Stop)
 	mux.HandleFunc("GET /v2/vehicles", a.handleV2Vehicles)
 	mux.HandleFunc("GET /v2/vehicles/tiles/{z}/{x}/{y}", a.handleV2Tile)
+	mux.HandleFunc("GET /v2/vehicles/rail", a.handleV2RailVehicles)
 	mux.HandleFunc("GET /v2/runs/{id}", a.handleV2Run)
 }
 
@@ -287,6 +288,32 @@ func (a *App) busAdapters() []Adapter {
 		}
 	}
 	return out
+}
+
+// railAdapters are the Sources of /v2/vehicles/rail: every one but oasa.
+func (a *App) railAdapters() []Adapter {
+	var out []Adapter
+	for _, ad := range a.adapters {
+		if ad.Namespace() != "oasa" {
+			out = append(out, ad)
+		}
+	}
+	return out
+}
+
+// handleV2RailVehicles: metro, tram and suburban in one body, built per request (about 100
+// trains). Asking for it is the explicit demand for rail positions.
+func (a *App) handleV2RailVehicles(w http.ResponseWriter, r *http.Request) {
+	now := a.now()
+	ads := a.railAdapters()
+	vs := []model.Vehicle{}
+	for _, ad := range ads {
+		if got, err := ad.Vehicles(now); err == nil {
+			vs = append(vs, got...)
+		}
+	}
+	src := a.states(now, ads...)
+	writeV2(w, r, stasyVehMaxAge, src, v2Response[model.Vehicle]{now.Unix(), now.Unix() + stasyVehMaxAge, vs, src})
 }
 
 func (a *App) v2Vehicles() (*v2Snapshot, error) {

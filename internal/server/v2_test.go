@@ -69,8 +69,15 @@ func stateOf(src []model.SourceState, id string) string {
 	return ""
 }
 
+// oasaOnly drops the other adapters: their timetables are not loaded in these tests, and a list
+// with a Source warming up is cached 5 s.
+func oasaOnly(a *App) *App {
+	a.adapters = a.adapters[:1]
+	return a
+}
+
 func TestV2Lines(t *testing.T) {
-	a := newApp(t, monday1020)
+	a := oasaOnly(newApp(t, monday1020))
 	poll(a, monday1020)
 	var ls v2Lines
 	if _, ma := v2get(t, a, "/v2/lines", &ls); ma != 3600 || len(ls.Lines) != 1 || stateOf(ls.Sources, "oasa") != model.OK {
@@ -141,7 +148,7 @@ func TestV2WarmingUp(t *testing.T) {
 }
 
 func TestV2Stops(t *testing.T) {
-	a := newApp(t, monday1020)
+	a := oasaOnly(newApp(t, monday1020))
 	poll(a, monday1020)
 	var idx struct {
 		Stops   []model.IndexEntry  `json:"stops"`
