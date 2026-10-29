@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: athens-transit-rt
-  version: "1 (contract rev 10)"
+  version: "1 (contract rev 11)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
     Free public API, no key. Live data comes from `https://transit.haroldpoi.dev`; the static map
@@ -2785,10 +2785,13 @@ components:
         source:
           type: string
           enum: [live, timetable]
-          description: "`live` only when GPS or a reported delay set `at`."
+          description: |
+            `live` only when GPS, a reported delay or (rev 11, OASA stops) OASA's own prediction
+            set `at`. An OASA prediction is listed only for a bus the backend has no Arrival of;
+            it has `vehicle` set and `scheduled_at`, `delay_s`, `run` `null`.
         run:
           type: [string, "null"]
-          description: Run id, so the card can open the Run before it starts.
+          description: Run id, so the card can open the Run before it starts; `null` for an OASA prediction.
         vehicle:
           type: [string, "null"]
           description: |

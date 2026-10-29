@@ -9,6 +9,11 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `/v2/stops/{id}` (OASA stops) lists OASA's own predictions (`getStopArrivals`) as `live`
+  Arrivals for the buses the backend has no Arrival of, so a client needs no OASA proxy for them
+  (contract rev 11). They are refreshed in the background, at most one OASA call per stop every
+  30 s through the shared request queue; a request never waits for OASA
+  ([#22](https://github.com/angelospk/athens-transit-rt/issues/22)).
 - Seen flags: a daily direction now finds its shape when one name abbreviates a word of the
   other ("ΣΤ. ΚΗΦΙΣΙΑΣ" and "ΣΤΑΘΜΟΣ ΚΗΦΙΣΙΑΣ", "Α. ΠΑΤΗΣΙΑ" and "ΑΝΩ ΠΑΤΗΣΙΑ"). Fixes the
   seen flags of 025, 11, 530, Β15, 022, 406 and 891; no other direction changes

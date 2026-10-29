@@ -14,8 +14,8 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 10 (2026-10-29): live responses send `Access-Control-Expose-Headers: Date`
-(rev 9: `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles; rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
+Revision: 11 (2026-10-29): `/v2/stops/{id}` bus Arrivals include OASA's own predictions
+(rev 10: live responses send `Access-Control-Expose-Headers: Date`; rev 9: `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles; rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
 ([below](#unified-api-v2-rev-8)); rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
 `path` on vehicles)
 
@@ -566,8 +566,14 @@ and compare them; they never parse them.
 - `source`: `live` | `timetable`. `live` only when GPS or a reported delay set `at`. Suburban
   precedence: stream delay (stream open) → board delay (board ≤ 10 min old) → timetable; the
   first two give `live`.
-- `run`: Run id, so the card can open the Run even before it starts; `null` only for an OASA
-  bus matched to no trip (not listed today).
+- `run`: Run id, so the card can open the Run even before it starts; `null` for an OASA bus
+  matched to no trip and for an OASA prediction (below).
+- OASA predictions (rev 11): an OASA stop also lists OASA's own predictions (`getStopArrivals`)
+  for the buses the backend has no Arrival of, as `source: live`, `at` = OASA's minutes from its
+  last answer (whole minutes, at most 2 min old, refreshed in the background every 30 s while
+  the stop is asked for), `vehicle` and `vehicle_label` set; `scheduled_at`, `delay_s` and `run`
+  `null`. A bus both list appears once, with the backend's time. Such a bus may also be the one
+  that will run a `timetable` Arrival of the same line: OASA does not say which trip it runs.
 - `vehicle`, `vehicle_label`: `null` when no Vehicle is on the Run yet or none is known. Metro/tram:
   `vehicle` is set only while the Run is under way; `vehicle_label` is always `null`.
 - `platform`: `null` unless the Source gives one (only railway.gov.gr today).
@@ -698,7 +704,8 @@ Rules:
 - **`oasa`**: Line, Pattern, Stop from the OASA GTFS (today's static `lines.json` /
   `lines/{id}.json` data); Vehicle from the matcher's vehicles (today's `/v1/lines/{id}` fields
   renamed: `bearing`, `position_at` → `position`; `variant` → Pattern id; `trip_label` dropped
-  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`. On an
+  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`, plus
+  OASA's `getStopArrivals` for buses it does not have (rev 11). On an
   expired GTFS the timetable Arrivals and their Runs come from OASA's daily schedule
   (`getDailySchedule`, cached and prefetched once a day; a request never asks OASA for it): the
   run's departure plus the stop's offset in the GTFS trip of that direction that starts nearest
