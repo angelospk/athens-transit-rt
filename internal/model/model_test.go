@@ -94,7 +94,8 @@ func TestStatusAndComplete(t *testing.T) {
 		StatusOf(true, Ptr(299)) != Running || StatusOf(true, Ptr(300)) != Delayed {
 		t.Fatal("status")
 	}
-	if !Complete([]SourceState{{State: OK}, {State: Stale}}) || Complete([]SourceState{{State: OK}, {State: Indicative}}) {
+	if !Complete([]SourceState{{State: OK}, {State: Stale}, {State: Indicative}}) ||
+		Complete([]SourceState{{State: OK}, {State: WarmingUp}}) || Complete([]SourceState{{State: Down}}) {
 		t.Fatal("complete")
 	}
 }

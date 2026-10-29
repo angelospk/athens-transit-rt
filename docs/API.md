@@ -179,8 +179,9 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
   the current `id` in the body. Unknown ids: `404` `unknown_line` / `unknown_stop` /
   `unknown_run`.
 - **`sources`** in every body says how fresh each Source is (`ok`, `warming_up`, `stale`,
-  `indicative`, `down`). A body with a Source neither `ok` nor `stale` is cached 5 s, with no
-  `ETag`; a complete one cached 1 h has a weak `ETag` and answers `304`.
+  `indicative`, `down`). A body with a Source `warming_up` or `down` is cached 5 s, with no
+  `ETag`; a complete one cached 1 h has an `ETag` and answers `304` (`/v2/stops`: a strong one
+  that holds while the stops stay the same, so keep the index and send `If-None-Match`).
 - **`position.kind`** is `gps` for buses and suburban trains, `estimate` for metro and tram (from
   the timetable; `motion.knots` moves them between snapshots). Arrival **`source`** is `live`
   when GPS or a reported delay set `at`, else `timetable`. When the OASA GTFS has expired, bus
