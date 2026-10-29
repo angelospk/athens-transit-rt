@@ -14,6 +14,9 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   hand-checked table built from OpenStreetMap (`internal/railgeo/stasy_stops.json`,
   regenerate with `scripts/stasy-stop-names.py`). A Stop new to the STASY feed keeps STASY's
   name, has no English name and is logged at load; a renamed Stop gets a permanent alias there.
+- `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule
+  (where a marker stands at a time), so the app and the web map test their movers against the
+  same cases. The backend checks the knot rules on every train of its test feed through a day.
 - `/v2/vehicles/rail` is metro and tram only and opens nothing upstream. Suburban trains moved
   to the new `/v2/vehicles/suburban`, which opens the railway.gov.gr stream: a map showing the
   metro no longer keeps that stream (~80 KB/s) open.

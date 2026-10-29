@@ -1,0 +1,17 @@
+{
+ "about": "The client rule for motion.knots (CONTRACT.md, Vehicle): where a marker stands at time t, in metres along path + path_beyond. Before the first knot: 0. Between two knots: linear in metres by time; equal metres = dwell at a Stop. After the last knot: its metres, until the next snapshot. Every client tests its mover against these cases; internal/model/motion_test.go checks them against a reference implementation.",
+ "cases": [
+  {"name": "two stops ahead, dwell at the first",
+   "knots": [[0, 1000], [450, 1060], [450, 1090], [1010, 1160]],
+   "at": [[990, 0], [1000, 0], [1030, 225], [1060, 450], [1075, 450], [1090, 450], [1125, 730], [1160, 1010], [1300, 1010]]},
+  {"name": "standing at a Stop until it leaves",
+   "knots": [[0, 1000], [0, 1030], [300, 1090]],
+   "at": [[1000, 0], [1015, 0], [1030, 0], [1060, 150], [1090, 300], [1200, 300]]},
+  {"name": "a single knot: nothing ahead",
+   "knots": [[0, 1000]],
+   "at": [[900, 0], [1000, 0], [1100, 0]]},
+  {"name": "arrival and departure at the same time give one knot",
+   "knots": [[0, 1000], [200, 1040], [600, 1120]],
+   "at": [[1020, 100], [1040, 200], [1080, 400], [1119, 595], [1120, 600]]}
+ ]
+}

@@ -1,12 +1,14 @@
 package server
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/angelospk/athens-transit-rt/internal/geo"
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
 	"github.com/angelospk/athens-transit-rt/internal/model"
 )
@@ -234,4 +236,60 @@ func TestV2STASYStopNotInNameTable(t *testing.T) {
 	if code, _ := v2get(t, a, "/v2/stops/"+esc("stasy:κηφισια-metro"), nil); code != 404 {
 		t.Fatalf("old id answers %d without an alias", code)
 	}
+}
+
+// The knots of every train of the test feed, minute by minute through the service day, keep the
+// contract's rules: they start at [0, position.at], times strictly increase, metres never
+// decrease, every Stop ahead (path_stops) is a knot, and the last knot is at the end of
+// path + path_beyond. Clients move markers by these; a broken knot makes a train jump.
+func TestV2STASYKnotInvariants(t *testing.T) {
+	a := stasyApp(t, wed1000)
+	ad := a.adapter("stasy:x").(*stasyAdapter)
+	day := time.Date(2026, 10, 28, 4, 0, 0, 0, gtfs.Athens)
+	trains := 0
+	for m := 0; m < 22*60; m++ {
+		now := day.Add(time.Duration(m) * time.Minute)
+		vs, err := ad.Vehicles(now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range vs {
+			mo := v.Motion
+			if mo == nil {
+				continue
+			}
+			trains++
+			if msg := model.CheckKnots(mo.Knots); msg != "" {
+				t.Fatalf("%s at %s: %s %v", v.ID, now.Format("15:04"), msg, mo.Knots)
+			}
+			if mo.Knots[0] != [2]int64{0, v.Position.At} {
+				t.Fatalf("%s at %s: first knot %v, position.at %d", v.ID, now.Format("15:04"), mo.Knots[0], v.Position.At)
+			}
+			at := map[int64]bool{}
+			for _, k := range mo.Knots {
+				at[k[0]] = true
+			}
+			for _, s := range mo.PathStops {
+				if !at[int64(s)] {
+					t.Fatalf("%s at %s: path_stops %d m has no knot %v", v.ID, now.Format("15:04"), s, mo.Knots)
+				}
+			}
+			length := polylineMetres(append(append([][2]float64{}, mo.Path...), mo.PathBeyond...))
+			if last := float64(mo.Knots[len(mo.Knots)-1][0]); math.Abs(last-length) > 5+0.02*length {
+				t.Fatalf("%s at %s: last knot %.0f m, path + path_beyond %.0f m", v.ID, now.Format("15:04"), last, length)
+			}
+		}
+	}
+	if trains < 100 {
+		t.Fatalf("only %d train snapshots checked", trains)
+	}
+}
+
+// polylineMetres is the length of [lat, lon] points in metres.
+func polylineMetres(pts [][2]float64) float64 {
+	var d float64
+	for i := 1; i < len(pts); i++ {
+		d += geo.Dist(geo.XY(pts[i-1][0], pts[i-1][1]), geo.XY(pts[i][0], pts[i][1]))
+	}
+	return d
 }
