@@ -14,6 +14,9 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   record of what changed; MIGRATION and UI-SPEC carry their real status, and MIGRATION's
   hosting section describes the VPS and its automatic deploys. A test keeps the error codes of
   the code equal to the OpenAPI Error enum and every Source state in the contract.
+- `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule
+  (where a marker stands at a time), so the app and the web map test their movers against the
+  same cases. The backend checks the knot rules on every train of its test feed through a day.
 - `/v2/vehicles/rail` is metro and tram only and opens nothing upstream. Suburban trains moved
   to the new `/v2/vehicles/suburban`, which opens the railway.gov.gr stream: a map showing the
   metro no longer keeps that stream (~80 KB/s) open.
