@@ -1565,8 +1565,8 @@ paths:
         about 60 vehicles. Their `knots` keep them moving between snapshots. It opens nothing
         upstream; suburban trains are in `/v2/vehicles/suburban`.
 
-        `Cache-Control: public, max-age=15`; no `ETag` (cached 15 s or less). A response with a Source neither `ok` nor `stale` is
-        `max-age=5`.
+        `Cache-Control: public, max-age=15`; no `ETag` (cached 15 s or less). An incomplete
+        response (a Source warming up; CONTRACT.md §5) is `max-age=5`.
       responses:
         "200":
           description: The rail snapshot. `vehicles` may be `[]`.
@@ -1579,7 +1579,7 @@ paths:
                 $ref: "#/components/schemas/V2VehiclesResponse"
               example:
                 updated_at: 1793205600
-                next_update_at: 1793205605
+                next_update_at: 1793205615
                 vehicles:
                   - id: "stasy:run:1012345:2026-10-29"
                     line: "stasy:M2"
@@ -1598,6 +1598,39 @@ paths:
                       path_speeds: null
                       knots: [[0, 1793205600], [450, 1793205660], [450, 1793205690], [1010, 1793205760]]
                     source: stasy
+                sources:
+                  - {id: stasy, state: ok, updated_at: 1793205600}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+
+  /v2/vehicles/suburban:
+    get:
+      tags: [V2]
+      operationId: getV2SuburbanVehicles
+      summary: All suburban trains now
+      description: |
+        Every Proastiakos train on the railway.gov.gr stream (PIRAIR, KIATO, CHALKIDA; freight
+        left out), snapped to its corridor, in one body of about 10 vehicles. This request opens
+        the stream (it closes 3 minutes after the last one), so a client loads it only while its
+        suburban layer is on and a corridor is in view.
+
+        `Cache-Control: public, max-age=5` while trains are present, else `15`; no `ETag`. An
+        incomplete response (a Source warming up or down; CONTRACT.md §5) is `max-age=5`.
+      responses:
+        "200":
+          description: The suburban snapshot. `vehicles` may be `[]`.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2VehiclesResponse"
+              example:
+                updated_at: 1793205600
+                next_update_at: 1793205605
+                vehicles:
                   - id: "proastiakos:1226"
                     line: "proastiakos:PIRAIR"
                     run: "proastiakos:run:1226:2026-10-29"
@@ -1616,35 +1649,7 @@ paths:
                       knots: null
                     source: proastiakos
                 sources:
-                  - {id: stasy, state: ok, updated_at: 1793205600}
                   - {id: proastiakos, state: ok, updated_at: 1793205595}
-        "429":
-          $ref: "#/components/responses/RateLimited"
-
-
-  /v2/vehicles/suburban:
-    get:
-      tags: [V2]
-      operationId: getV2SuburbanVehicles
-      summary: All suburban trains now
-      description: |
-        Every Proastiakos train on the railway.gov.gr stream (PIRAIR, KIATO, CHALKIDA; freight
-        left out), snapped to its corridor, in one body of about 10 vehicles. This request opens
-        the stream (it closes 3 minutes after the last one), so a client loads it only while its
-        suburban layer is on and a corridor is in view.
-
-        `Cache-Control: public, max-age=5` while trains are present, else `15`; no `ETag`. A
-        response with a Source `warming_up` or `down` is `max-age=5`.
-      responses:
-        "200":
-          description: The suburban snapshot. `vehicles` may be `[]`.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/CacheControl"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/V2VehiclesResponse"
         "429":
           $ref: "#/components/responses/RateLimited"
   /v2/runs/{id}:
