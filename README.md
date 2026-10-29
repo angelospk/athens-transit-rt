@@ -12,7 +12,7 @@ ported upstream commit is in [`UPSTREAM.md`](UPSTREAM.md). Upstream's HTML viewe
 stream are not ported: the map lives in [athens-transit-map](https://github.com/angelospk/athens-transit-map).
 
 > **Ελληνικά, σύντομα.** Ένα Go binary (`atrt`) ρωτά το API τηλεματικής του ΟΑΣΑ για όλο το
-> δίκτυο, με ένα κοινό όριο αιτημάτων (4/s, max 5), αντιστοιχίζει κάθε όχημα σε δρομολόγιο του
+> δίκτυο, με ένα κοινό όριο αιτημάτων (6/s, max 6), αντιστοιχίζει κάθε όχημα σε δρομολόγιο του
 > GTFS και δίνει JSON ανά γραμμή (`/v1/lines/040`) και GTFS-Realtime. Οι χρήστες δεν φτάνουν
 > ποτέ στον ΟΑΣΑ: το Cloudflare κρατά κάθε απάντηση ακριβώς μέχρι την επόμενη ανανέωση της
 > γραμμής. Η βαριά δουλειά (το GTFS των 225 MB) γίνεται στο GitHub Actions. Ο server κατεβάζει
@@ -22,7 +22,8 @@ stream are not ported: the map lives in [athens-transit-map](https://github.com/
 
 - Loads the static GTFS as a compact snapshot and swaps in new ones without a restart.
 - Polls `getBusLocation` for every route with scheduled service now, under one global request
-  budget (default 4 req/s, max 5), evenly spaced, with backoff on errors and slow answers.
+  budget (default 6 req/s, max 6), evenly spaced, with backoff on errors and slow answers. A
+  403 or 429 from OASA stops every request for 10 minutes and logs an error.
 - Maps OASA route codes to GTFS shapes by stop sequence, projects GPS fixes on the shapes and
   matches vehicles to trips one-to-one (Hungarian assignment plus upstream's memory matcher,
   with hysteresis). `internal/lsa` is a port of scipy's `linear_sum_assignment`.
@@ -114,7 +115,7 @@ When a tier needs more than its share, its intervals stretch. A line response ca
 copy expires when fresh data exists.
 
 `/v1/vehicles` (all lines at once) reads only what the tiers above already polled: it never
-marks a line watched. Its body is built at most every 30 s, on the first request after the
+marks a line watched. Its body is built at most every 10 s, on the first request after the
 previous snapshot expired, and gzip-compressed once; every client gets the same bytes.
 The same build cuts it into map tiles (`/v1/vehicles/tiles/{z}/{x}/{y}`, `z` 9 without paths,
 `z` 13 with them), each encoded once too: a map client loads only its view, and the URLs are a
@@ -149,7 +150,7 @@ the old snapshot.
 go build -o atrt ./cmd/atrt
 
 # Live service. Downloads the snapshot from this repo's release into --state.
-atrt serve --listen 127.0.0.1:8095 --metrics-listen 127.0.0.1:8096 --state /var/lib/atrt --rps 4
+atrt serve --listen 127.0.0.1:8095 --metrics-listen 127.0.0.1:8096 --state /var/lib/atrt --rps 6
 atrt serve --gtfs osy_gtfs.zip --state ./state     # local, from a GTFS zip
 atrt serve ... --history --history-max-mb 3000     # also keep every GPS fix (30 days) in --state/history
 
@@ -203,7 +204,7 @@ The image is `ghcr.io/angelospk/athens-transit-rt` (linux/amd64 and arm64, so a 
 works). It downloads the GTFS snapshot from this repo's release on first start and keeps it
 in the `atrt-state` volume. The API listens on `127.0.0.1:8095`; publishing it (Cloudflare
 Tunnel, Caddy, nginx, ...) and its cache and rate-limit rules are up to you. Keep the OASA
-budget at 4 req/s or lower (`--rps`), and do not run two instances behind one address.
+budget at 6 req/s or lower (`--rps`), and do not run two instances behind one address.
 
 ## Deployment
 

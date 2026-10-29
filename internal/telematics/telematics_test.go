@@ -252,7 +252,8 @@ func TestPacerClamp(t *testing.T) {
 }
 
 // OASA answering 403 or 429 stops every request for BlockPause, then the pace restarts at its
-// slowest. The stop is logged once, and a refusal during the pause does not extend it.
+// slowest. The stop is logged once; a refusal during the pause does not extend it, and a healthy
+// answer during the pause does not speed up the restart.
 func TestPacerStopsOnBlock(t *testing.T) {
 	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
 		var buf bytes.Buffer
@@ -265,6 +266,7 @@ func TestPacerStopsOnBlock(t *testing.T) {
 			t.Fatalf("%d: wait %v during the stop, want %v", status, d, BlockPause-time.Second)
 		}
 		p.report(t0.Add(2*time.Second), 0, fmt.Errorf("wrapped: %w", &HTTPError{Act: "getBusLocation", Status: status}))
+		p.report(t0.Add(3*time.Second), 100*time.Millisecond, nil) // an in-flight request answering fine
 		if d := p.grant(t0.Add(BlockPause)); d != 0 {
 			t.Fatalf("%d: still stopped after BlockPause (a refusal during the stop extended it): %v", status, d)
 		}

@@ -9,7 +9,7 @@ StartLimitBurst=10
 [Service]
 User=atrt
 Group=atrt
-ExecStart=/usr/local/bin/atrt serve --listen 127.0.0.1:8095 --state /var/lib/atrt --rps 4
+ExecStart=/usr/local/bin/atrt serve --listen 127.0.0.1:8095 --state /var/lib/atrt --rps 6
 Restart=always
 RestartSec=5
 Environment=GOMEMLIMIT=100MiB
