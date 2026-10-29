@@ -71,7 +71,7 @@ const stationsJSON = `{"corridors":[
 
 // 2026-10-28 is EET (UTC+2): 03:20Z is 05:20 in Athens. The clock of the tests is 05:00.
 const boardJSON = `{"schedules":[
- {"trainNumber":"2539","status":"scheduled","delay":2,"destination":{"nameGreek":"Κιάτο"},
+ {"trainNumber":"2539","corridor":"KIATO","status":"scheduled","delay":2,"destination":{"nameGreek":"Κιάτο"},
   "routeStations":[
     {"stationId":"ST-PIR","nameGreek":"Πειραιάς","role":"origin","index":0,"scheduledDeparture":"2026-10-28T03:20:00.000Z"},
     {"stationId":"ST-REN","nameGreek":"Ρέντης","role":"stop","index":1,"scheduledDeparture":"2026-10-28T03:26:00.000Z","platform":"3","delay":4},

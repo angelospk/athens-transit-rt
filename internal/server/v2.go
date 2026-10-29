@@ -307,13 +307,17 @@ func (a *App) handleV2RailVehicles(w http.ResponseWriter, r *http.Request) {
 	now := a.now()
 	ads := a.railAdapters()
 	vs := []model.Vehicle{}
+	maxAge := stasyVehMaxAge
 	for _, ad := range ads {
 		if got, err := ad.Vehicles(now); err == nil {
 			vs = append(vs, got...)
+			if ad.Namespace() == subNS && len(got) > 0 {
+				maxAge = subVehMaxAge // GPS trains move every second
+			}
 		}
 	}
 	src := a.states(now, ads...)
-	writeV2(w, r, stasyVehMaxAge, src, v2Response[model.Vehicle]{now.Unix(), now.Unix() + stasyVehMaxAge, vs, src})
+	writeV2(w, r, maxAge, src, v2Response[model.Vehicle]{now.Unix(), now.Unix() + int64(maxAge), vs, src})
 }
 
 func (a *App) v2Vehicles() (*v2Snapshot, error) {

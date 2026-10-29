@@ -14,7 +14,7 @@ import (
 
 const positionsEvent = `{"positions":[
  {"trainNumber":"1226","scheduleId":"s1","serviceType":"Suburban","origin":"Πειραιάς","destination":"Αεροδρόμιο",
-  "nextStation":"Κάτω Αχαρναί","delay":3,"corridor":"PIRAIR","lat":38.0487,"lng":23.7314,"speed":80.4,
+  "nextStation":"Κάτω Αχαρναί","nextStationId":"ST-KA","delay":3,"corridor":"PIRAIR","lat":38.0487,"lng":23.7314,"speed":80.4,
   "course":10.5,"hasCourse":true,"timestamp":"2026-10-28T16:13:56.272Z"},
  {"trainNumber":"220035","scheduleId":null,"corridor":"KIATO","lat":37.959,"lng":23.665,"speed":0.01,
   "course":75.6,"hasCourse":true,"timestamp":"2026-10-28T16:13:56.272Z"},
@@ -93,6 +93,15 @@ func TestTrainStreamSnapshot(t *testing.T) {
 	b := snap.Trains[1]
 	if b.Course != nil || b.DelayMin != nil || b.SpeedKmh != 0 || b.Next != "" {
 		t.Errorf("1324 = %+v", b)
+	}
+	if a.NextID != "ST-KA" || b.NextID != "" {
+		t.Errorf("next station ids %q %q", a.NextID, b.NextID)
+	}
+	if s.Peek() != snap {
+		t.Error("Peek is not the last snapshot")
+	}
+	if open, last := s.Health(); !open || last.IsZero() {
+		t.Errorf("health %v %v", open, last)
 	}
 	if d := s.Delays(); len(d) != 1 || d["1226"] != 3 {
 		t.Errorf("delays = %v", d)
@@ -183,5 +192,22 @@ func TestTrainStreamBackoffStartsAgainAfterAWorkingStream(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	if n := conns.Load(); n < 9 {
 		t.Fatalf("connections = %d: the backoff grew after working streams", n)
+	}
+}
+
+// Health never opens the stream: a server that only asks for the state costs no upstream.
+func TestTrainStreamHealthDoesNotOpen(t *testing.T) {
+	s := &TrainStream{Log: quietLog()}
+	if open, last := s.Health(); open || !last.IsZero() {
+		t.Fatalf("health %v %v", open, last)
+	}
+	if s.Peek() != nil {
+		t.Fatal("a snapshot from nowhere")
+	}
+	s.init()
+	select {
+	case <-s.wake:
+		t.Fatal("Health woke the stream")
+	default:
 	}
 }

@@ -184,9 +184,9 @@ func New(cfg Config, log *slog.Logger) *App {
 	// The stream has no end, so no client Timeout; only the wait for its headers is bounded.
 	stream := http.DefaultTransport.(*http.Transport).Clone()
 	stream.ResponseHeaderTimeout = 15 * time.Second
-	a.adapters = []Adapter{&oasaAdapter{a}, &stasyAdapter{a: a}}
 	a.trains = &rail.TrainStream{BaseURL: cfg.SuburbanURL, HTTP: &http.Client{Transport: stream}, Log: log,
 		Now: func() time.Time { return a.now() }}
+	a.adapters = []Adapter{&oasaAdapter{a}, &stasyAdapter{a: a}, &proastiakosAdapter{a: a, board: a.suburban, trains: a.trains}}
 	return a
 }
 

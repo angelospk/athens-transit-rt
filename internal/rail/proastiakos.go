@@ -83,6 +83,7 @@ type stationIndex struct {
 type boardEntry struct {
 	at    time.Time
 	board *scheduleBoard
+	conv  []SuburbanSchedule // the board as the /v2 adapter reads it, built on first use
 }
 
 // mpassEntry is one screen as fetched: every train it lists, with its instant.
@@ -389,6 +390,7 @@ type scheduleBoard struct {
 
 type boardSchedule struct {
 	TrainNumber string      `json:"trainNumber"`
+	Corridor    string      `json:"corridor"`
 	Status      string      `json:"status"`
 	Delay       *int        `json:"delay"`
 	Destination boardPlace  `json:"destination"`

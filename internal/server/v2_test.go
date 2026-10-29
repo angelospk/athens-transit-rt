@@ -132,7 +132,13 @@ func TestV2WarmingUp(t *testing.T) {
 	a.mu.Unlock()
 	var ls v2Lines
 	res, _ := get(t, a, "/v2/lines")
-	if _, ma := v2get(t, a, "/v2/lines", &ls); ma != 5 || ls.Lines == nil || len(ls.Lines) != 0 ||
+	_, ma := v2get(t, a, "/v2/lines", &ls)
+	for _, l := range ls.Lines {
+		if l.Source == "oasa" { // the suburban Lines are embedded: always there
+			t.Fatalf("oasa line while warming up: %s", asJSON(l))
+		}
+	}
+	if ma != 5 || ls.Lines == nil ||
 		stateOf(ls.Sources, "oasa") != model.WarmingUp || res.Header.Get("ETag") != "" {
 		t.Fatalf("max-age %d %s", ma, asJSON(ls))
 	}

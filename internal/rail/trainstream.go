@@ -40,6 +40,7 @@ type SuburbanTrain struct {
 	From       string   `json:"from"`
 	To         string   `json:"to"`
 	Next       string   `json:"next_station"`
+	NextID     string   `json:"-"`           // railway.gov.gr station id of Next, "" when unknown
 	PositionAt int64    `json:"position_at"` // unix seconds of the GPS fix
 }
 
@@ -98,6 +99,21 @@ func (s *TrainStream) Delays() map[string]int {
 		}
 	}
 	return out
+}
+
+// Peek returns the last snapshot, nil until the first one, without opening the stream.
+func (s *TrainStream) Peek() *SuburbanVehicles {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snap
+}
+
+// Health reports whether clients keep the stream open (asked within Idle) and the time of its
+// last event. It does not open the stream.
+func (s *TrainStream) Health() (open bool, last time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.asked.IsZero() && s.now().Sub(s.asked) < s.dur(s.Idle, trainIdle), s.event
 }
 
 // Run serves wake-ups until ctx ends: on one, it reads the stream until no client asked for
@@ -267,6 +283,7 @@ type trainPosition struct {
 	Origin      *string  `json:"origin"`
 	Destination *string  `json:"destination"`
 	NextStation *string  `json:"nextStation"`
+	NextID      *string  `json:"nextStationId"`
 	Delay       *int     `json:"delay"`
 	Corridor    string   `json:"corridor"`
 	Lat         *float64 `json:"lat"`
@@ -298,7 +315,8 @@ func (s *TrainStream) dispatch(event, data string) {
 			continue
 		}
 		tr := SuburbanTrain{Train: strings.TrimSpace(t.TrainNumber), Corridor: t.Corridor, Service: str(t.ServiceType),
-			Lat: *t.Lat, Lon: *t.Lng, DelayMin: t.Delay, From: str(t.Origin), To: str(t.Destination), Next: str(t.NextStation)}
+			Lat: *t.Lat, Lon: *t.Lng, DelayMin: t.Delay, From: str(t.Origin), To: str(t.Destination), Next: str(t.NextStation),
+			NextID: str(t.NextID)}
 		if t.Speed != nil {
 			tr.SpeedKmh = *t.Speed
 		}

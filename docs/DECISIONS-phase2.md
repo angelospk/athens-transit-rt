@@ -65,3 +65,41 @@ one: choice, alternative, reason. The docs did not settle these points.
 19. **stasy Source state**: `warming_up` until a timetable loads, `indicative` when it does not
     cover today, else `ok`. `stale` (daily check failed) is not reported yet: the store does not
     expose its last check.
+
+## Session 2 (proastiakos adapter)
+
+20. **proastiakos Lines, Stops and Patterns come from the embedded corridor table**
+    (`railgeo.Suburban()`), so the Source is never `warming_up` and `line` is never `null`.
+    Alternative: wait for `corridor-stations` (the contract example). Reason: the table is
+    already in the binary; a fetch would only delay the same data.
+21. **Stop ids are the ids of the embedded table**, not the `corridor-stations` primary. They are
+    the same for 44 of 45 stations; Άγιος Γεώργιος is `…cf4f` in the table and `…cfeb` upstream.
+    Reason: ids must not depend on a fetch. Both other ids (`…cfeb`, the airport's `…cec7`) are
+    permanent aliases in code (`subAliases`); any other id that the cached station table merges
+    with a Stop also resolves.
+22. **A board run's Line is its own `corridor` field** (the board has one; found on the real
+    board of 2026-10-29). Runs of other corridors (ATHLIA, E85, THESLAR …) are not Arrivals,
+    even at Athens stations. Only a run with no corridor field falls back to "the corridor with
+    most of its stations". Alternative from session 1: always count stations. Reason: 6 regional
+    runs share CHALKIDA stations but are not Proastiakos.
+23. **A board delay counts only for a run under way** (`in_progress`) or a stop with its own
+    delay, and only while the board is ≤ 10 min old. The real board gives `delay: 0` for every
+    run not started; that is not an observation, so those Arrivals are `timetable`.
+24. **A train on the stream with no delay keeps `source: timetable`** but names its `vehicle`.
+    GPS alone does not set `at`.
+25. **ose.mpass is not used by `/v2`.** It has no corridor, so no Line can be given. When the
+    board fails and none is cached, Arrivals are empty and the Source is `down`.
+26. **Stale rules**: board > 30 min old *and* its last refresh failed (a board nobody asked for
+    is not stale), or the stream is open and its last event is > 2 min old. A stream that never
+    sent an event is not reported stale.
+27. **Vehicles**: trains of CHALKIDA, KIATO, PIRAIR only, freight left out. Next station from the
+    stream's `nextStationId` (new non-JSON field `SuburbanTrain.NextID`; `/v1` JSON unchanged),
+    else its name folded. Direction: where the next station lies ahead on the track; with none,
+    the GPS course against the track. A train > 300 m from its corridor (seen: a PIRAIR train
+    parked at Κιάτο) keeps its GPS position with `motion: null`. `run` is set only when today's
+    cached board has the train.
+28. **Direction 0 is the order of the corridor file**: PIRAIR-0 runs Αεροδρόμιο → Πειραιάς,
+    CHALKIDA-0 Χαλκίδα → Αθήνα. The Pattern headsign says which.
+29. **`/v2/runs/proastiakos:…` does not open the stream** (`TrainStream.Peek`); stop and line
+    vehicle requests and `/v2/vehicles/rail` do, as the contract table says. Only today's date is
+    a Run (the board is per day).
