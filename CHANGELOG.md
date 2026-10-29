@@ -55,6 +55,9 @@ First tagged version. Everything below is live on the public instance.
   server watches buses leave the start of their shape (within 300 m, then 600 m along within
   15 min) and gives each start to the run due from 3 min before to 20 min after it. `false` once
   20 min pass without one. Loop lines, late or out-of-order fixes and a feed swap are handled.
+  A bus whose route code changes late, at the end of one shape and up to 1.5 km into the next
+  (909, Χ96), counts too. Direction names match GTFS headsigns without spaces, dots or hyphens
+  and with Latin look-alike letters read as Greek; a loop line takes every shape.
 
 ### Rail
 - Metro and tram: `GET /v1/rail/stasy/departures?stop=<name>` (STASY GTFS timetable, not live).
