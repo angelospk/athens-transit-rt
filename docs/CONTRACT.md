@@ -357,7 +357,7 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
 - **Suburban Arrivals** are only runs of the three corridors (CHALKIDA, KIATO, PIRAIR), by the
   board's own corridor field (22). A board delay is `live` only for a run under way; a run not
   started is `timetable` (23). A train on the stream with no delay keeps `timetable` but names its
-  `vehicle` (24). ose.mpass is not used by `/v2`: with no board, the Source is `down` (25).
+  `vehicle` (24). ose.mpass is not used by `/v2`: with no board and its last fetch failed, the Source is `down` (25).
 - **Suburban stale**: board over 30 min old and its refresh failing, or the open stream silent
   for 2 min (26).
 - **Suburban Vehicles** far (> 300 m) from their corridor keep their GPS position with
@@ -580,7 +580,7 @@ because their signals differ:
 |---|---|---|---|
 | `oasa` | no successful line poll for 5 min (as `/v1/status` `ok:false`) | static GTFS expired and no OASA daily schedule of today cached for the response's lines (any line for the lists) | no data since start |
 | `stasy` | not reported yet: the timetable store does not expose its last check (19) | timetable expired (today's `indicative:true`) | no timetable loaded |
-| `proastiakos` | board older than 30 min and its last refresh failed, or the stream open and silent for 2 min (a stream that never sent an event is not stale) (26) | never | no board, none cached (25) |
+| `proastiakos` | board older than 30 min and its last refresh failed, or the stream open and silent for 2 min (a stream that never sent an event is not stale) (26) | never | no board, none cached, and the last board fetch failed (an idle start with no board yet is `ok`) (25) |
 
 `updated_at`: the last good data of that Source (GPS fix, stream event, board fetch, timetable
 load). Only the
@@ -701,7 +701,7 @@ Rules:
   `suburban.json` has them); Stop from `corridor-stations` (ids merged, aliases kept); Pattern
   from the corridor path and its ordered stations; Vehicle from the train-stream (snapped to the
   corridor path; `course` → `bearing`); Arrival from the board + stream delay; with no board and none
-  cached, no Arrivals and the Source is `down` (ose.mpass has no corridor, so it cannot give a
+  cached, no Arrivals, and the Source is `down` once the board fetch has failed (ose.mpass has no corridor, so it cannot give a
   Line).
 
 ### 8. Not in rev 8
