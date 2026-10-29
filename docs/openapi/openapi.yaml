@@ -63,6 +63,8 @@ tags:
     description: |
       Lines, shapes and stops, on GitHub Pages. Rebuilt only when OASA publishes a new GTFS.
       `Cache-Control: max-age=600`.
+  - name: V2
+    description: "Unified model for every mode: bus, trolley, metro, tram, suburban."
 
 paths:
   /v1/lines/{line_id}:
@@ -1040,6 +1042,644 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /v2/lines:
+    get:
+      tags: [V2]
+      operationId: getV2Lines
+      summary: Every line of every mode
+      description: |
+        All Lines of every Source, all modes, sorted by `id`. One body for the whole network, so
+        every client shares one cached copy. A Source that is still loading lists no line yet and
+        says `warming_up` in `sources`; no card is blanked for it.
+
+        `Cache-Control: public, max-age=3600`, weak `ETag`; `If-None-Match` gives `304`. A
+        response with a Source neither `ok` nor `stale` is `max-age=5` with no `ETag`.
+      responses:
+        "200":
+          description: The lines and the state of every Source.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinesResponse"
+              example:
+                lines:
+                  - id: "oasa:040"
+                    mode: bus
+                    label: "040"
+                    name: Πειραιάς – Σύνταγμα
+                    name_en: Piraeus – Syntagma
+                    color: "#0a6bb8"
+                    text_color: "#ffffff"
+                    source: oasa
+                  - id: "stasy:M2"
+                    mode: metro
+                    label: "M2"
+                    name: ΓΡΑΜΜΗ 2
+                    name_en: null
+                    color: "#d70f2b"
+                    text_color: "#ffffff"
+                    source: stasy
+                  - id: "proastiakos:PIRAIR"
+                    mode: suburban
+                    label: null
+                    name: Πειραιάς – Αεροδρόμιο
+                    name_en: Piraeus – Airport
+                    color: "#2e7d32"
+                    text_color: "#ffffff"
+                    source: proastiakos
+                sources:
+                  - {id: oasa, state: ok, updated_at: 1793205590}
+                  - {id: stasy, state: ok, updated_at: 1793205500}
+                  - {id: proastiakos, state: ok, updated_at: 1793205570}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/lines/{id}:
+    get:
+      tags: [V2]
+      operationId: getV2Line
+      summary: One line with its patterns and stops
+      description: |
+        The Line, its Patterns and every Stop those patterns call at, by Stop id, from one
+        Source. `line` is `null` while that Source has not loaded yet (never `404` then): the
+        answer carries `warming_up` in `sources` and empty `patterns` and `stops`.
+
+        `Cache-Control: public, max-age=3600`, weak `ETag`; `If-None-Match` gives `304`. A
+        response with a Source neither `ok` nor `stale` is `max-age=5` with no `ETag`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: |
+            Line id, namespaced and percent-encoded: `oasa:040`, `stasy:M1`,
+            `proastiakos:KIATO`. An alias id answers with the current Line.
+          schema: {type: string}
+          example: "oasa:040"
+      responses:
+        "200":
+          description: The line, its patterns and its stops. `patterns` and `stops` may be empty.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineDetailResponse"
+              example:
+                line:
+                  id: "oasa:040"
+                  mode: bus
+                  label: "040"
+                  name: Πειραιάς – Σύνταγμα
+                  name_en: Piraeus – Syntagma
+                  color: "#0a6bb8"
+                  text_color: "#ffffff"
+                  source: oasa
+                patterns:
+                  - id: "oasa:2045"
+                    headsign: Σύνταγμα
+                    direction: 0
+                    stops: ["oasa:400012", "oasa:400013"]
+                    shape: [[37.942, 23.6466], [37.9431, 23.648]]
+                stops:
+                  "oasa:400012":
+                    id: "oasa:400012"
+                    name: Πλ. Καραϊσκάκη
+                    name_en: null
+                    lat: 37.942
+                    lon: 23.6466
+                    modes: [bus]
+                    lines: ["oasa:040", "oasa:049"]
+                    source: oasa
+                  "oasa:400013":
+                    id: "oasa:400013"
+                    name: Γούναρη
+                    name_en: null
+                    lat: 37.9431
+                    lon: 23.648
+                    modes: [bus]
+                    lines: ["oasa:040"]
+                    source: oasa
+                sources:
+                  - {id: oasa, state: ok, updated_at: 1793205590}
+        "404":
+          description: "`unknown_line`, or a path that is not clean (`not_found`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: unknown_line
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/lines/{id}/vehicles:
+    get:
+      tags: [V2]
+      operationId: getV2LineVehicles
+      summary: Vehicles of one line
+      description: |
+        The vehicles of one Line now, whatever its mode, and when they are next checked. Asking
+        for a line marks it "watched" (`oasa`: polled about every 30 s) and opens the stream
+        (`proastiakos`). Refetch at `next_update_at`, not earlier.
+
+        `Cache-Control: public, max-age=<seconds until next_update_at, 5..300>`, with a weak
+        `ETag` and `304` when that is at least 60 s. A response with a Source neither `ok` nor
+        `stale` is `max-age=5` with no `ETag`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: |
+            Line id, namespaced and percent-encoded: `oasa:040`, `stasy:M1`,
+            `proastiakos:KIATO`. An alias id answers with the current Line.
+          schema: {type: string}
+          example: "stasy:M2"
+      responses:
+        "200":
+          description: The line and its vehicles. `vehicles` may be `[]`.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineVehiclesResponse"
+              example:
+                line: "stasy:M2"
+                updated_at: 1793205600
+                next_update_at: 1793205615
+                vehicles:
+                  - id: "stasy:run:1012345:2026-10-29"
+                    line: "stasy:M2"
+                    run: "stasy:run:1012345:2026-10-29"
+                    mode: metro
+                    headsign: Ελληνικό
+                    label: null
+                    position: {kind: estimate, lat: 37.9722, lon: 23.7325, bearing: 205, at: 1793205600}
+                    delay_s: null
+                    next_stop: "stasy:ακροπολη-metro"
+                    motion:
+                      path: [[37.9722, 23.7325], [37.96882, 23.72963]]
+                      path_beyond: [[37.96882, 23.72963], [37.96421, 23.72651]]
+                      path_stops: [450, 1010]
+                      speed: null
+                      path_speeds: null
+                      knots: [[0, 1793205600], [450, 1793205660], [450, 1793205690], [1010, 1793205760]]
+                    source: stasy
+                sources:
+                  - {id: stasy, state: ok, updated_at: 1793205600}
+        "404":
+          description: "`unknown_line`, or a path that is not clean (`not_found`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: unknown_line
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/stops:
+    get:
+      tags: [V2]
+      operationId: getV2Stops
+      summary: Every stop of every mode, compact
+      description: |
+        Every Stop of every Source as a 6-item array `[id, name, lat, lon, modes, lines]`, sorted
+        by `id`: about 9000 stops, under 250 KB gzip. A client filters it by name and by the box
+        it shows; the full Stop is at `/v2/stops/{id}`.
+
+        `Cache-Control: public, max-age=3600`, weak `ETag`; `If-None-Match` gives `304`. A
+        response with a Source neither `ok` nor `stale` is `max-age=5` with no `ETag`.
+      responses:
+        "200":
+          description: The index and the state of every Source.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopsResponse"
+              example:
+                stops:
+                  - ["oasa:400012", Πλ. Καραϊσκάκη, 37.942, 23.6466, [bus], ["oasa:040", "oasa:049"]]
+                  - ["stasy:συνταγμα-metro", Σύνταγμα, 37.97527, 23.73552, [metro], ["stasy:M2", "stasy:M3"]]
+                sources:
+                  - {id: oasa, state: ok, updated_at: 1793205590}
+                  - {id: stasy, state: ok, updated_at: 1793205500}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/stops/{id}:
+    get:
+      tags: [V2]
+      operationId: getV2Stop
+      summary: One stop, its lines and the arrivals
+      description: |
+        The Stop, the Lines that call there and the arrivals, soonest first: at most 2 h ahead,
+        at most 4 per Line and headsign, at most 30 in all. `source: live` when GPS or a reported
+        delay set `at`, `timetable` otherwise; a Run not started yet is listed with `vehicle`
+        `null`. `stop` is `null` while its Source has not loaded yet (never `404` then).
+
+        Raises the priority of the stop's lines (`oasa`) and opens the stream (`proastiakos`).
+        `Cache-Control: public, max-age=15`; no `ETag` (cached 15 s or less). A response with a
+        Source neither `ok` nor `stale` is `max-age=5`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: |
+            Stop id, namespaced and percent-encoded: `oasa:400012`, `stasy:συνταγμα-metro`
+            (`%CF%83…` in a URL), `proastiakos:<station id>`. An alias id answers with the
+            current Stop.
+          schema: {type: string}
+          example: "stasy:συνταγμα-metro"
+      responses:
+        "200":
+          description: The stop, its lines, the arrivals and the state of its Source.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopDetailResponse"
+              example:
+                stop:
+                  id: "stasy:συνταγμα-metro"
+                  name: Σύνταγμα
+                  name_en: Syntagma
+                  lat: 37.97527
+                  lon: 23.73552
+                  modes: [metro]
+                  lines: ["stasy:M2", "stasy:M3"]
+                  source: stasy
+                lines:
+                  - id: "stasy:M2"
+                    mode: metro
+                    label: "M2"
+                    name: ΓΡΑΜΜΗ 2
+                    name_en: null
+                    color: "#d70f2b"
+                    text_color: "#ffffff"
+                    source: stasy
+                  - id: "stasy:M3"
+                    mode: metro
+                    label: "M3"
+                    name: ΓΡΑΜΜΗ 3
+                    name_en: null
+                    color: "#0d5ca8"
+                    text_color: "#ffffff"
+                    source: stasy
+                arrivals:
+                  - {line: "stasy:M2", stop: "stasy:συνταγμα-metro", headsign: Ελληνικό, at: 1793205900, scheduled_at: 1793205900, delay_s: null, source: timetable, run: "stasy:run:1012345:2026-10-29", vehicle: null, vehicle_label: null, platform: null, status: scheduled}
+                  - {line: "stasy:M3", stop: "stasy:συνταγμα-metro", headsign: Αεροδρόμιο, at: 1793206080, scheduled_at: 1793206080, delay_s: null, source: timetable, run: "stasy:run:1012401:2026-10-29", vehicle: null, vehicle_label: null, platform: null, status: scheduled}
+                updated_at: 1793205880
+                sources:
+                  - {id: stasy, state: ok, updated_at: 1793205880}
+        "404":
+          description: "`unknown_stop`, or a path that is not clean (`not_found`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: unknown_stop
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/vehicles:
+    get:
+      tags: [V2]
+      operationId: getV2Vehicles
+      summary: All buses and trolleys now
+      description: |
+        Every bus and trolley with a GPS fix from the last 5 minutes, sorted by `line`, then
+        `id`: one snapshot for everyone, rebuilt at most every 30 s. No rail vehicle is here:
+        metro, tram and suburban come from `/v2/vehicles/rail`, so bus-only map traffic never
+        opens the suburban stream. A client merges the two into one layer.
+
+        `Cache-Control: public, max-age=<seconds until next_update_at, 5..30>`, gzip, strong
+        `ETag`; `If-None-Match` gives `304`. A response with a Source neither `ok` nor `stale` is
+        `max-age=5` with no `ETag`.
+      responses:
+        "200":
+          description: The snapshot. `vehicles` may be `[]`.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2VehiclesResponse"
+              example:
+                updated_at: 1793205586
+                next_update_at: 1793205616
+                vehicles:
+                  - id: "oasa:52134"
+                    line: "oasa:040"
+                    run: "oasa:run:938_day_6_1310_2415:2026-10-29"
+                    mode: bus
+                    headsign: Σύνταγμα
+                    label: "52134"
+                    position: {kind: gps, lat: 37.94454, lon: 23.6655, bearing: 258, at: 1793205565}
+                    delay_s: 83
+                    next_stop: "oasa:400088"
+                    motion:
+                      path: [[37.94457, 23.66549], [37.94429, 23.66359]]
+                      path_beyond: [[37.94429, 23.66359], [37.94441, 23.66261]]
+                      path_stops: [574, 840]
+                      speed: 4.8
+                      path_speeds: [5.9, 6.2, 6.7]
+                      knots: null
+                    source: oasa
+                  - id: "oasa:88012"
+                    line: "oasa:11"
+                    run: null
+                    mode: trolley
+                    headsign: null
+                    label: "88012"
+                    position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: null, at: 1793205580}
+                    delay_s: null
+                    next_stop: null
+                    motion: null
+                    source: oasa
+                sources:
+                  - {id: oasa, state: ok, updated_at: 1793205586}
+        "304":
+          description: Not modified (the request had a matching `If-None-Match`).
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/vehicles/tiles/{z}/{x}/{y}:
+    get:
+      tags: [V2]
+      operationId: getV2VehicleTile
+      summary: Vehicles of one map tile
+      description: |
+        The `/v2/vehicles` snapshot cut into XYZ (Web Mercator, "slippy map") tiles, so a map
+        loads only what it shows. Same build, `updated_at` and `next_update_at` as
+        `/v2/vehicles`. Each vehicle is in the one tile of its position.
+
+        | `z` | tile size | content | for MapLibre zoom |
+        |---|---|---|---|
+        | `9` | ~62 km | `LiteVehicle` entries: the `motion` key is absent | < 13 |
+        | `13` | ~3.9 km | the same entries as `/v2/vehicles` | ≥ 13 |
+
+        Tiles exist for lat 37.5..38.5, lon 22.9..24.5: `z` 9 x 288..290, y 196..198; `z` 13
+        x 4617..4653, y 3145..3174. A tile in that box with no vehicle gives `200` with
+        `"vehicles":[]`. Tile of a point (`n = 2^z`): `x = floor((lon + 180) / 360 × n)`,
+        `y = floor((1 − asinh(tan(lat × π/180)) / π) / 2 × n)`.
+
+        Use plain URLs: any query string gives `400`, so every client shares the cached copy.
+        Headers as `/v2/vehicles`.
+      parameters:
+        - name: z
+          in: path
+          required: true
+          description: Zoom level, `9` or `13`.
+          schema:
+            type: integer
+            enum: [9, 13]
+          example: 13
+        - name: x
+          in: path
+          required: true
+          description: Tile column (`z` 9 288..290, `z` 13 4617..4653), plain decimal.
+          schema:
+            type: integer
+            minimum: 288
+            maximum: 4653
+          example: 4636
+        - name: y
+          in: path
+          required: true
+          description: Tile row (`z` 9 196..198, `z` 13 3145..3174), plain decimal.
+          schema:
+            type: integer
+            minimum: 196
+            maximum: 3174
+          example: 3160
+      responses:
+        "200":
+          description: Vehicles in the tile (Syntagma area in the example).
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2TileResponse"
+              examples:
+                z13:
+                  summary: z 13 (Vehicle entries)
+                  value:
+                    updated_at: 1793205586
+                    next_update_at: 1793205616
+                    vehicles:
+                      - id: "oasa:88012"
+                        line: "oasa:11"
+                        run: "oasa:run:4913_day_2_0900_1010:2026-10-29"
+                        mode: trolley
+                        headsign: Πλ. Βαθης
+                        label: "88012"
+                        position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: 12, at: 1793205488}
+                        delay_s: 1158
+                        next_stop: "oasa:400111"
+                        motion:
+                          path: [[37.9884, 23.73054], [37.98917, 23.73072]]
+                          path_beyond: [[37.98917, 23.73072], [37.99708, 23.73271]]
+                          path_stops: [87, 572, 984]
+                          speed: 3.6
+                          path_speeds: [3.5, 3.5, 3.7, 3.9]
+                          knots: null
+                        source: oasa
+                    sources:
+                      - {id: oasa, state: ok, updated_at: 1793205586}
+                z9:
+                  summary: z 9 (no motion)
+                  value:
+                    updated_at: 1793205586
+                    next_update_at: 1793205616
+                    vehicles:
+                      - id: "oasa:88012"
+                        line: "oasa:11"
+                        run: "oasa:run:4913_day_2_0900_1010:2026-10-29"
+                        mode: trolley
+                        headsign: Πλ. Βαθης
+                        label: "88012"
+                        position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: 12, at: 1793205488}
+                        delay_s: 1158
+                        next_stop: "oasa:400111"
+                        source: oasa
+                    sources:
+                      - {id: oasa, state: ok, updated_at: 1793205586}
+        "304":
+          description: Not modified (the request had a matching `If-None-Match`).
+        "400":
+          description: "The URL has a query string (even a bare `?`). `Cache-Control: no-store`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: query_not_allowed
+        "404":
+          description: |
+            Any other `z`, `x`/`y` outside the box, numbers not in plain decimal (`04636`,
+            `+4636`), or a trailing `/`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: not_found
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/vehicles/rail:
+    get:
+      tags: [V2]
+      operationId: getV2RailVehicles
+      summary: All metro, tram and suburban vehicles now
+      description: |
+        Every metro and tram train (placed from the STASY timetable at each build) and every
+        suburban train, in one body of about 100 vehicles. A client asks for it only while its
+        rail layer is on: that request is the demand that opens the railway.gov.gr stream. The
+        metro and tram `knots` keep them moving between snapshots.
+
+        `Cache-Control: public, max-age=5` while suburban trains are present, else `15`; no
+        `ETag` (cached 15 s or less). A response with a Source neither `ok` nor `stale` is
+        `max-age=5`.
+      responses:
+        "200":
+          description: The rail snapshot. `vehicles` may be `[]`.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2VehiclesResponse"
+              example:
+                updated_at: 1793205600
+                next_update_at: 1793205605
+                vehicles:
+                  - id: "stasy:run:1012345:2026-10-29"
+                    line: "stasy:M2"
+                    run: "stasy:run:1012345:2026-10-29"
+                    mode: metro
+                    headsign: Ελληνικό
+                    label: null
+                    position: {kind: estimate, lat: 37.9722, lon: 23.7325, bearing: 205, at: 1793205600}
+                    delay_s: null
+                    next_stop: "stasy:ακροπολη-metro"
+                    motion:
+                      path: [[37.9722, 23.7325], [37.96882, 23.72963]]
+                      path_beyond: [[37.96882, 23.72963], [37.96421, 23.72651]]
+                      path_stops: [450, 1010]
+                      speed: null
+                      path_speeds: null
+                      knots: [[0, 1793205600], [450, 1793205660], [450, 1793205690], [1010, 1793205760]]
+                    source: stasy
+                  - id: "proastiakos:1226"
+                    line: "proastiakos:PIRAIR"
+                    run: "proastiakos:run:1226:2026-10-29"
+                    mode: suburban
+                    headsign: Αεροδρόμιο
+                    label: "1226"
+                    position: {kind: gps, lat: 37.9918, lon: 23.7201, bearing: 90, at: 1793205595}
+                    delay_s: 120
+                    next_stop: "proastiakos:6928c3c150ab5bc72b39cee5"
+                    motion:
+                      path: [[37.9918, 23.7201], [37.9952, 23.7304]]
+                      path_beyond: [[37.9952, 23.7304], [38.0021, 23.7411]]
+                      path_stops: [800]
+                      speed: 22.5
+                      path_speeds: null
+                      knots: null
+                    source: proastiakos
+                sources:
+                  - {id: stasy, state: ok, updated_at: 1793205600}
+                  - {id: proastiakos, state: ok, updated_at: 1793205595}
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v2/runs/{id}:
+    get:
+      tags: [V2]
+      operationId: getV2Run
+      summary: One run with every stop and its time
+      description: |
+        Any Run of the service day, started or not: `vehicle` is `null` before it starts. It
+        replaces `/v1/rail/stasy/trips/{id}` and `/v1/rail/suburban/trains/{no}` for the line
+        card. `oasa`: the matched trip's stops, timetable plus the observed delay. Outside the
+        service day: `404 unknown_run`.
+
+        `Cache-Control: public, max-age=15`; no `ETag` (cached 15 s or less). A response with a
+        Source neither `ok` nor `stale` is `max-age=5`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: |
+            Run id, namespaced and percent-encoded:
+            `oasa:run:<trip_id>:<date>`, `stasy:run:<trip_id>:<date>`,
+            `proastiakos:run:<train no.>:<date>`, e.g.
+            `proastiakos:run:1226:2026-10-29`. Clients never store it.
+          schema: {type: string}
+          example: "proastiakos:run:1226:2026-10-29"
+      responses:
+        "200":
+          description: The run and the state of its Source. `run` may be `null` while warming up.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+              example:
+                run:
+                  id: "stasy:run:1012345:2026-10-29"
+                  line: "stasy:M2"
+                  headsign: Ελληνικό
+                  pattern: "stasy:M2-0"
+                  vehicle: "stasy:run:1012345:2026-10-29"
+                  vehicle_label: null
+                  status: running
+                  stops:
+                    - {stop: "stasy:ακροπολη-metro", scheduled_at: 1793205660, at: 1793205660, delay_s: null, source: timetable, platform: null, passed: false}
+                sources:
+                  - {id: stasy, state: ok, updated_at: 1793205600}
+        "404":
+          description: "`unknown_run`: no such Run, or not a Run of the service day."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: unknown_run
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
 
 components:
   parameters:
@@ -1076,7 +1716,7 @@ components:
       properties:
         error:
           type: string
-          enum: [unknown_line, not_found, warming_up, feed_unavailable, query_not_allowed, bad_date, internal, missing_stop, unknown_stop, unknown_trip, unknown_train, upstream_unavailable, busy]
+          enum: [unknown_line, not_found, warming_up, feed_unavailable, query_not_allowed, bad_date, internal, missing_stop, unknown_stop, unknown_trip, unknown_train, upstream_unavailable, busy, unknown_run]
 
     LatLon:
       type: array
@@ -1776,3 +2416,562 @@ components:
               delay_min: {type: [integer, "null"]}
               platform: {type: [string, "null"]}
               status: {type: string}
+
+    SourceState:
+      type: object
+      description: How fresh one Source is. Every list answer carries its Sources.
+      required: [id, state, updated_at]
+      properties:
+        id:
+          type: string
+          enum: [oasa, stasy, proastiakos]
+        state:
+          type: string
+          enum: [ok, warming_up, stale, indicative, down]
+          description: |
+            `ok`; `warming_up` while it loads; `stale` while its last good data is served;
+            `indicative` when its timetable is expired and the same weekday stands in; `down`
+            when it has no data at all.
+        updated_at:
+          type: [integer, "null"]
+          description: Last good data of that Source (fix, stream event, board, timetable load); `null` when it has none.
+
+    Line:
+      type: object
+      description: A line of any mode, one shape for every Source.
+      required: [id, mode, label, name, name_en, color, text_color, source]
+      properties:
+        id:
+          type: string
+          description: |
+            Namespaced id, percent-encoded in URLs: `oasa:040`, `stasy:M1`,
+            `proastiakos:PIRAIR`. Opaque: store and compare it, never parse it.
+        mode:
+          type: string
+          enum: [bus, trolley, metro, tram, suburban]
+        label:
+          type: [string, "null"]
+          description: |
+            Short public code for the badge (`040`, `M1`). `null` when the Source has none: the
+            badge is then the mode icon on `color` with `name`.
+        name:
+          type: string
+          description: Always present, in Greek.
+        name_en:
+          type: [string, "null"]
+          description: "`null` when the Source has no English name."
+        color:
+          type: string
+          pattern: "^#[0-9a-fA-F]{6}$"
+          description: Background of the badge; the adapter's default per mode when the Source has none.
+        text_color:
+          type: string
+          pattern: "^#[0-9a-fA-F]{6}$"
+          description: Text on `color`.
+        source:
+          type: string
+          enum: [oasa, stasy, proastiakos]
+
+    Stop:
+      type: object
+      description: A stop or station; one per name and mode for STASY platforms.
+      required: [id, name, name_en, lat, lon, modes, lines, source]
+      properties:
+        id:
+          type: string
+          description: |
+            Namespaced id, percent-encoded in URLs: `oasa:400012`, `stasy:συνταγμα-metro`,
+            `proastiakos:<station id>`.
+        name:
+          type: string
+          description: Always present, in Greek.
+        name_en:
+          type: [string, "null"]
+          description: "`null` when the Source has no English name."
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+          description: The mean of the platforms for a merged station, 5 decimals.
+        lon:
+          type: number
+          minimum: -180
+          maximum: 180
+        modes:
+          type: array
+          description: The modes of `lines`, sorted.
+          items:
+            type: string
+            enum: [bus, trolley, metro, tram, suburban]
+        lines:
+          type: array
+          description: Line ids that call here, by mode then label/name.
+          items: {type: string}
+        source:
+          type: string
+          enum: [oasa, stasy, proastiakos]
+
+    StopIndexEntry:
+      type: array
+      description: |
+        `[id, name, lat, lon, modes, lines]`: the compact row of `/v2/stops`.
+      prefixItems:
+        - type: string
+          description: Stop id.
+        - type: string
+          description: Greek name.
+        - type: number
+          minimum: -90
+          maximum: 90
+        - type: number
+          minimum: -180
+          maximum: 180
+        - type: array
+          items:
+            type: string
+            enum: [bus, trolley, metro, tram, suburban]
+        - type: array
+          items: {type: string}
+      minItems: 6
+      maxItems: 6
+
+    Pattern:
+      type: object
+      description: One direction of a Line and the path it follows.
+      required: [id, headsign, direction, stops, shape]
+      properties:
+        id:
+          type: string
+          description: |
+            Pattern id (`oasa:2045`, `stasy:M2-0`). Not stored by clients: a new timetable may
+            renumber it.
+        headsign:
+          type: string
+          description: The destination a passenger reads.
+        direction:
+          type: integer
+          enum: [0, 1]
+        stops:
+          type: array
+          description: Stop ids in order.
+          items: {type: string}
+        shape:
+          type: array
+          description: The path through the stops.
+          items:
+            $ref: "#/components/schemas/LatLon"
+
+    Position:
+      type: object
+      description: Where a Vehicle is, and how that was known.
+      required: [kind, lat, lon, bearing, at]
+      properties:
+        kind:
+          type: string
+          enum: [gps, estimate]
+          description: "`gps` from a fix; `estimate` from the timetable (metro, tram)."
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        lon:
+          type: number
+          minimum: -180
+          maximum: 180
+        bearing:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 360
+          description: Degrees clockwise from north. `null` when unknown.
+        at:
+          type: integer
+          description: Time of the fix, or for an estimate the build time of the snapshot (Unix seconds).
+
+    V2Motion:
+      type: object
+      description: |
+        How a client moves the marker between snapshots. `null` on the Vehicle when there is
+        nothing to move along.
+      required: [path, path_beyond, path_stops, speed, path_speeds, knots]
+      properties:
+        path:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/LatLon"
+          description: |
+            The route ahead from the vehicle's point: to its next stop when matched, else
+            `max(speed × 150 s, 300 m)` ahead, at most 1.5 km. An estimate runs to the next stop
+            whatever the distance.
+        path_beyond:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/LatLon"
+          description: |
+            The route on from the end of `path` to the third stop ahead (at most 1.5 km from
+            the vehicle; no cap for an estimate). Its first point is the last point of `path`.
+        path_stops:
+          type: [array, "null"]
+          items:
+            type: integer
+            minimum: 0
+          description: The stops on `path` then `path_beyond`, as whole metres along them, ascending.
+        speed:
+          type: [number, "null"]
+          minimum: 0
+          description: |
+            Smoothed speed along the route in m/s, one decimal. `0` = standing; `null` when
+            unknown. No upper cap: a suburban train is faster than a bus.
+        path_speeds:
+          type: [array, "null"]
+          maxItems: 8
+          items:
+            type: [number, "null"]
+            minimum: 0.1
+          description: Typical speed ahead in m/s for consecutive 200 m steps. `null` when unknown.
+        knots:
+          type: [array, "null"]
+          description: |
+            Estimates only (`null` for GPS vehicles): `[metres along path + path_beyond, unix
+            time]` pairs. The first knot is `[0, position.at]`; each stop ahead gives an arrival
+            and a departure knot. Metres never decrease, times strictly increase.
+          items:
+            type: array
+            prefixItems:
+              - type: integer
+                minimum: 0
+              - type: integer
+            minItems: 2
+            maxItems: 2
+
+    Vehicle:
+      type: object
+      description: A bus, trolley, metro or tram train, or a suburban train, in one shape.
+      required: [id, line, run, mode, headsign, label, position, delay_s, next_stop, motion, source]
+      properties:
+        id:
+          type: string
+          description: |
+            Namespaced id: `oasa:52134` (fleet no.), `proastiakos:1226` (train no.), and for
+            metro and tram the Run itself (`stasy:run:<trip_id>:<date>`). Never stored.
+        line:
+          type: string
+          description: Line id.
+        run:
+          type: [string, "null"]
+          description: Run id; `null` when the vehicle is not matched to a Run.
+        mode:
+          type: string
+          enum: [bus, trolley, metro, tram, suburban]
+        headsign:
+          type: [string, "null"]
+          description: Destination; `null` when unknown (an unmatched bus that cannot be placed on a shape).
+        label:
+          type: [string, "null"]
+          description: |
+            What the passenger reads on the vehicle: fleet no. (`52134`), train no. (`1226`);
+            `null` for metro and tram.
+        position:
+          $ref: "#/components/schemas/Position"
+        delay_s:
+          type: [integer, "null"]
+          description: Observed delay in seconds (negative = early); `null` without a live signal.
+        next_stop:
+          type: [string, "null"]
+          description: Stop id; `null` when unmatched.
+        motion:
+          description: "`null` when there is nothing to move along (standing with no Run, no geometry)."
+          anyOf:
+            - $ref: "#/components/schemas/V2Motion"
+            - type: "null"
+        source:
+          type: string
+          enum: [oasa, stasy, proastiakos]
+
+    LiteVehicle:
+      type: object
+      description: |
+        A Vehicle without `motion`: the key is absent, not `null` (tile zoom 9).
+      required: [id, line, run, mode, headsign, label, position, delay_s, next_stop, source]
+      properties:
+        id: {type: string, description: "As `Vehicle`: `oasa:52134`, `proastiakos:1226`."}
+        line: {type: string, description: Line id.}
+        run: {type: [string, "null"], description: Run id; `null` when not matched.}
+        mode:
+          type: string
+          enum: [bus, trolley, metro, tram, suburban]
+        headsign: {type: [string, "null"]}
+        label: {type: [string, "null"], description: Fleet or train number; `null` when unknown.}
+        position:
+          $ref: "#/components/schemas/Position"
+        delay_s: {type: [integer, "null"], description: Observed delay in seconds; `null` without a live signal.}
+        next_stop: {type: [string, "null"], description: Stop id; `null` when unmatched.}
+        source:
+          type: string
+          enum: [oasa, stasy, proastiakos]
+
+    Arrival:
+      type: object
+      description: A vehicle or a timetable trip on its way to a Stop.
+      required: [line, stop, headsign, at, scheduled_at, delay_s, source, run, vehicle, vehicle_label, platform, status]
+      properties:
+        line:
+          type: string
+          description: Line id.
+        stop:
+          type: string
+          description: Stop id.
+        headsign:
+          type: string
+        at:
+          type: integer
+          description: |
+            Expected time in Unix seconds (the leaving time for rail). Clamped to now when the
+            vehicle is due, so never compute it from `scheduled_at` and `delay_s`.
+        scheduled_at:
+          type: [integer, "null"]
+          description: The timetable time; `null` when the Source has no timetable for it.
+        delay_s:
+          type: [integer, "null"]
+          description: Observed delay in seconds (negative = early); `null` without a live signal.
+        source:
+          type: string
+          enum: [live, timetable]
+          description: "`live` only when GPS or a reported delay set `at`."
+        run:
+          type: [string, "null"]
+          description: Run id, so the card can open the Run before it starts.
+        vehicle:
+          type: [string, "null"]
+          description: |
+            Vehicle id; `null` when no vehicle is on the Run yet. Metro and tram: set only while
+            the Run is under way.
+        vehicle_label:
+          type: [string, "null"]
+          description: Fleet or train number; `null` for metro and tram.
+        platform:
+          type: [string, "null"]
+          description: "`null` unless the Source gives one (railway.gov.gr today)."
+        status:
+          type: string
+          enum: [scheduled, running, delayed]
+          description: "`delayed` from 5 minutes of delay; `running` below that; `scheduled` without a live signal."
+
+    RunStop:
+      type: object
+      description: One Stop of a Run and its time.
+      required: [stop, scheduled_at, at, delay_s, source, platform, passed]
+      properties:
+        stop:
+          type: string
+          description: Stop id.
+        scheduled_at:
+          type: [integer, "null"]
+          description: The timetable time; `null` when the Source has none for it.
+        at:
+          type: integer
+          description: Expected time in Unix seconds (never before now ahead of the vehicle).
+        delay_s:
+          type: [integer, "null"]
+          description: Observed delay in seconds; `null` without a live signal.
+        source:
+          type: string
+          enum: [live, timetable]
+        platform:
+          type: [string, "null"]
+        passed:
+          type: boolean
+          description: The stop is behind the vehicle (or its timetable time is past for rail).
+
+    Run:
+      type: object
+      description: One vehicle's or trip's journey of the day, with every stop.
+      required: [id, line, headsign, pattern, vehicle, vehicle_label, status, stops]
+      properties:
+        id:
+          type: string
+          description: "`<namespace>:run:<native>:<YYYY-MM-DD>`; lives only for its service day."
+        line:
+          type: string
+          description: Line id.
+        headsign:
+          type: string
+        pattern:
+          type: [string, "null"]
+          description: Pattern id; `null` when the Run's stop sequence is not a Pattern.
+        vehicle:
+          type: [string, "null"]
+          description: Vehicle id; `null` before the Run starts or when no vehicle is known.
+        vehicle_label:
+          type: [string, "null"]
+          description: Fleet or train number; `null` when unknown.
+        status:
+          type: string
+          enum: [scheduled, running, delayed]
+        stops:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunStop"
+
+    LinesResponse:
+      type: object
+      required: [lines, sources]
+      properties:
+        lines:
+          type: array
+          description: Every Line of every Source, sorted by `id`.
+          items:
+            $ref: "#/components/schemas/Line"
+        sources:
+          type: array
+          description: State of every Source.
+          items:
+            $ref: "#/components/schemas/SourceState"
+
+    LineDetailResponse:
+      type: object
+      required: [line, patterns, stops, sources]
+      properties:
+        line:
+          description: "`null` while its Source has not loaded yet (never `404` then)."
+          anyOf:
+            - $ref: "#/components/schemas/Line"
+            - type: "null"
+        patterns:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pattern"
+        stops:
+          type: object
+          description: By Stop id.
+          additionalProperties:
+            $ref: "#/components/schemas/Stop"
+        sources:
+          type: array
+          description: State of that one Source.
+          items:
+            $ref: "#/components/schemas/SourceState"
+
+    LineVehiclesResponse:
+      type: object
+      required: [line, updated_at, next_update_at, vehicles, sources]
+      properties:
+        line:
+          type: string
+          description: Canonical Line id.
+        updated_at:
+          type: integer
+          description: Time of the poll or build that gave this data.
+        next_update_at:
+          type: integer
+          description: Earliest time new data can exist. Refetch then, not earlier.
+        vehicles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Vehicle"
+        sources:
+          type: array
+          description: State of that one Source.
+          items:
+            $ref: "#/components/schemas/SourceState"
+
+    StopsResponse:
+      type: object
+      required: [stops, sources]
+      properties:
+        stops:
+          type: array
+          description: Every Stop of every Source, sorted by id.
+          items:
+            $ref: "#/components/schemas/StopIndexEntry"
+        sources:
+          type: array
+          description: State of every Source.
+          items:
+            $ref: "#/components/schemas/SourceState"
+
+    StopDetailResponse:
+      type: object
+      required: [stop, lines, arrivals, updated_at, sources]
+      properties:
+        stop:
+          description: "`null` while its Source has not loaded yet (never `404` then)."
+          anyOf:
+            - $ref: "#/components/schemas/Stop"
+            - type: "null"
+        lines:
+          type: array
+          description: The Lines that call here, by mode then label/name.
+          items:
+            $ref: "#/components/schemas/Line"
+        arrivals:
+          type: array
+          description: Soonest first; at most 2 h ahead, 4 per Line and headsign, 30 in all.
+          items:
+            $ref: "#/components/schemas/Arrival"
+        updated_at:
+          type: integer
+          description: Build time of the answer.
+        sources:
+          type: array
+          description: State of that one Source.
+          items:
+            $ref: "#/components/schemas/SourceState"
+
+    V2VehiclesResponse:
+      type: object
+      description: The body of `/v2/vehicles` and `/v2/vehicles/rail`.
+      required: [updated_at, next_update_at, vehicles, sources]
+      properties:
+        updated_at:
+          type: integer
+          description: Build time of the snapshot.
+        next_update_at:
+          type: integer
+          description: Earliest next build.
+        vehicles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Vehicle"
+        sources:
+          type: array
+          description: State of the Sources the snapshot draws on.
+          items:
+            $ref: "#/components/schemas/SourceState"
+
+    V2TileResponse:
+      type: object
+      required: [updated_at, next_update_at, vehicles, sources]
+      properties:
+        updated_at:
+          type: integer
+          description: Build time of the snapshot (the same as `/v2/vehicles`).
+        next_update_at:
+          type: integer
+          description: Earliest next build.
+        vehicles:
+          type: array
+          description: "`Vehicle` entries in `z` 13 tiles, `LiteVehicle` entries in `z` 9 tiles."
+          items:
+            anyOf:
+              - $ref: "#/components/schemas/Vehicle"
+              - $ref: "#/components/schemas/LiteVehicle"
+        sources:
+          type: array
+          description: State of the Sources the snapshot draws on.
+          items:
+            $ref: "#/components/schemas/SourceState"
+
+    RunResponse:
+      type: object
+      required: [run, sources]
+      properties:
+        run:
+          description: "`null` while its Source has not loaded yet (never `404` then)."
+          anyOf:
+            - $ref: "#/components/schemas/Run"
+            - type: "null"
+        sources:
+          type: array
+          description: State of that one Source.
+          items:
+            $ref: "#/components/schemas/SourceState"
