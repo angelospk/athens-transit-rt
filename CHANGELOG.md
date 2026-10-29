@@ -11,8 +11,9 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ### Live API
 - `/v2` Vehicles carry `direction` (contract rev 12): the direction of the Pattern they run, so
   the web can draw each rail line as two tracks and put each train on its own. Metro and tram
-  always have it; buses when matched or placed on a trip; suburban trains once placed on their
-  corridor. Metro Pattern directions now follow branches: on M3 the trips to the airport
+  always have it; buses when matched or placed on a trip; suburban trains from their Run, else
+  from where they are placed on their corridor (a train standing at a station now also moves
+  along its Run's direction). Metro Pattern directions now follow branches: on M3 the trips to the airport
   (ΕΛ. ΒΕΝΙΖΕΛΟΣ) are direction 1 like those to Δ. ΠΛΑΚΕΝΤΙΑΣ; before, some got 0 in both
   directions (#31).
 - `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule

@@ -272,6 +272,27 @@ func (s *proastiakosAdapter) Stop(id string) (*model.Stop, error) {
 	return &m, nil
 }
 
+// schedDir is the direction of a board train on corridor c, by the corridor order of its first and
+// last timed stops; -1 when one of them is not on the corridor.
+func (s *proastiakosAdapter) schedDir(x *subIndex, c int, sc *rail.SuburbanSchedule) int {
+	pos := []int{}
+	for j := range sc.Stops {
+		st := &sc.Stops[j]
+		k, ok := s.stopOf(x, st.StationID)
+		if !ok || st.Dep.IsZero() && st.Arr.IsZero() {
+			continue
+		}
+		pos = append(pos, indexOf(x.corrs[c].Stations, strings.TrimPrefix(x.stops[k].ID, subPrefix)))
+	}
+	switch {
+	case len(pos) < 2 || pos[0] < 0 || pos[len(pos)-1] < 0:
+		return -1
+	case pos[0] > pos[len(pos)-1]:
+		return 1
+	}
+	return 0
+}
+
 // lineOfSchedule is the corridor of a board run: its own corridor field, or for a run without
 // one the corridor holding most of its stations (at least two). -1 for other corridors.
 func (s *proastiakosAdapter) lineOfSchedule(x *subIndex, sc *rail.SuburbanSchedule) int {
@@ -419,11 +440,14 @@ func (s *proastiakosAdapter) vehicles(now time.Time, only int) []model.Vehicle {
 	if live == nil {
 		return out
 	}
-	runs := map[string]bool{}
+	runs := map[string][2]int{} // train: its board corridor and direction (-1 unknown)
 	if list, _, ok := s.board.CachedBoard(now); ok {
 		for i := range list {
-			if list[i].Status != "cancelled" && s.lineOfSchedule(x, &list[i]) >= 0 {
-				runs[list[i].Train] = true
+			if _, seen := runs[list[i].Train]; seen || list[i].Status == "cancelled" {
+				continue // the first entry, as Run
+			}
+			if c := s.lineOfSchedule(x, &list[i]); c >= 0 {
+				runs[list[i].Train] = [2]int{c, s.schedDir(x, c, &list[i])}
 			}
 		}
 	}
@@ -448,10 +472,14 @@ func (s *proastiakosAdapter) vehicles(now time.Time, only int) []model.Vehicle {
 		if tr.DelayMin != nil {
 			v.DelayS = model.Ptr(*tr.DelayMin * 60)
 		}
-		if runs[tr.Train] {
+		runDir := -1
+		if r, ok := runs[tr.Train]; ok {
 			v.Run = model.Ptr(subRunID(tr.Train, now))
+			if r[0] == c {
+				runDir = r[1]
+			}
 		}
-		s.place(x, c, tr, &v)
+		s.place(x, c, tr, &v, runDir)
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -498,10 +526,11 @@ func nearest(line *geo.Polyline, xy [2]float64, heading float64, hasHeading bool
 	return best, true
 }
 
-// place snaps a train onto its corridor in the direction where its next station lies ahead (or,
-// with no next station, the direction of its course) and sets next_stop and motion: path to the
-// next station, path_beyond up to the third ahead, at the GPS speed, as for buses (pathAhead).
-func (s *proastiakosAdapter) place(x *subIndex, c int, tr *rail.SuburbanTrain, v *model.Vehicle) {
+// place snaps a train onto its corridor in the direction of its Run (runDir, -1 when unknown), else
+// where its next station lies ahead (or, with no next station, the direction of its course) and
+// sets direction, next_stop and motion: path to the next station, path_beyond up to the third
+// ahead, at the GPS speed, as for buses (pathAhead).
+func (s *proastiakosAdapter) place(x *subIndex, c int, tr *rail.SuburbanTrain, v *model.Vehicle, runDir int) {
 	xy := geo.XY(tr.Lat, tr.Lon)
 	heading, hasHeading := 0.0, tr.Course != nil
 	if hasHeading {
@@ -515,8 +544,9 @@ func (s *proastiakosAdapter) place(x *subIndex, c int, tr *rail.SuburbanTrain, v
 	if !ok {
 		return
 	}
-	var dir int
+	dir := runDir
 	switch {
+	case runDir >= 0:
 	case next >= 0:
 		if x.tracks[c][0].Along[next] < c0.Along-1 {
 			dir = 1
@@ -594,7 +624,6 @@ func (s *proastiakosAdapter) Run(id string, now time.Time) (*model.Run, error) {
 	tr := liveTrains(s.trains.Peek(), now)[no]
 	fresh := now.Sub(at) <= subBoardFresh
 	run := &model.Run{ID: id, Line: x.lines[c].ID, Headsign: sc.Destination, Stops: []model.RunStop{}}
-	pos := []int{}
 	for j := range sc.Stops {
 		st := &sc.Stops[j]
 		k, ok := s.stopOf(x, st.StationID)
@@ -620,13 +649,8 @@ func (s *proastiakosAdapter) Run(id string, now time.Time) (*model.Run, error) {
 		}
 		rs.At, rs.Passed = t.Unix(), !t.After(now)
 		run.Stops = append(run.Stops, rs)
-		pos = append(pos, indexOf(x.corrs[c].Stations, strings.TrimPrefix(x.stops[k].ID, subPrefix)))
 	}
-	if len(pos) >= 2 && pos[0] >= 0 && pos[len(pos)-1] >= 0 {
-		dir := 0
-		if pos[0] > pos[len(pos)-1] {
-			dir = 1
-		}
+	if dir := s.schedDir(x, c, sc); dir >= 0 {
 		run.Pattern = model.Ptr(x.patterns[c][dir].ID)
 	}
 	delay, isLive := subDelay(sc, nil, tr, fresh)

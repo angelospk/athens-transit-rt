@@ -387,3 +387,29 @@ func TestV2ProastiakosState(t *testing.T) {
 		t.Fatalf("idle %s", asJSON(s))
 	}
 }
+
+// A train standing at its next station gives no direction by position; its Run (2000: Ρουφ →
+// Πειραιάς on the board) does: direction 1, as the Run's Pattern.
+func TestV2ProastiakosDirectionFollowsTheRun(t *testing.T) {
+	a, _, ft := proastiakosApp(t, wed1000)
+	var st struct{ Stop model.Stop }
+	v2get(t, a, "/v2/stops/"+esc(rentis), &st)
+	for i := range ft.snap.Trains {
+		if tr := &ft.snap.Trains[i]; tr.Train == "2000" {
+			tr.Lat, tr.Lon, tr.NextID, tr.Course = st.Stop.Lat, st.Stop.Lon, stRen, nil
+		}
+	}
+	vs, _ := a.adapter("proastiakos:x").(*proastiakosAdapter).Vehicles(wed1000)
+	for _, v := range vs {
+		if v.ID != "proastiakos:2000" {
+			continue
+		}
+		var r struct{ Run model.Run }
+		v2get(t, a, "/v2/runs/"+esc(*v.Run), &r)
+		if v.Direction == nil || *v.Direction != 1 || r.Run.Pattern == nil || *r.Run.Pattern != "proastiakos:KIATO-1" {
+			t.Fatalf("2000 %s run %s", asJSON(v), asJSON(r.Run))
+		}
+		return
+	}
+	t.Fatalf("no 2000 in %s", asJSON(vs))
+}

@@ -510,7 +510,8 @@ and compare them; they never parse them.
 - `direction` (rev 12): the `direction` (0/1) of the Pattern the Vehicle runs, so a client can
   put it on one of the Line's two tracks without a `/v2/runs` call. Metro and tram: always set.
   Bus and trolley: the matched trip's direction, else the direction of the trip the bus was
-  placed on, else `null`. Suburban: set once the train is placed on its corridor, else `null`.
+  placed on, else `null`. Suburban: the direction of its Run when it has one, else of where it
+  is placed on its corridor, else `null`.
   Present in tiles at zoom 9 too. Older responses lack the key: treat a missing key as `null`.
 - `motion`: how the client moves the marker between snapshots. `null` when there is nothing to
   move along (standing with no Run, no geometry).

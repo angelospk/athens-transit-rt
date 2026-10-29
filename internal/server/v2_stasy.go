@@ -272,7 +272,7 @@ func stasyDirections(ps []stasyPattern) {
 		for _, s := range p.Stops {
 			k := indexOf(q.Stops, s)
 			switch {
-			case k < 0:
+			case k < 0 || k == first: // a stop p passes twice is one stop
 			case first < 0:
 				first = k
 			case k > first:

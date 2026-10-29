@@ -2727,8 +2727,9 @@ components:
             Rev 12: the `direction` of the Pattern the vehicle runs, so a client can put it on
             one of a Line's two tracks without a `/v2/runs` call. Metro and tram: always set.
             Bus and trolley: the matched trip's direction, else the direction of the trip the
-            bus was placed on, else `null`. Suburban: set once the train is placed on its
-            corridor. Older responses lack the key: treat a missing key as `null`.
+            bus was placed on, else `null`. Suburban: the direction of its Run when it has one,
+            else of where it is placed on its corridor, else `null`. Older responses lack the
+            key: treat a missing key as `null`.
         motion:
           description: "`null` when there is nothing to move along (standing with no Run, no geometry)."
           anyOf:

@@ -299,7 +299,8 @@ func TestSTASYDirectionsM3Branches(t *testing.T) {
 		{[]string{"ΑΕΡ", "ΚΟΡ"}, 0}, // a short airport shuttle towards the city
 		{[]string{"ΔΠ", "ΧΑΛ", "ΕΘΝ"}, 0}, // Δ. ΠΛΑΚΕΝΤΙΑΣ → ΕΘΝΙΚΗ ΑΜΥΝΑ
 		{[]string{"ΑΙΓ", "ΜΟΝ", "ΣΥΝ", "ΕΘΝ", "ΧΑΛ", "ΔΠ"}, 1},
-		{[]string{"Χ", "Ψ"}, 0}, // shares no stop: the default
+		{[]string{"Χ", "Ψ"}, 0},                 // shares no stop: the default
+		{[]string{"ΣΥΝ", "Ω", "ΣΥΝ", "ΜΟΝ"}, 0}, // passes ΣΥΝ twice: still towards ΔΗΜ. ΘΕΑΤΡΟ
 	}
 	ps := make([]stasyPattern, len(cases))
 	for i, c := range cases {
