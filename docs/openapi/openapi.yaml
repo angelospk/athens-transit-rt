@@ -461,9 +461,10 @@ paths:
       summary: Days with network statistics
       description: |
         Each finished day (Europe/Athens, 00:00-24:00) is summed about 4-5 h after midnight. The
-        same files, every day kept, are on the `stats` branch of the repository; prefer them:
+        same files are on the `stats` branch of the repository; prefer them:
         `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/index.json`.
-        `Cache-Control: public, max-age=600`.
+        Only days from 2026-10-30 are listed: the seen/missed trip counts of earlier days are
+        not reliable. `Cache-Control: public, max-age=600`.
       responses:
         "200":
           description: The list of days.
@@ -476,8 +477,8 @@ paths:
                 $ref: "#/components/schemas/StatsIndex"
               example:
                 version: 1
-                latest: "2026-10-23"
-                days: ["2026-10-21", "2026-10-22", "2026-10-23"]
+                latest: "2026-11-03"
+                days: ["2026-11-01", "2026-11-02", "2026-11-03"]
         "404":
           description: The server runs without `--history`, or no day is finished yet.
           content:
@@ -508,7 +509,9 @@ paths:
         - name: date
           in: path
           required: true
-          description: Local day (Europe/Athens), `YYYY-MM-DD`. One from `/v1/stats`.
+          description: |
+            Local day (Europe/Athens), `YYYY-MM-DD`. One from `/v1/stats`; a day before
+            2026-10-30 answers `404`.
           schema:
             type: string
             format: date

@@ -361,9 +361,12 @@ way, else the next one, else the last.
 ## Daily statistics
 
 A server that runs with `--history` sums each finished day (Europe/Athens, 00:00-24:00) about
-4-5 h after midnight (it waits for the trips that run past midnight). `GET /v1/stats` returns `{"version":1,"latest":"2026-10-06","days":[...]}`;
+4-5 h after midnight (it waits for the trips that run past midnight). `GET /v1/stats` returns `{"version":1,"latest":"2026-11-03","days":[...]}`;
 `GET /v1/stats/days/{date}` returns one day (`400` for a malformed date, `404` when missing).
-The same files, every day kept, are on the `stats` branch of this repository; prefer them:
+Only days from 2026-10-30 are listed and served (`404` before it): the seen/missed trip counts
+of earlier days are not reliable (no daily OASA schedule, seen-flag bugs).
+The same files are on the `stats` branch of this repository; prefer them (its `v1/days` keeps
+the earlier files, but `index.json` and `latest.json` skip them):
 `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/latest.json`,
 `.../stats/v1/index.json`, `.../stats/v1/days/{date}.json`.
 

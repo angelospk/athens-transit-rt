@@ -256,31 +256,31 @@ func TestInputsWaitsForOpenFiles(t *testing.T) {
 
 func TestRunWritesFinishedDaysOnce(t *testing.T) {
 	hist, out := t.TempDir(), t.TempDir()
-	t0 := local(2026, 10, 6, 12, 0, 0)
+	t0 := local(2026, 11, 6, 12, 0, 0)
 	writeHour(t, hist, hourName(t0), ".csv.gz", fix{t0, "1", "a", 37.98, 23.72})
-	t1 := local(2026, 10, 7, 12, 0, 0)
+	t1 := local(2026, 11, 7, 12, 0, 0)
 	writeHour(t, hist, hourName(t1), ".csv.gz", fix{t1, "1", "a", 37.98, 23.72})
 	// A file early on the 6th makes the 5th a candidate, but it has no fix of the 5th.
-	t5 := local(2026, 10, 6, 0, 10, 0)
+	t5 := local(2026, 11, 6, 0, 10, 0)
 	writeHour(t, hist, hourName(t5), ".csv.gz", fix{t5, "1", "b", 37.98, 23.72})
 
 	// 03:30 on the 7th: the 6th ended less than Settle ago.
-	if got, err := Run(hist, out, athens, local(2026, 10, 7, 3, 30, 0), false, nil); err != nil || len(got) != 0 {
+	if got, err := Run(hist, out, athens, local(2026, 11, 7, 3, 30, 0), false, nil); err != nil || len(got) != 0 {
 		t.Fatalf("early run wrote %v, err %v", got, err)
 	}
-	now := local(2026, 10, 7, 4, 30, 0)
+	now := local(2026, 11, 7, 4, 30, 0)
 	got, err := Run(hist, out, athens, now, false, nil)
-	if err != nil || strings.Join(got, ",") != "2026-10-06" {
+	if err != nil || strings.Join(got, ",") != "2026-11-06" {
 		t.Fatalf("run wrote %v, err %v", got, err)
 	}
 	var idx Index
 	readJSON(t, filepath.Join(out, "index.json"), &idx)
-	if strings.Join(idx.Days, ",") != "2026-10-06" || idx.Latest != "2026-10-06" {
+	if strings.Join(idx.Days, ",") != "2026-11-06" || idx.Latest != "2026-11-06" {
 		t.Fatalf("index = %+v", idx)
 	}
 	var d Day
-	readJSON(t, filepath.Join(out, "days", "2026-10-06.json"), &d)
-	if d.Version != 1 || d.Date != "2026-10-06" || d.TZ != "Europe/Athens" || d.GeneratedAt != now.Unix() {
+	readJSON(t, filepath.Join(out, "days", "2026-11-06.json"), &d)
+	if d.Version != 1 || d.Date != "2026-11-06" || d.TZ != "Europe/Athens" || d.GeneratedAt != now.Unix() {
 		t.Fatalf("day = %+v", d)
 	}
 	// A later run does not rewrite it, unless forced.
@@ -295,16 +295,34 @@ func TestRunWritesFinishedDaysOnce(t *testing.T) {
 func TestRunRebuildsIndexFromFiles(t *testing.T) {
 	hist, out := t.TempDir(), t.TempDir()
 	os.MkdirAll(filepath.Join(out, "days"), 0o755)
-	for _, d := range []string{"2026-10-04", "2026-10-02"} {
+	for _, d := range []string{"2026-11-04", "2026-11-02", "2026-10-30", "2026-10-29"} {
 		os.WriteFile(filepath.Join(out, "days", d+".json"), []byte("{}"), 0o644)
 	}
 	os.WriteFile(filepath.Join(out, "days", "junk.json.tmp"), nil, 0o644)
 	if _, err := Run(hist, out, athens, time.Now(), false, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Days before FirstDay keep their file but are not listed.
 	var idx Index
 	readJSON(t, filepath.Join(out, "index.json"), &idx)
-	if strings.Join(idx.Days, ",") != "2026-10-02,2026-10-04" || idx.Latest != "2026-10-04" {
+	if strings.Join(idx.Days, ",") != "2026-10-30,2026-11-02,2026-11-04" || idx.Latest != "2026-11-04" {
+		t.Fatalf("index = %+v", idx)
+	}
+	if !exists(filepath.Join(out, "days", "2026-10-29.json")) {
+		t.Fatal("an unlisted day file was removed")
+	}
+}
+
+func TestIndexWithOnlyEarlyDaysIsEmpty(t *testing.T) {
+	hist, out := t.TempDir(), t.TempDir()
+	os.MkdirAll(filepath.Join(out, "days"), 0o755)
+	os.WriteFile(filepath.Join(out, "days", "2026-10-29.json"), []byte("{}"), 0o644)
+	if _, err := Run(hist, out, athens, time.Now(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	var idx Index
+	readJSON(t, filepath.Join(out, "index.json"), &idx)
+	if FirstDay != "2026-10-30" || idx.Days == nil || len(idx.Days) != 0 || idx.Latest != "" {
 		t.Fatalf("index = %+v", idx)
 	}
 }

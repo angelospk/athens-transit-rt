@@ -36,6 +36,11 @@ const (
 	hourLayout = "2006-01-02T15" // history file names, UTC
 )
 
+// FirstDay is the first day listed and served: the seen/missed trip counts of earlier days are
+// not reliable (no daily OASA schedule, seen-flag bugs; Harold, 2026-10-29). Keep it equal to
+// FIRST_DAY in .github/workflows/stats.yml.
+const FirstDay = "2026-10-30"
+
 type Hour struct {
 	H        int   `json:"h"` // local hour; the repeated hour of a DST change is merged
 	Fixes    int   `json:"fixes"`
@@ -393,7 +398,7 @@ func writeIndex(out string) error {
 	idx := Index{Version: Version, Days: []string{}}
 	for _, e := range entries {
 		date, ok := strings.CutSuffix(e.Name(), ".json")
-		if _, _, err := Bounds(date, time.UTC); ok && err == nil {
+		if _, _, err := Bounds(date, time.UTC); ok && err == nil && date >= FirstDay {
 			idx.Days = append(idx.Days, date)
 		}
 	}

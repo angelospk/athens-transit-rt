@@ -21,6 +21,11 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   6 req/s by default (max 6, was 4 and 5). With that budget, lines nobody is looking at should
   be polled about every 150 s instead of ~300 s. A 403 or 429 from OASA stops all OASA
   requests for 10 minutes, logs `OASA refused requests`, and restarts at the slowest pace.
+- Daily statistics start at 2026-10-30: `/v1/stats` lists no earlier day and
+  `/v1/stats/days/{date}` answers `404` for one, because their seen/missed trip counts are not
+  reliable (no daily OASA schedule, seen-flag bugs). The `stats` workflow writes `index.json`
+  and `latest.json` of the `stats` branch the same way; the earlier day files stay there
+  ([#32](https://github.com/angelospk/athens-transit-rt/issues/32)).
 
 ## v0.2.0 (2026-10-30)
 
