@@ -305,10 +305,17 @@ func (o *oasaAdapter) predicted(w *world, i int32, stopID string, now time.Time,
 	return out
 }
 
-// routeHeadsign is the headsign of the line's shape whose id is the OASA route code (most are),
-// "" for none. It does not ask the RouteMapper, which may call OASA for a route's stops.
+// routeHeadsign is the headsign of the line's busiest shape of an OASA route code: from the
+// RouteMapper's cached answer (refreshLines asks for every route code of the active lines), else
+// the shape whose id is the route code; "" for none. It never makes the mapper call OASA.
 func routeHeadsign(w *world, line, routeCode string) string {
-	for s, head := range lineShapes(w.feed, line) {
+	heads := lineShapes(w.feed, line)
+	if shapes, ok := w.mapper.Cached(line, routeCode); ok {
+		if s := bestShape(w.feed, shapes, line); s >= 0 {
+			return heads[s]
+		}
+	}
+	for s, head := range heads {
 		if w.feed.Shapes[s].ID == routeCode {
 			return head
 		}
