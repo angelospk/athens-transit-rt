@@ -9,6 +9,10 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Seen flags: a daily direction now finds its shape when one name abbreviates a word of the
+  other ("ΣΤ. ΚΗΦΙΣΙΑΣ" and "ΣΤΑΘΜΟΣ ΚΗΦΙΣΙΑΣ", "Α. ΠΑΤΗΣΙΑ" and "ΑΝΩ ΠΑΤΗΣΙΑ"). Fixes the
+  seen flags of 025, 11, 530, Β15, 022, 406 and 891; no other direction changes
+  ([#21](https://github.com/angelospk/athens-transit-rt/issues/21)).
 - Buses on a weekly variant route ("every Thursday, street market") are polled again. The OASA
   GTFS puts these variants of Α3, 447, 731, 120, 856 and others on the wrong weekday, so on
   the real day their route code was never asked and the buses of that leg were missing from the
