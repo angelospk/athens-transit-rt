@@ -15,6 +15,15 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   the name table, and the rail trains' `motion.knots` rules. A failure opens an issue. The
   OpenAPI parameter of `/v1/rail/suburban/trains/{no}` is quoted (`"no"`): YAML 1.1 read it as
   the boolean `false`.
+- `/v2/vehicles/rail` is metro and tram only and opens nothing upstream. Suburban trains moved
+  to the new `/v2/vehicles/suburban`, which opens the railway.gov.gr stream: a map showing the
+  metro no longer keeps that stream (~80 KB/s) open.
+- `/v2` caching: a Source that is `indicative` (expired timetable) or `stale` no longer makes a
+  response incomplete, so `/v2/lines`, `/v2/stops` and `/v2/lines/{id}` keep `max-age=3600` with
+  an `ETag` while the OASA GTFS is expired, and the `/v2/vehicles` snapshot keeps its 30 s life.
+  Only `warming_up` and `down` cut a response to `max-age=5`. `/v2/stops` (about 760 KB raw) is
+  built and gzipped once and served with a strong `ETag` while the stops and Source states stay
+  the same.
 - **`/v2`: one model for every mode** (contract rev 8): buses, trolleys, metro, tram and the
   suburban railway as Line, Stop, Pattern, Vehicle, Arrival and Run, with `<source>:<native>`
   ids, permanent aliases and a `sources` freshness block in every body. Endpoints:
