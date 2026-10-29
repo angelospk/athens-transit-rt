@@ -33,7 +33,8 @@ data (line list, shapes, stops) is on GitHub Pages:
 `.../static/v1/lines/{line_id}.json`.
 
 All responses are UTF-8, send `Access-Control-Allow-Origin: *`, and are gzip-compressed when
-the request allows it. Times are Unix seconds.
+the request allows it. Live responses also send `Access-Control-Expose-Headers: Date`, so
+browser code can read the server's `Date`. Times are Unix seconds.
 
 ## Examples
 
