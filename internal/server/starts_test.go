@@ -231,18 +231,19 @@ func TestShapesOfDirection(t *testing.T) {
 	for _, c := range []struct {
 		shapes   map[int32]string
 		headsign string
-		circular bool
+		loop     bool
 		want     []int32
 	}{
 		{two, "ΣΥΝΤΑΓΜΑ", false, []int32{3}},
 		{two, "ΚΗΦΙΣΙΑ", false, nil},
-		{two, "ΚΥΚΛΙΚΗ", true, []int32{3, 4}},  // a loop: every shape, whatever its name
-		{one, "ΑΓ. ΚΟΣΜΑΣ", false, []int32{7}}, // one shape only: the line is a loop
+		{two, "ΚΥΚΛΙΚΗ", true, []int32{3, 4}}, // a loop: every shape, whatever its name
+		{one, "ΑΓ. ΚΟΣΜΑΣ", true, []int32{7}},
+		{one, "ΑΓ. ΚΟΣΜΑΣ", false, nil},
 	} {
-		got := shapesOf(c.shapes, c.headsign, c.circular)
+		got := shapesOf(c.shapes, c.headsign, c.loop)
 		sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
 		if fmt.Sprint(got) != fmt.Sprint(c.want) {
-			t.Errorf("shapesOf(%v, %q, %v) = %v, want %v", c.shapes, c.headsign, c.circular, got, c.want)
+			t.Errorf("shapesOf(%v, %q, %v) = %v, want %v", c.shapes, c.headsign, c.loop, got, c.want)
 		}
 	}
 }
@@ -291,6 +292,10 @@ func TestStartAfterLateRouteSwitchNot(t *testing.T) {
 	rs.observe(feedA, "v3", "909", 0, 8700, 8726, t0)
 	rs.observe(feedA, "v3", "909", 1, 627, 10388, t0.Add(16*time.Minute))
 	rs.observe(feedA, "v3", "909", 1, 1400, 10388, t0.Add(19*time.Minute))
+	// The last fix on the old shape far from its end: a flip between shapes mid-run.
+	rs.observe(feedA, "v5", "909", 0, 850, 8726, t0)
+	rs.observe(feedA, "v5", "909", 1, 1000, 10388, t0.Add(1*time.Minute))
+	rs.observe(feedA, "v5", "909", 1, 1400, 10388, t0.Add(2*time.Minute))
 	// Not yet 300 m past the first fix on the new shape.
 	rs.observe(feedA, "v4", "909", 0, 8700, 8726, t0)
 	rs.observe(feedA, "v4", "909", 1, 700, 10388, t0.Add(3*time.Minute))

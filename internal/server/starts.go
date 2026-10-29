@@ -36,6 +36,7 @@ type startState struct {
 	near    time.Time // last fix near the start; zero once the run is counted
 	nearEnd bool      // ...put at the shape's end: a loop, whose end is its start
 	from    float64   // s of the first fix after a late route switch; zero when not in that mode
+	toEnd   float64   // metres to the shape's end at the newest fix
 }
 
 // A nil runStarts watches nothing.
@@ -76,17 +77,17 @@ func (rs *runStarts) observe(feed *gtfs.Feed, vehicle, line string, shape int32,
 		return
 	}
 	if st != nil && st.key != k && st.key.line == line && s > startNearM && s <= startSwitchM &&
-		t.Sub(st.last) <= startMaxGap {
+		st.toEnd <= startSwitchM && t.Sub(st.last) <= startMaxGap {
 		// OASA gave the route code late, the bus already at the stand or past it: the run began at
-		// the last fix of the old shape, and the fixes of the new one tell when it left.
-		rs.veh[vehicle] = &startState{key: k, last: t, near: st.last, from: s}
+		// the last fix of the old shape (at its end), and the fixes of the new one tell when it left.
+		rs.veh[vehicle] = &startState{key: k, last: t, near: st.last, from: s, toEnd: length - s}
 		return
 	}
 	if st == nil || st.key != k {
 		st = &startState{key: k}
 		rs.veh[vehicle] = st
 	}
-	st.last = t
+	st.last, st.toEnd = t, length-s
 	if st.from > 0 {
 		if s < st.from+startNearM {
 			st.near = t // still at the stand
@@ -226,12 +227,12 @@ func endMatches(gtfsHeadsign, daily string) bool {
 	return a != "" && b != "" && (strings.Contains(a, b) || strings.Contains(b, a))
 }
 
-// shapesOf returns the shapes whose GTFS headsign ends where the daily headsign does. A loop, or a
-// line with one shape only, has every shape: the daily timetable names no place to match.
-func shapesOf(shapes map[int32]string, headsign string, circular bool) []int32 {
+// shapesOf returns the shapes whose GTFS headsign ends where the daily headsign does. A loop has
+// every shape: the daily timetable names no place to match.
+func shapesOf(shapes map[int32]string, headsign string, loop bool) []int32 {
 	var out []int32
 	for shape, head := range shapes {
-		if circular || len(shapes) == 1 || endMatches(head, headsign) {
+		if loop || endMatches(head, headsign) {
 			out = append(out, shape)
 		}
 	}
@@ -251,11 +252,12 @@ func (a *App) markDailySeen(f *gtfs.Feed, line string, resp *ScheduleResponse, t
 			}
 		}
 	}
+	loop := circular || len(shapes) == 1 && len(resp.Directions) == 1 // one shape, one direction: a loop too
 	for i := range resp.Directions {
 		d := &resp.Directions[i]
 		var starts []time.Time
 		since := now
-		for _, shape := range shapesOf(shapes, d.Headsign, circular) {
+		for _, shape := range shapesOf(shapes, d.Headsign, loop) {
 			got, s := a.starts.of(f, line, shape, now)
 			starts = append(starts, got...)
 			since = s
