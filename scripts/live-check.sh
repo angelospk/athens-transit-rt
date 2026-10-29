@@ -14,6 +14,10 @@ if [ "$status" -eq 0 ]; then
   exit 0
 fi
 problems=$(sed -n '/problem(s):$/,$p' "$log" | head -60)
+if [ -z "$problems" ]; then
+  # The check died before its summary (a network error, a body that is no JSON): its last lines.
+  problems=$(printf 'the check stopped (exit %s) before its summary; last lines:\n%s' "$status" "$(tail -40 "$log")")
+fi
 body=$(cat <<MD
 The daily check of \`https://transit.haroldpoi.dev\` against the OpenAPI spec and the /v2 data
 rules failed: ${RUN_URL:-local run}

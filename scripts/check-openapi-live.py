@@ -7,7 +7,8 @@
 
 For each case: the status code, the Content-Type, CORS (`Access-Control-Allow-Origin: *`) and
 the body against the response schema. The check is stricter than the spec: a JSON field that
-the spec does not document fails (the spec must list every field). `.pb` feeds must parse as
+the spec does not document fails, in every object of every response, nested ones too (the spec
+must list every field). `.pb` feeds must parse as
 a GTFS-Realtime FeedMessage. Every path of the spec must have a case.
 
 Then the /v2 data checks: every mode has Lines, a bus and a metro Stop have Arrivals, no
@@ -97,6 +98,7 @@ CASES = [
     ("/v2/vehicles/tiles/{z}/{x}/{y}", "/v2/vehicles/tiles/13/4636/3160", 200),
     ("/v2/vehicles/tiles/{z}/{x}/{y}", "/v2/vehicles/tiles/13/1/1", 404),
     ("/v2/vehicles/rail", "/v2/vehicles/rail", 200),
+    ("/v2/vehicles/suburban", "/v2/vehicles/suburban", 200),  # no train at night: an empty list
 ]
 
 # Values that later cases need, taken from the answer of a case: path -> (name, getter).
@@ -109,37 +111,50 @@ CAPTURE = {
 }
 OPTIONAL = {"sub_train"}  # no suburban train runs at night
 
-# Object schemas that must not carry undocumented fields in the check. VehicleBase and Motion
-# are left out: they are parts of an allOf, so the closing goes on the allOf schemas.
-CLOSED = ["Error", "LineResponse", "VehiclesResponse", "TileResponse", "LineVehicle", "CityVehicle",
-          "CityVehicleLite", "Status", "StatsIndex", "StatsDay", "StaticLines", "StaticLine"]
+def allof_parts(spec):
+    """Names of the component schemas used as a part of an allOf (VehicleBase, Motion)."""
+    parts = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for x in node.get("allOf", []):
+                if "$ref" in x:
+                    parts.add(x["$ref"].rsplit("/", 1)[-1])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(spec)
+    return parts
 
 
-def close_all(node):
-    """Closes every object schema with properties under node (GTFS-RT: no allOf there)."""
+def close(node, part=False):
+    """Closes every object schema under node, nested ones too: a field the spec does not list
+    fails. A part of an allOf stays open (it cannot see its siblings' fields); the allOf
+    schema itself is closed, and unevaluatedProperties sees through its parts."""
     if isinstance(node, dict):
-        if "properties" in node:
-            node["additionalProperties"] = False
-        for v in node.values():
-            close_all(v)
+        if not part and ("properties" in node or "allOf" in node):
+            node.setdefault("unevaluatedProperties", False)
+        for k, v in node.items():
+            if k == "allOf":
+                for x in v:
+                    close(x, part=True)
+            else:
+                close(v)
     elif isinstance(node, list):
         for v in node:
-            close_all(v)
+            close(v)
 
 
 def closed_spec(spec):
     s = copy.deepcopy(spec)
     sch = s["components"]["schemas"]
-    for name in CLOSED:
-        sch[name]["unevaluatedProperties"] = False
-    for item in (sch["StatsDay"]["properties"]["hours"]["items"],
-                 sch["StatsDay"]["properties"]["by_line"]["items"],
-                 sch["StaticLines"]["properties"]["lines"]["items"],
-                 sch["StaticLine"]["properties"]["variants"]["additionalProperties"],
-                 sch["StaticLine"]["properties"]["stops"]["additionalProperties"]):
-        item["unevaluatedProperties"] = False
-    close_all(sch["GtfsRtFeed"])
-    close_all(sch["GtfsRtTrip"])
+    open_parts = allof_parts(s)
+    for name, schema in sch.items():
+        close(schema, part=name in open_parts)
+    close(s["paths"])  # response schemas written inline
     for name, item in (("TileZ13", "CityVehicle"), ("TileZ9", "CityVehicleLite")):
         sch[name] = copy.deepcopy(sch["TileResponse"])
         sch[name]["properties"]["vehicles"]["items"] = {"$ref": f"#/components/schemas/{item}"}

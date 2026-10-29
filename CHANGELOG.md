@@ -12,7 +12,10 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 - Daily `live-check` workflow: `scripts/check-openapi-live.py` now has a case for every path of
   the spec (the `/v1/stops`, `/v1/rail` and `/v2` paths were missing) and checks the /v2 data:
   Lines of every mode, Arrivals at a bus and a metro Stop, no Source down, metro Stop names in
-  the name table, and the rail trains' `motion.knots` rules. A failure opens an issue. The
+  the name table, and the rail trains' `motion.knots` rules. Every response schema is closed
+  for the check, nested objects too (a part of an `allOf` through its whole): a field the spec
+  does not list fails. A failure opens an issue, with the log's last lines when the check stops
+  before its summary. The
   OpenAPI parameter of `/v1/rail/suburban/trains/{no}` is quoted (`"no"`): YAML 1.1 read it as
   the boolean `false`.
 - `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule
