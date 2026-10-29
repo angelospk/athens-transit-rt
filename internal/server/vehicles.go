@@ -163,22 +163,31 @@ func (a *App) serveSnapshot(w http.ResponseWriter, r *http.Request, pick func(*v
 		writeJSON(w, http.StatusInternalServerError, minMaxAge, map[string]string{"error": "internal"})
 		return
 	}
-	e := pick(s)
-	body, etag := e.raw, e.etag
-	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
-		body, etag = e.gz, e.gzETag
-	}
 	// The floor of 5 s can keep a copy in caches up to 5 s past next_update_at.
 	maxAge := clamp(int64(s.built.Add(vehiclesEvery).Sub(a.now())/time.Second), minMaxAge, vehiclesMaxAge)
+	serveEncoded(w, r, pick(s), maxAge, true)
+}
+
+// serveEncoded writes prebuilt bytes, gzipped when the client accepts it (the Handler does not
+// compress these paths again). With withETag, the body's strong ETag is set and a matching
+// If-None-Match gets 304.
+func serveEncoded(w http.ResponseWriter, r *http.Request, e *encoded, maxAge int64, withETag bool) {
+	body, etag := e.raw, e.etag
+	gz := acceptsGzip(r.Header.Get("Accept-Encoding"))
+	if gz {
+		body, etag = e.gz, e.gzETag
+	}
 	h := w.Header()
 	h.Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
-	h.Set("ETag", etag)
-	if etagMatch(r.Header.Get("If-None-Match"), etag) {
-		w.WriteHeader(http.StatusNotModified)
-		return
+	if withETag {
+		h.Set("ETag", etag)
+		if etagMatch(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 	}
 	h.Set("Content-Type", "application/json; charset=utf-8")
-	if etag == e.gzETag {
+	if gz {
 		h.Set("Content-Encoding", "gzip")
 	}
 	h.Set("Content-Length", strconv.Itoa(len(body)))
