@@ -9,6 +9,13 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `/v2` Vehicles carry `direction` (contract rev 12): the direction of the Pattern they run, so
+  the web can draw each rail line as two tracks and put each train on its own. Metro and tram
+  always have it; buses when matched or placed on a trip; suburban trains from their Run, else
+  from where they are placed on their corridor (a train standing at a station now also moves
+  along its Run's direction). Metro Pattern directions now follow branches: on M3 the trips to the airport
+  (ΕΛ. ΒΕΝΙΖΕΛΟΣ) are direction 1 like those to Δ. ΠΛΑΚΕΝΤΙΑΣ; before, some got 0 in both
+  directions ([#31](https://github.com/angelospk/athens-transit-rt/issues/31)).
 - Fresher bus positions (#30): the whole-city snapshot (`/v1/vehicles`, `/v2/vehicles`, tiles)
   is rebuilt at most every 10 s instead of 30 s (`max-age` at most 10), and the OASA budget is
   6 req/s by default (max 6, was 4 and 5). With that budget, lines nobody is looking at should

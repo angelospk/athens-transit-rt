@@ -128,6 +128,16 @@ func TestV2STASYVehicles(t *testing.T) {
 		veh.Position.Kind != model.Estimate || veh.Position.At != wed1000.Unix() || veh.Motion == nil {
 		t.Fatalf("vehicle %s", asJSON(veh))
 	}
+	// The Vehicle carries the direction of its Run's Pattern.
+	var run1 struct{ Run model.Run }
+	v2get(t, a, "/v2/runs/"+esc(run), &run1)
+	var ld struct{ Patterns []model.Pattern }
+	v2get(t, a, "/v2/lines/"+esc("stasy:M2"), &ld)
+	for _, p := range ld.Patterns {
+		if p.ID == *run1.Run.Pattern && (veh.Direction == nil || *veh.Direction != p.Direction) {
+			t.Fatalf("direction %v, pattern %s has %d", veh.Direction, p.ID, p.Direction)
+		}
+	}
 	// 8 of the 17 minutes from ΟΜΟΝΟΙΑ to ΕΛΛΗΝΙΚΟ: south of ΟΜΟΝΟΙΑ, north of ΕΛΛΗΝΙΚΟ.
 	if veh.Position.Lat >= 37.984 || veh.Position.Lat <= 37.890 {
 		t.Fatalf("position %s", asJSON(veh.Position))
@@ -293,6 +303,48 @@ func polylineMetres(pts [][2]float64) float64 {
 		d += geo.Dist(geo.XY(pts[i-1][0], pts[i-1][1]), geo.XY(pts[i][0], pts[i][1]))
 	}
 	return d
+}
+
+// M3 as STASY runs it (2026-10-29): the airport branch (ΕΛ. ΒΕΝΙΖΕΛΟΣ) shares only Δ. ΠΛΑΚΕΝΤΙΑΣ
+// with the most common Pattern. Every Pattern towards ΕΛ. ΒΕΝΙΖΕΛΟΣ or Δ. ΠΛΑΚΕΝΤΙΑΣ has one
+// direction, every Pattern towards ΔΗΜΟΤΙΚΟ ΘΕΑΤΡΟ the other: two directions, never three.
+func TestSTASYDirectionsM3Branches(t *testing.T) {
+	trunk := []string{"ΔΠ", "ΧΑΛ", "ΕΘΝ", "ΣΥΝ", "ΜΟΝ", "ΑΙΓ", "ΔΘ"}
+	branch := []string{"ΑΕΡ", "ΚΟΡ", "ΠΑΙ", "ΠΑΛ"}
+	rev := func(s []string) []string {
+		out := append([]string(nil), s...)
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+		return out
+	}
+	toDT := append(append([]string(nil), branch...), trunk...) // ΕΛ. ΒΕΝΙΖΕΛΟΣ → ΔΗΜ. ΘΕΑΤΡΟ
+	cases := []struct {
+		stops []string
+		want  int
+	}{
+		{trunk, 0},      // Δ. ΠΛΑΚΕΝΤΙΑΣ → ΔΗΜ. ΘΕΑΤΡΟ, the most common
+		{rev(trunk), 1}, // ΔΗΜ. ΘΕΑΤΡΟ → Δ. ΠΛΑΚΕΝΤΙΑΣ
+		{append([]string{"ΔΠ"}, rev(branch)...), 1}, // Δ. ΠΛΑΚΕΝΤΙΑΣ → ΕΛ. ΒΕΝΙΖΕΛΟΣ, before the long ones
+		{toDT, 0},                   // ΕΛ. ΒΕΝΙΖΕΛΟΣ → ΔΗΜ. ΘΕΑΤΡΟ
+		{rev(toDT), 1},              // ΔΗΜ. ΘΕΑΤΡΟ → ΕΛ. ΒΕΝΙΖΕΛΟΣ
+		{[]string{"ΑΕΡ", "ΚΟΡ"}, 0}, // a short airport shuttle towards the city
+		{[]string{"ΔΠ", "ΧΑΛ", "ΕΘΝ"}, 0}, // Δ. ΠΛΑΚΕΝΤΙΑΣ → ΕΘΝΙΚΗ ΑΜΥΝΑ
+		{[]string{"ΑΙΓ", "ΜΟΝ", "ΣΥΝ", "ΕΘΝ", "ΧΑΛ", "ΔΠ"}, 1},
+		{[]string{"Χ", "Ψ"}, 0},                 // shares no stop: the default
+		{[]string{"ΣΥΝ", "Ω", "ΣΥΝ", "ΜΟΝ"}, 0}, // passes ΣΥΝ twice: still towards ΔΗΜ. ΘΕΑΤΡΟ
+	}
+	ps := make([]stasyPattern, len(cases))
+	for i, c := range cases {
+		ps[i].m.Stops = c.stops
+		ps[i].m.Direction = 7 // overwritten
+	}
+	stasyDirections(ps)
+	for i, c := range cases {
+		if ps[i].m.Direction != c.want {
+			t.Errorf("pattern %d %v: direction %d, want %d", i, c.stops, ps[i].m.Direction, c.want)
+		}
+	}
 }
 
 const plakentias = "stasy:δ.-πλακεντιασ-metro"

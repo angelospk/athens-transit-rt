@@ -171,9 +171,11 @@ type Vehicle struct {
 	DelayS   *int     `json:"delay_s"`
 	NextStop *string  `json:"next_stop"`
 	// AtTerminus: matched and waiting at the first stop of its Run (bus only; false otherwise).
-	AtTerminus bool    `json:"at_terminus"`
-	Motion     *Motion `json:"motion"`
-	Source     string  `json:"source"`
+	AtTerminus bool `json:"at_terminus"`
+	// Direction: the direction (0/1) of the Pattern it runs, nil when unknown.
+	Direction *int    `json:"direction"`
+	Motion    *Motion `json:"motion"`
+	Source    string  `json:"source"`
 }
 
 // LiteVehicle is a Vehicle without motion (vehicle tiles at zoom 9: the key is absent).
@@ -188,11 +190,12 @@ type LiteVehicle struct {
 	DelayS     *int     `json:"delay_s"`
 	NextStop   *string  `json:"next_stop"`
 	AtTerminus bool     `json:"at_terminus"`
+	Direction  *int     `json:"direction"`
 	Source     string   `json:"source"`
 }
 
 func (v Vehicle) Lite() LiteVehicle {
-	return LiteVehicle{v.ID, v.Line, v.Run, v.Mode, v.Headsign, v.Label, v.Position, v.DelayS, v.NextStop, v.AtTerminus, v.Source}
+	return LiteVehicle{v.ID, v.Line, v.Run, v.Mode, v.Headsign, v.Label, v.Position, v.DelayS, v.NextStop, v.AtTerminus, v.Direction, v.Source}
 }
 
 type Arrival struct {

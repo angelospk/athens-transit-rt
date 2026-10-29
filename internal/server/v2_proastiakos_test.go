@@ -275,7 +275,7 @@ func TestV2ProastiakosVehicles(t *testing.T) {
 	if v.Line != "proastiakos:KIATO" || v.Mode != model.Suburban || *v.Label != "2539" || *v.Headsign != "Ρουφ" ||
 		*v.Run != "proastiakos:run:2539:2026-10-28" || v.Position.Kind != model.GPS || v.Position.Lat != 37.95888 ||
 		*v.Position.Bearing != 60 || v.Position.At != wed1000.Add(-10*time.Second).Unix() || *v.DelayS != 240 ||
-		*v.NextStop != rentis || v.Source != "proastiakos" || m == nil {
+		*v.NextStop != rentis || v.Source != "proastiakos" || m == nil || v.Direction == nil || *v.Direction != 0 {
 		t.Fatalf("2539 %s", asJSON(v))
 	}
 	// Path to Ρέντης, beyond it up to 1.5 km in all (Ταύρος is farther), at the GPS speed; no knots.
@@ -285,11 +285,12 @@ func TestV2ProastiakosVehicles(t *testing.T) {
 	}
 	// No next station from the stream: the course picks the direction (west, towards Πειραιάς).
 	w := by["proastiakos:2000"]
-	if w.NextStop == nil || *w.NextStop != rentis || w.Motion == nil || w.DelayS != nil || w.Motion.PathStops[0] <= 0 {
+	if w.NextStop == nil || *w.NextStop != rentis || w.Motion == nil || w.DelayS != nil || w.Motion.PathStops[0] <= 0 ||
+		w.Direction == nil || *w.Direction != 1 {
 		t.Fatalf("2000 %s", asJSON(w))
 	}
 	// Far from its corridor: GPS only, nothing to move along.
-	if f := by["proastiakos:3000"]; f.Motion != nil || f.NextStop != nil || f.Run != nil {
+	if f := by["proastiakos:3000"]; f.Motion != nil || f.NextStop != nil || f.Run != nil || f.Direction != nil {
 		t.Fatalf("3000 %s", asJSON(f))
 	}
 
@@ -384,5 +385,44 @@ func TestV2ProastiakosState(t *testing.T) {
 	fb.failing, ft.last = false, time.Time{}
 	if s := ad.State(wed1000); s.State != model.OK || s.UpdatedAt != nil {
 		t.Fatalf("idle %s", asJSON(s))
+	}
+}
+
+// A train standing at its next station gives no direction by position; its Run (2000: Ρουφ →
+// Πειραιάς on the board) does: direction 1, as the Run's Pattern.
+func TestV2ProastiakosDirectionFollowsTheRun(t *testing.T) {
+	a, _, ft := proastiakosApp(t, wed1000)
+	var st struct{ Stop model.Stop }
+	v2get(t, a, "/v2/stops/"+esc(rentis), &st)
+	for i := range ft.snap.Trains {
+		if tr := &ft.snap.Trains[i]; tr.Train == "2000" {
+			tr.Lat, tr.Lon, tr.NextID, tr.Course = st.Stop.Lat, st.Stop.Lon, stRen, nil
+		}
+	}
+	vs, _ := a.adapter("proastiakos:x").(*proastiakosAdapter).Vehicles(wed1000)
+	for _, v := range vs {
+		if v.ID != "proastiakos:2000" {
+			continue
+		}
+		var r struct{ Run model.Run }
+		v2get(t, a, "/v2/runs/"+esc(*v.Run), &r)
+		if v.Direction == nil || *v.Direction != 1 || r.Run.Pattern == nil || *r.Run.Pattern != "proastiakos:KIATO-1" {
+			t.Fatalf("2000 %s run %s", asJSON(v), asJSON(r.Run))
+		}
+		return
+	}
+	t.Fatalf("no 2000 in %s", asJSON(vs))
+}
+
+// Without a board Run the position decides, in both directions (2539 east, 2000 west).
+func TestV2ProastiakosDirectionWithoutRuns(t *testing.T) {
+	a, b, _ := proastiakosApp(t, wed1000)
+	b.list = nil
+	vs, _ := a.adapter("proastiakos:x").(*proastiakosAdapter).Vehicles(wed1000)
+	want := map[string]int{"proastiakos:2539": 0, "proastiakos:2000": 1}
+	for _, v := range vs {
+		if d, ok := want[v.ID]; ok && (v.Run != nil || v.Direction == nil || *v.Direction != d || v.Motion == nil) {
+			t.Fatalf("%s", asJSON(v))
+		}
 	}
 }

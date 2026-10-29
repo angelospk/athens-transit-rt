@@ -1230,6 +1230,7 @@ paths:
                     position: {kind: estimate, lat: 37.9722, lon: 23.7325, bearing: 205, at: 1793205600}
                     delay_s: null
                     next_stop: "stasy:ακροπολη-metro"
+                    direction: 0
                     motion:
                       path: [[37.9722, 23.7325], [37.96882, 23.72963]]
                       path_beyond: [[37.96882, 23.72963], [37.96421, 23.72651]]
@@ -1407,6 +1408,7 @@ paths:
                     delay_s: 83
                     next_stop: "oasa:400088"
                     at_terminus: false
+                    direction: 0
                     motion:
                       path: [[37.94457, 23.66549], [37.94429, 23.66359]]
                       path_beyond: [[37.94429, 23.66359], [37.94441, 23.66261]]
@@ -1424,6 +1426,7 @@ paths:
                     position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: null, at: 1793205580}
                     delay_s: null
                     next_stop: null
+                    direction: null
                     motion: null
                     source: oasa
                 sources:
@@ -1510,6 +1513,7 @@ paths:
                         position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: 12, at: 1793205488}
                         delay_s: 1158
                         next_stop: "oasa:400111"
+                        direction: 0
                         motion:
                           path: [[37.9884, 23.73054], [37.98917, 23.73072]]
                           path_beyond: [[37.98917, 23.73072], [37.99708, 23.73271]]
@@ -1535,6 +1539,7 @@ paths:
                         position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: 12, at: 1793205488}
                         delay_s: 1158
                         next_stop: "oasa:400111"
+                        direction: 0
                         source: oasa
                     sources:
                       - {id: oasa, state: ok, updated_at: 1793205586}
@@ -1596,6 +1601,7 @@ paths:
                     position: {kind: estimate, lat: 37.9722, lon: 23.7325, bearing: 205, at: 1793205600}
                     delay_s: null
                     next_stop: "stasy:ακροπολη-metro"
+                    direction: 0
                     motion:
                       path: [[37.9722, 23.7325], [37.96882, 23.72963]]
                       path_beyond: [[37.96882, 23.72963], [37.96421, 23.72651]]
@@ -1646,6 +1652,7 @@ paths:
                     position: {kind: gps, lat: 37.9918, lon: 23.7201, bearing: 90, at: 1793205595}
                     delay_s: 120
                     next_stop: "proastiakos:6928c3c150ab5bc72b39cee5"
+                    direction: 1
                     motion:
                       path: [[37.9918, 23.7201], [37.9952, 23.7304]]
                       path_beyond: [[37.9952, 23.7304], [38.0021, 23.7411]]
@@ -2726,6 +2733,16 @@ components:
           description: |
             Rev 9: `true` when a bus or trolley is matched and waiting at the first Stop of its
             Run; always `false` for rail. Missing in older responses: treat as `false`.
+        direction:
+          type: [integer, "null"]
+          enum: [0, 1, null]
+          description: |
+            Rev 12: the `direction` of the Pattern the vehicle runs, so a client can put it on
+            one of a Line's two tracks without a `/v2/runs` call. Metro and tram: always set.
+            Bus and trolley: the matched trip's direction, else the direction of the trip the
+            bus was placed on, else `null`. Suburban: the direction of its Run when it has one,
+            else of where it is placed on its corridor, else `null`. Older responses lack the
+            key: treat a missing key as `null`.
         motion:
           description: "`null` when there is nothing to move along (standing with no Run, no geometry)."
           anyOf:
@@ -2754,6 +2771,7 @@ components:
         delay_s: {type: [integer, "null"], description: Observed delay in seconds; `null` without a live signal.}
         next_stop: {type: [string, "null"], description: Stop id; `null` when unmatched.}
         at_terminus: {type: boolean, description: "As `Vehicle`: waiting at the first Stop of its Run."}
+        direction: {type: [integer, "null"], enum: [0, 1, null], description: "As `Vehicle` (rev 12)."}
         source:
           type: string
           enum: [oasa, stasy, proastiakos]

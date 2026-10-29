@@ -332,8 +332,11 @@ func vehicleV2(f *gtfs.Feed, mode, line string, r *match.Result, v *Vehicle, b b
 		t := f.Trip(r.Trip)
 		out.Run = model.Ptr(model.RunID(oasaNS, t.ID, r.Day, gtfs.Athens))
 		out.Headsign = model.Ptr(f.Headsign(t))
+		out.Direction = model.Ptr(int(t.Dir))
 	} else if b.ok {
-		out.Headsign = model.Ptr(f.Headsign(f.Trip(b.trip)))
+		t := f.Trip(b.trip)
+		out.Headsign = model.Ptr(f.Headsign(t))
+		out.Direction = model.Ptr(int(t.Dir))
 	}
 	if v.NextStopID != nil {
 		out.NextStop = model.Ptr(oasaPrefix + *v.NextStopID)

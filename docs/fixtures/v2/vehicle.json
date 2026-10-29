@@ -1,7 +1,7 @@
 {"id": "stasy:run:1012345:2026-10-29", "line": "stasy:M2", "run": "stasy:run:1012345:2026-10-29", "mode": "metro",
  "headsign": "Ελληνικό", "label": null,
  "position": {"kind": "estimate", "lat": 37.9722, "lon": 23.7325, "bearing": 205, "at": 1793205600},
- "delay_s": null, "next_stop": "stasy:ακροπολη-metro", "at_terminus": false,
+ "delay_s": null, "next_stop": "stasy:ακροπολη-metro", "at_terminus": false, "direction": 0,
  "motion": {"path": [[37.9722, 23.7325], [37.96882, 23.72963]],
             "path_beyond": [[37.96882, 23.72963], [37.96421, 23.72651]],
             "path_stops": [450, 1010], "speed": null, "path_speeds": null,
