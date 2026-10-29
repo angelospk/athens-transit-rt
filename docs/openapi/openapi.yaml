@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: athens-transit-rt
-  version: "1 (contract rev 7)"
+  version: "1 (contract rev 8)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
     Free public API, no key. Live data comes from `https://transit.haroldpoi.dev`; the static map
