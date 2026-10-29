@@ -167,3 +167,30 @@ func TestServiceDayAcrossDST(t *testing.T) {
 		}
 	}
 }
+
+// ShapesAround ignores the service day: a weekly variant the GTFS puts on the wrong weekday
+// still counts at its time of day (#20). t1 (shape S1) runs Mondays 10:00-10:10.
+func TestShapesAround(t *testing.T) {
+	f := load(t)
+	s1 := int32(-1)
+	for i := range f.Shapes {
+		if f.Shapes[i].ID == "S1" {
+			s1 = int32(i)
+		}
+	}
+	for _, c := range []struct {
+		line string
+		now  time.Time
+		want bool
+	}{
+		{"040", time.Date(2026, 10, 7, 10, 30, 0, 0, Athens), true}, // Wednesday, t1's time of day
+		{"040", time.Date(2026, 10, 7, 14, 0, 0, 0, Athens), false}, // Wednesday, long after t1
+		{"040", time.Date(2026, 10, 7, 9, 30, 0, 0, Athens), false}, // before t1's padded start
+		{"2", time.Date(2026, 10, 8, 0, 30, 0, 0, Athens), true},    // Thursday 00:30: n1 runs 24:20-24:40
+		{"2", time.Date(2026, 10, 7, 22, 0, 0, 0, Athens), false},   // Wednesday 22:00
+	} {
+		if got := f.ShapesAround(c.line, c.now, 15*60, 60*60)[s1]; got != c.want {
+			t.Errorf("%s at %s: %v, want %v", c.line, c.now.Format("Mon 15:04"), got, c.want)
+		}
+	}
+}
