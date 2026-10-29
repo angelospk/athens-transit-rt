@@ -9,6 +9,12 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `/v2` caching: a Source that is `indicative` (expired timetable) or `stale` no longer makes a
+  response incomplete, so `/v2/lines`, `/v2/stops` and `/v2/lines/{id}` keep `max-age=3600` with
+  an `ETag` while the OASA GTFS is expired, and the `/v2/vehicles` snapshot keeps its 30 s life.
+  Only `warming_up` and `down` cut a response to `max-age=5`. `/v2/stops` (about 760 KB raw) is
+  built and gzipped once and served with a strong `ETag` while the stops and Source states stay
+  the same.
 - **`/v2`: one model for every mode** (contract rev 8): buses, trolleys, metro, tram and the
   suburban railway as Line, Stop, Pattern, Vehicle, Arrival and Run, with `<source>:<native>`
   ids, permanent aliases and a `sources` freshness block in every body. Endpoints:
