@@ -9,6 +9,9 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `/v2/vehicles/rail` is metro and tram only and opens nothing upstream. Suburban trains moved
+  to the new `/v2/vehicles/suburban`, which opens the railway.gov.gr stream: a map showing the
+  metro no longer keeps that stream (~80 KB/s) open.
 - **`/v2`: one model for every mode** (contract rev 8): buses, trolleys, metro, tram and the
   suburban railway as Line, Stop, Pattern, Vehicle, Arrival and Run, with `<source>:<native>`
   ids, permanent aliases and a `sources` freshness block in every body. Endpoints:
