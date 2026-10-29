@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
@@ -115,6 +116,7 @@ func (a *App) routeV2(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v2/vehicles", a.handleV2Vehicles)
 	mux.HandleFunc("GET /v2/vehicles/tiles/{z}/{x}/{y}", a.handleV2Tile)
 	mux.HandleFunc("GET /v2/vehicles/rail", a.handleV2RailVehicles)
+	mux.HandleFunc("GET /v2/vehicles/suburban", a.handleV2SuburbanVehicles)
 	mux.HandleFunc("GET /v2/runs/{id}", a.handleV2Run)
 }
 
@@ -343,43 +345,48 @@ type v2Snapshot struct {
 	empty    *encoded
 }
 
-// busAdapters are the Sources of /v2/vehicles and its tiles: bus and trolley only, so map
-// traffic never opens the suburban stream.
-func (a *App) busAdapters() []Adapter {
+// adaptersIn are the Sources with these namespaces, in their usual order.
+func (a *App) adaptersIn(ns ...string) []Adapter {
 	var out []Adapter
 	for _, ad := range a.adapters {
-		if ad.Namespace() == "oasa" {
+		if slices.Contains(ns, ad.Namespace()) {
 			out = append(out, ad)
 		}
 	}
 	return out
 }
 
-// railAdapters are the Sources of /v2/vehicles/rail: every one but oasa.
-func (a *App) railAdapters() []Adapter {
-	var out []Adapter
-	for _, ad := range a.adapters {
-		if ad.Namespace() != "oasa" {
-			out = append(out, ad)
-		}
-	}
-	return out
-}
+// busAdapters are the Sources of /v2/vehicles and its tiles: oasa only, so that map traffic
+// never opens the suburban stream.
+func (a *App) busAdapters() []Adapter { return a.adaptersIn(oasaNS) }
 
-// handleV2RailVehicles: metro, tram and suburban in one body, built per request (about 100
-// trains). Asking for it is the explicit demand for rail positions.
+// handleV2RailVehicles: metro and tram, placed from the STASY timetable, built per request
+// (about 60 trains). It never opens the suburban stream, so a map that shows the metro does
+// not keep the railway.gov.gr stream open.
 func (a *App) handleV2RailVehicles(w http.ResponseWriter, r *http.Request) {
+	a.serveV2Trains(w, r, a.adaptersIn(stasyNS), stasyVehMaxAge)
+}
+
+// handleV2SuburbanVehicles: suburban trains from the railway.gov.gr stream, which this request
+// opens (it closes 3 min after the last one). Clients load it only while their suburban layer
+// is on and a corridor is in view.
+func (a *App) handleV2SuburbanVehicles(w http.ResponseWriter, r *http.Request) {
+	a.serveV2Trains(w, r, a.adaptersIn(subNS), subVehMaxAge)
+}
+
+// serveV2Trains builds one body of the trains of ads. moving is the max-age while there are
+// trains (GPS trains move every second); with none, stasyVehMaxAge.
+func (a *App) serveV2Trains(w http.ResponseWriter, r *http.Request, ads []Adapter, moving int) {
 	now := a.now()
-	ads := a.railAdapters()
 	vs := []model.Vehicle{}
-	maxAge := stasyVehMaxAge
 	for _, ad := range ads {
 		if got, err := ad.Vehicles(now); err == nil {
 			vs = append(vs, got...)
-			if ad.Namespace() == subNS && len(got) > 0 {
-				maxAge = subVehMaxAge // GPS trains move every second
-			}
 		}
+	}
+	maxAge := stasyVehMaxAge
+	if len(vs) > 0 {
+		maxAge = moving
 	}
 	src := a.states(now, ads...)
 	if !model.Complete(src) {

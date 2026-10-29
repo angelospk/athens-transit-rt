@@ -9,6 +9,9 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `/v2/vehicles/rail` is metro and tram only and opens nothing upstream. Suburban trains moved
+  to the new `/v2/vehicles/suburban`, which opens the railway.gov.gr stream: a map showing the
+  metro no longer keeps that stream (~80 KB/s) open.
 - `/v2` caching: a Source that is `indicative` (expired timetable) or `stale` no longer makes a
   response incomplete, so `/v2/lines`, `/v2/stops` and `/v2/lines/{id}` keep `max-age=3600` with
   an `ETag` while the OASA GTFS is expired, and the `/v2/vehicles` snapshot keeps its 30 s life.
