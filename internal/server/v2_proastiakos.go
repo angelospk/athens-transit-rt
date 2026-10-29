@@ -544,9 +544,10 @@ func (s *proastiakosAdapter) place(x *subIndex, c int, tr *rail.SuburbanTrain, v
 	if !ok {
 		return
 	}
-	dir := runDir
+	dir := 0
 	switch {
 	case runDir >= 0:
+		dir = runDir
 	case next >= 0:
 		if x.tracks[c][0].Along[next] < c0.Along-1 {
 			dir = 1

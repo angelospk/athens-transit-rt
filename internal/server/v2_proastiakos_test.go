@@ -413,3 +413,16 @@ func TestV2ProastiakosDirectionFollowsTheRun(t *testing.T) {
 	}
 	t.Fatalf("no 2000 in %s", asJSON(vs))
 }
+
+// Without a board Run the position decides, in both directions (2539 east, 2000 west).
+func TestV2ProastiakosDirectionWithoutRuns(t *testing.T) {
+	a, b, _ := proastiakosApp(t, wed1000)
+	b.list = nil
+	vs, _ := a.adapter("proastiakos:x").(*proastiakosAdapter).Vehicles(wed1000)
+	want := map[string]int{"proastiakos:2539": 0, "proastiakos:2000": 1}
+	for _, v := range vs {
+		if d, ok := want[v.ID]; ok && (v.Run != nil || v.Direction == nil || *v.Direction != d || v.Motion == nil) {
+			t.Fatalf("%s", asJSON(v))
+		}
+	}
+}
