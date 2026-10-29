@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: athens-transit-rt
-  version: "1 (contract rev 9)"
+  version: "1 (contract rev 10)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
     Free public API, no key. Live data comes from `https://transit.haroldpoi.dev`; the static map
@@ -21,7 +21,8 @@ info:
 
     **Format.** JSON is UTF-8. Times are Unix seconds. Coordinates are WGS84 degrees. Responses
     are gzip-compressed when the request allows it. Every response has
-    `Access-Control-Allow-Origin: *`. There is no `OPTIONS` (preflight) support: from a browser,
+    `Access-Control-Allow-Origin: *`; live responses also have
+    `Access-Control-Expose-Headers: Date`, so browser code can read the server time. There is no `OPTIONS` (preflight) support: from a browser,
     use plain `GET` requests without custom headers.
 
     **Line ids** are the OASA line numbers in Greek uppercase (`040`, `550`, `Α1`, `Χ96`),

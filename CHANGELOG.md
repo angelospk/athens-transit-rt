@@ -9,6 +9,9 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Live responses send `Access-Control-Expose-Headers: Date` (contract rev 10), so a browser
+  `fetch()` can read the server time and a new tab sees a stopped feed on its first response
+  ([#3](https://github.com/angelospk/athens-transit-rt/issues/3)).
 - `at_terminus` (contract rev 9) on `/v1/lines/{id}` vehicles and on `/v2` Vehicles: `true`
   when a bus is matched and waiting at the first stop of its trip, so clients can show
   "waiting at the terminus" and leave its departure delay out of the line's running delay

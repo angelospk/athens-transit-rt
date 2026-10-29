@@ -14,8 +14,8 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 9 (2026-10-29): `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles
-(rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
+Revision: 10 (2026-10-29): live responses send `Access-Control-Expose-Headers: Date`
+(rev 9: `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles; rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
 ([below](#unified-api-v2-rev-8)); rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
 `path` on vehicles)
 
@@ -31,7 +31,10 @@ Revision: 9 (2026-10-29): `at_terminus` on `/v1/lines/{line_id}` vehicles and `/
 All JSON is UTF-8. Line ids are the OASA telematics `LineID` in Greek uppercase
 (`040`, `550`, `Α1`, `Χ96`), percent-encoded in URLs. The backend also accepts the
 Latin look-alikes (`A1` → `Α1`). Times are Unix seconds (integers).
-CORS: every live and static response has `Access-Control-Allow-Origin: *`.
+CORS: every live and static response has `Access-Control-Allow-Origin: *`. Live responses
+also send `Access-Control-Expose-Headers: Date` (rev 10), so a browser `fetch()` can read the
+server's `Date`. A copy from the browser cache keeps its old `Date`: use it as a lower bound on
+server time.
 
 ## Live API (`transit.haroldpoi.dev`)
 
