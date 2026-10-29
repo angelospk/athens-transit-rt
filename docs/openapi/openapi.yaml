@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: athens-transit-rt
-  version: "1 (contract rev 8)"
+  version: "1 (contract rev 11)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
     Free public API, no key. Live data comes from `https://transit.haroldpoi.dev`; the static map
@@ -21,7 +21,8 @@ info:
 
     **Format.** JSON is UTF-8. Times are Unix seconds. Coordinates are WGS84 degrees. Responses
     are gzip-compressed when the request allows it. Every response has
-    `Access-Control-Allow-Origin: *`. There is no `OPTIONS` (preflight) support: from a browser,
+    `Access-Control-Allow-Origin: *`; live responses also have
+    `Access-Control-Expose-Headers: Date`, so browser code can read the server time. There is no `OPTIONS` (preflight) support: from a browser,
     use plain `GET` requests without custom headers.
 
     **Line ids** are the OASA line numbers in Greek uppercase (`040`, `550`, `Α1`, `Χ96`),
@@ -108,6 +109,7 @@ paths:
                     trip_label: 00:15 ΣΥΝΤΑΓΜΑ → ΠΕΙΡΑΙΑΣ
                     delay_s: -83
                     next_stop_id: "400088"
+                    at_terminus: false
                     speed: 4.8
                     path: [[37.94457, 23.66549], [37.94429, 23.66359], [37.94441, 23.66261], [37.9447, 23.66187], [37.94611, 23.65972]]
                     path_beyond: [[37.94611, 23.65972], [37.94769, 23.6573], [37.9482, 23.65584], [37.94876, 23.65289], [37.94878, 23.65119], [37.94803, 23.65064]]
@@ -139,7 +141,7 @@ paths:
       summary: All vehicles of all lines
       description: |
         Every vehicle with a GPS fix from the last 5 minutes, sorted by `line`, then `id`.
-        One snapshot for everyone, rebuilt at most every 30 s. It does not raise any line's
+        One snapshot for everyone, rebuilt at most every 10 s. It does not raise any line's
         polling priority and causes no OASA request, so lines nobody watches update about every
         150 s. A vehicle seen on two lines appears once (newest fix). Coordinates have
         5 decimals. For `route_code`, `trip_id`, `trip_label` and `next_stop_id`, fetch
@@ -1017,7 +1019,7 @@ paths:
         day. `t` is the scheduled arrival (the departure at the origin). `delay_min` of the run is the
         live delay while the stream is open. `Cache-Control: public, max-age=30`.
       parameters:
-        - name: no
+        - name: "no"
           in: path
           required: true
           description: The `train` of a vehicle or departure, e.g. `1226`.
@@ -1231,6 +1233,7 @@ paths:
                     position: {kind: estimate, lat: 37.9722, lon: 23.7325, bearing: 205, at: 1793205600}
                     delay_s: null
                     next_stop: "stasy:ακροπολη-metro"
+                    direction: 0
                     motion:
                       path: [[37.9722, 23.7325], [37.96882, 23.72963]]
                       path_beyond: [[37.96882, 23.72963], [37.96421, 23.72651]]
@@ -1374,7 +1377,7 @@ paths:
       summary: All buses and trolleys now
       description: |
         Every bus and trolley with a GPS fix from the last 5 minutes, sorted by `line`, then
-        `id`: one snapshot for everyone, rebuilt at most every 30 s. No rail vehicle is here:
+        `id`: one snapshot for everyone, rebuilt at most every 10 s. No rail vehicle is here:
         metro and tram come from `/v2/vehicles/rail`, suburban trains from
         `/v2/vehicles/suburban`, so map traffic never opens the suburban stream unless a
         suburban layer is on. A client merges them into one layer.
@@ -1407,6 +1410,8 @@ paths:
                     position: {kind: gps, lat: 37.94454, lon: 23.6655, bearing: 258, at: 1793205565}
                     delay_s: 83
                     next_stop: "oasa:400088"
+                    at_terminus: false
+                    direction: 0
                     motion:
                       path: [[37.94457, 23.66549], [37.94429, 23.66359]]
                       path_beyond: [[37.94429, 23.66359], [37.94441, 23.66261]]
@@ -1424,6 +1429,7 @@ paths:
                     position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: null, at: 1793205580}
                     delay_s: null
                     next_stop: null
+                    direction: null
                     motion: null
                     source: oasa
                 sources:
@@ -1510,6 +1516,7 @@ paths:
                         position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: 12, at: 1793205488}
                         delay_s: 1158
                         next_stop: "oasa:400111"
+                        direction: 0
                         motion:
                           path: [[37.9884, 23.73054], [37.98917, 23.73072]]
                           path_beyond: [[37.98917, 23.73072], [37.99708, 23.73271]]
@@ -1535,6 +1542,7 @@ paths:
                         position: {kind: gps, lat: 37.9884, lon: 23.73051, bearing: 12, at: 1793205488}
                         delay_s: 1158
                         next_stop: "oasa:400111"
+                        direction: 0
                         source: oasa
                     sources:
                       - {id: oasa, state: ok, updated_at: 1793205586}
@@ -1596,6 +1604,7 @@ paths:
                     position: {kind: estimate, lat: 37.9722, lon: 23.7325, bearing: 205, at: 1793205600}
                     delay_s: null
                     next_stop: "stasy:ακροπολη-metro"
+                    direction: 0
                     motion:
                       path: [[37.9722, 23.7325], [37.96882, 23.72963]]
                       path_beyond: [[37.96882, 23.72963], [37.96421, 23.72651]]
@@ -1646,6 +1655,7 @@ paths:
                     position: {kind: gps, lat: 37.9918, lon: 23.7201, bearing: 90, at: 1793205595}
                     delay_s: 120
                     next_stop: "proastiakos:6928c3c150ab5bc72b39cee5"
+                    direction: 1
                     motion:
                       path: [[37.9918, 23.7201], [37.9952, 23.7304]]
                       path_beyond: [[37.9952, 23.7304], [38.0021, 23.7411]]
@@ -1865,6 +1875,11 @@ components:
             next_stop_id:
               type: [string, "null"]
               description: GTFS `stop_id` of the next stop.
+            at_terminus:
+              type: boolean
+              description: |
+                Rev 9: `true` when matched and waiting at the first stop of its trip (its
+                `delay_s` is a departure delay). Missing in older responses: treat as `false`.
 
     CityVehicle:
       description: A vehicle of `/v1/vehicles` or a `z` 13 tile.
@@ -2716,6 +2731,21 @@ components:
         next_stop:
           type: [string, "null"]
           description: Stop id; `null` when unmatched.
+        at_terminus:
+          type: boolean
+          description: |
+            Rev 9: `true` when a bus or trolley is matched and waiting at the first Stop of its
+            Run; always `false` for rail. Missing in older responses: treat as `false`.
+        direction:
+          type: [integer, "null"]
+          enum: [0, 1, null]
+          description: |
+            Rev 12: the `direction` of the Pattern the vehicle runs, so a client can put it on
+            one of a Line's two tracks without a `/v2/runs` call. Metro and tram: always set.
+            Bus and trolley: the matched trip's direction, else the direction of the trip the
+            bus was placed on, else `null`. Suburban: the direction of its Run when it has one,
+            else of where it is placed on its corridor, else `null`. Older responses lack the
+            key: treat a missing key as `null`.
         motion:
           description: "`null` when there is nothing to move along (standing with no Run, no geometry)."
           anyOf:
@@ -2743,6 +2773,8 @@ components:
           $ref: "#/components/schemas/Position"
         delay_s: {type: [integer, "null"], description: Observed delay in seconds; `null` without a live signal.}
         next_stop: {type: [string, "null"], description: Stop id; `null` when unmatched.}
+        at_terminus: {type: boolean, description: "As `Vehicle`: waiting at the first Stop of its Run."}
+        direction: {type: [integer, "null"], enum: [0, 1, null], description: "As `Vehicle` (rev 12)."}
         source:
           type: string
           enum: [oasa, stasy, proastiakos]
@@ -2774,10 +2806,13 @@ components:
         source:
           type: string
           enum: [live, timetable]
-          description: "`live` only when GPS or a reported delay set `at`."
+          description: |
+            `live` only when GPS, a reported delay or (rev 11, OASA stops) OASA's own prediction
+            set `at`. An OASA prediction is listed only for a bus the backend has no Arrival of;
+            it has `vehicle` set and `scheduled_at`, `delay_s`, `run` `null`.
         run:
           type: [string, "null"]
-          description: Run id, so the card can open the Run before it starts.
+          description: Run id, so the card can open the Run before it starts; `null` for an OASA prediction.
         vehicle:
           type: [string, "null"]
           description: |

@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	vehiclesEvery  = 30 * time.Second // the snapshot is rebuilt at most this often
-	vehiclesMaxAge = 30
+	vehiclesEvery  = 10 * time.Second // the snapshot is rebuilt at most this often
+	vehiclesMaxAge = 10
 	vehicleMaxAge  = 5 * time.Minute // older GPS fixes are left out
 )
 

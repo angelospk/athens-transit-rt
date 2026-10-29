@@ -33,7 +33,8 @@ data (line list, shapes, stops) is on GitHub Pages:
 `.../static/v1/lines/{line_id}.json`.
 
 All responses are UTF-8, send `Access-Control-Allow-Origin: *`, and are gzip-compressed when
-the request allows it. Times are Unix seconds.
+the request allows it. Live responses also send `Access-Control-Expose-Headers: Date`, so
+browser code can read the server's `Date`. Times are Unix seconds.
 
 ## Examples
 
@@ -98,6 +99,8 @@ percent-encoded. Latin look-alikes also work (`A1` → `Α1`).
 
 - `trip_id`, `trip_label`, `delay_s` and `next_stop_id` are `null` when the vehicle is not
   matched to a scheduled trip. `bearing` and `variant` may be `null`.
+- `at_terminus` is `true` when the vehicle is matched and waiting at the first stop of its
+  trip; its `delay_s` is then a departure delay.
 - Refetch at `next_update_at`, not earlier: until then the answer does not change.
 - Asking for a line raises its polling priority for about 10 minutes (about every 30 s). If
   nobody asked for it recently, it is polled at once: `next_update_at` is then a few seconds
@@ -113,7 +116,7 @@ percent-encoded. Latin look-alikes also work (`A1` → `Α1`).
 ## All vehicles
 
 `GET /v1/vehicles` returns every vehicle with a GPS fix from the last 5 minutes, one snapshot
-for everyone, rebuilt at most every 30 s. Each vehicle has `line`, `id`, `lat`, `lon`,
+for everyone, rebuilt at most every 10 s. Each vehicle has `line`, `id`, `lat`, `lon`,
 `bearing`, `position_at`, `variant`, `delay_s`, `speed`, `path`, `path_beyond`, `path_stops` and `path_speeds`
 (same meanings as above).
 It does not raise any line's polling priority, so lines nobody watches update about every
@@ -165,7 +168,7 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
 | `GET /v2/lines/{id}` | one Line, its Patterns (stop order + shape) and Stops | 1 h |
 | `GET /v2/lines/{id}/vehicles` | the Line's vehicles now | until `next_update_at` |
 | `GET /v2/stops` | every Stop, compact rows `[id, name, lat, lon, modes, lines]` | 1 h |
-| `GET /v2/stops/{id}` | one Stop, its Lines and the next Arrivals (2 h, 4 per Line + headsign, 30 in all) | 15 s |
+| `GET /v2/stops/{id}` | one Stop, its Lines and the next Arrivals (2 h, 4 per Line + headsign, 30 in all); OASA stops add OASA's own predictions for buses the backend does not have | 15 s |
 | `GET /v2/vehicles`, `/v2/vehicles/tiles/{z}/{x}/{y}` | buses and trolleys (as `/v1/vehicles` and its tiles) | until `next_update_at` |
 | `GET /v2/vehicles/rail` | metro and tram trains | 15 s |
 | `GET /v2/vehicles/suburban` | suburban trains (opens the railway.gov.gr stream) | 5 s with trains, else 15 s |

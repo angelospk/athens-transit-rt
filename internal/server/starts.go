@@ -222,9 +222,70 @@ func endMatches(gtfsHeadsign, daily string) bool {
 	if i := strings.LastIndex(end, " - "); i >= 0 {
 		end = end[i+3:]
 	}
+	daily = bracketed.ReplaceAllString(daily, "")
 	a := endFold(rail.Fold(end))
-	b := endFold(rail.Fold(bracketed.ReplaceAllString(daily, "")))
-	return a != "" && b != "" && (strings.Contains(a, b) || strings.Contains(b, a))
+	b := endFold(rail.Fold(daily))
+	if a != "" && b != "" && (strings.Contains(a, b) || strings.Contains(b, a)) {
+		return true
+	}
+	wa, wb := endWords(end), endWords(daily)
+	return wordsIn(wa, wb) || wordsIn(wb, wa)
+}
+
+// endWord is one word of a place name, folded as endFold; abbr when it ended in a dot.
+type endWord struct {
+	w    string
+	abbr bool
+}
+
+// endWords splits a place name into words at spaces, hyphens and dots ("ΣΤ.ΝΙΚΑΙΑ" is two).
+func endWords(s string) []endWord {
+	var out []endWord
+	var b strings.Builder
+	flush := func(abbr bool) {
+		if b.Len() > 0 {
+			out = append(out, endWord{endFold(b.String()), abbr})
+			b.Reset()
+		}
+	}
+	for _, r := range rail.Fold(s) {
+		switch r {
+		case '.':
+			flush(true)
+		case ' ', '-':
+			flush(false)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	flush(false)
+	return out
+}
+
+// wordsIn tells whether short appears as consecutive words of long, an abbreviated word on either
+// side standing for any word it begins ("ΣΤ." for "ΣΤΑΘΜΟΣ", #21); at least one pair must be
+// whole words, so "ΣΤΑΘΜΟΣ" alone is not in "ΣΤ. ΚΗΦΙΣΙΑΣ".
+func wordsIn(short, long []endWord) bool {
+	for i := 0; len(short) > 0 && i+len(short) <= len(long); i++ {
+		whole, ok := false, true
+		for j, x := range short {
+			y := long[i+j]
+			switch {
+			case x.w == y.w && !x.abbr && !y.abbr:
+				whole = true
+			case x.abbr && strings.HasPrefix(y.w, x.w), y.abbr && strings.HasPrefix(x.w, y.w):
+			default:
+				ok = false
+			}
+			if !ok {
+				break
+			}
+		}
+		if ok && whole {
+			return true
+		}
+	}
+	return false
 }
 
 // shapesOf returns the shapes whose GTFS headsign ends where the daily headsign does. A loop has

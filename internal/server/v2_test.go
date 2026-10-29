@@ -223,7 +223,7 @@ func TestV2LineVehiclesMatchV1(t *testing.T) {
 	want := model.Vehicle{ID: "oasa:44548", Line: "oasa:L", Run: model.Ptr("oasa:run:T00:2026-10-05"), Mode: "bus",
 		Headsign: model.Ptr("EAST"), Label: model.Ptr("44548"),
 		Position: model.Position{Kind: model.GPS, Lat: old.Lat, Lon: old.Lon, Bearing: old.Bearing, At: old.PositionAt},
-		DelayS:   old.DelayS, NextStop: model.Ptr("oasa:S3"),
+		DelayS:   old.DelayS, NextStop: model.Ptr("oasa:S3"), Direction: model.Ptr(0),
 		Motion: &model.Motion{Path: old.Path, PathBeyond: old.PathBeyond, PathStops: old.PathStops, Speed: old.Speed,
 			PathSpeeds: old.PathSpeeds},
 		Source: "oasa"}

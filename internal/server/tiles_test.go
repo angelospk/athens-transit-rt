@@ -135,7 +135,7 @@ func TestVehicleTiles(t *testing.T) {
 	}
 	// An empty tile in the domain: the shared empty body of this build.
 	res, tb := get(t, a, "/v1/vehicles/tiles/13/4650/3150")
-	if tu, _, tv := rawVehicles(t, tb); res.StatusCode != 200 || len(tv) != 0 || tu != upd || maxAge(t, res) != 30 {
+	if tu, _, tv := rawVehicles(t, tb); res.StatusCode != 200 || len(tv) != 0 || tu != upd || maxAge(t, res) != 10 {
 		t.Fatalf("empty tile: %d %s", res.StatusCode, tb)
 	}
 	if a.sched.IsWatched("L") || a.sched.IsWatched("Α1") {
@@ -163,7 +163,7 @@ func TestTileHTTP(t *testing.T) {
 	resZ, gz := do(a, "GET", p, map[string]string{"Accept-Encoding": "gzip"})
 	if res.StatusCode != 200 || res.Header.Get("Content-Encoding") != "" || resZ.Header.Get("Content-Encoding") != "gzip" ||
 		res.Header.Get("Vary") != "Accept-Encoding" || resZ.Header.Get("Access-Control-Allow-Origin") != "*" ||
-		res.Header.Get("Content-Type") != "application/json; charset=utf-8" || res.Header.Get("Cache-Control") != "public, max-age=30" {
+		res.Header.Get("Content-Type") != "application/json; charset=utf-8" || res.Header.Get("Cache-Control") != "public, max-age=10" {
 		t.Fatalf("headers %d %v / %v", res.StatusCode, res.Header, resZ.Header)
 	}
 	zr, err := gzip.NewReader(bytes.NewReader(gz))
@@ -199,12 +199,12 @@ func TestTileHTTP(t *testing.T) {
 		t.Fatalf("empty tile: %d %v", re.StatusCode, reZ.Header)
 	}
 	// Max-age counts down to the next build, like /v1/vehicles.
-	now = now.Add(26 * time.Second)
+	now = now.Add(7 * time.Second)
 	if r, b := do(a, "GET", p, nil); maxAge(t, r) != 5 || !bytes.Equal(b, raw) {
 		t.Fatalf("later: max-age %d", maxAge(t, r))
 	}
-	now = now.Add(4 * time.Second)
-	if r, b := do(a, "GET", p, nil); maxAge(t, r) != 30 || bytes.Equal(b, raw) {
+	now = now.Add(3 * time.Second)
+	if r, b := do(a, "GET", p, nil); maxAge(t, r) != 10 || bytes.Equal(b, raw) {
 		t.Fatalf("not rebuilt: max-age %d %s", maxAge(t, r), b)
 	}
 
