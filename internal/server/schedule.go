@@ -76,7 +76,7 @@ func (a *App) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	if date.Equal(today) {
 		if d, ok := a.dailyOfLine(r.Context(), line, today); ok {
 			resp := dailyToSchedule(line, date.Format(time.DateOnly), d)
-			a.markDailySeen(w0.feed, line, &resp, today)
+			a.markDailySeen(w0.feed, line, &resp, today, d.Circular)
 			writeJSON(w, http.StatusOK, scheduleMaxAge, resp)
 			return
 		}

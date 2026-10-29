@@ -17,11 +17,12 @@ import (
 // them. runStarts watches the buses leave instead: a bus seen near the start of its shape and then
 // well along it left at its last fix near the start.
 const (
-	startNearM  = 300.0            // still at the start (waiting, or just pulling out)
-	startAwayM  = 600.0            // gone: on its way
-	startMaxGap = 15 * time.Minute // longer between the two fixes is not one departure
-	seenEarly   = 3 * time.Minute  // a run left this early still counts
-	seenLate    = 20 * time.Minute // ...or this late; after that without a bus it is missed
+	startNearM   = 300.0            // still at the start (waiting, or just pulling out)
+	startAwayM   = 600.0            // gone: on its way
+	startSwitchM = 1500.0           // the first fix on a late route code this close to the start
+	startMaxGap  = 15 * time.Minute // longer between the two fixes is not one departure
+	seenEarly    = 3 * time.Minute  // a run left this early still counts
+	seenLate     = 20 * time.Minute // ...or this late; after that without a bus it is missed
 )
 
 type startKey struct {
@@ -34,6 +35,7 @@ type startState struct {
 	last    time.Time // the newest fix: older ones come late and are dropped
 	near    time.Time // last fix near the start; zero once the run is counted
 	nearEnd bool      // ...put at the shape's end: a loop, whose end is its start
+	from    float64   // s of the first fix after a late route switch; zero when not in that mode
 }
 
 // A nil runStarts watches nothing.
@@ -73,11 +75,29 @@ func (rs *runStarts) observe(feed *gtfs.Feed, vehicle, line string, shape int32,
 	if st != nil && !t.After(st.last) {
 		return
 	}
+	if st != nil && st.key != k && st.key.line == line && s > startNearM && s <= startSwitchM &&
+		t.Sub(st.last) <= startMaxGap {
+		// OASA gave the route code late, the bus already at the stand or past it: the run began at
+		// the last fix of the old shape, and the fixes of the new one tell when it left.
+		rs.veh[vehicle] = &startState{key: k, last: t, near: st.last, from: s}
+		return
+	}
 	if st == nil || st.key != k {
 		st = &startState{key: k}
 		rs.veh[vehicle] = st
 	}
 	st.last = t
+	if st.from > 0 {
+		if s < st.from+startNearM {
+			st.near = t // still at the stand
+			return
+		}
+		if !st.near.IsZero() && t.Sub(st.near) <= startMaxGap {
+			rs.got[k] = append(rs.got[k], st.near)
+		}
+		st.near, st.from = time.Time{}, 0
+		return
+	}
 	switch {
 	case s <= startNearM:
 		st.near, st.nearEnd = t, false
@@ -172,6 +192,28 @@ func minutesOf(hhmm string) (int, bool) {
 
 var bracketed = regexp.MustCompile(`\([^)]*\)`)
 
+// latinGreek maps the Latin letters that look like a Greek one: OASA writes some names with a
+// Latin X or H. Lower case, as rail.Fold leaves them.
+var latinGreek = map[rune]rune{
+	'a': 'α', 'b': 'β', 'e': 'ε', 'h': 'η', 'i': 'ι', 'k': 'κ', 'm': 'μ',
+	'n': 'ν', 'o': 'ο', 'p': 'ρ', 't': 'τ', 'x': 'χ', 'y': 'υ', 'z': 'ζ',
+}
+
+// endFold folds a folded name for the end comparison: no spaces, dots or hyphens, and the
+// look-alike letters as Greek, so "ΑΓ. ΚΟΣΜΑΣ" and "ΑΓ.ΚΟΣΜΑΣ" are one name.
+func endFold(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if g, ok := latinGreek[r]; ok {
+			r = g
+		}
+		if r != ' ' && r != '.' && r != '-' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // endMatches tells whether a GTFS headsign ("START - VIA - END") ends at the place a daily
 // direction is named after; bracketed notes do not count.
 func endMatches(gtfsHeadsign, daily string) bool {
@@ -179,14 +221,26 @@ func endMatches(gtfsHeadsign, daily string) bool {
 	if i := strings.LastIndex(end, " - "); i >= 0 {
 		end = end[i+3:]
 	}
-	a := strings.TrimSpace(rail.Fold(end))
-	b := strings.TrimSpace(rail.Fold(bracketed.ReplaceAllString(daily, "")))
+	a := endFold(rail.Fold(end))
+	b := endFold(rail.Fold(bracketed.ReplaceAllString(daily, "")))
 	return a != "" && b != "" && (strings.Contains(a, b) || strings.Contains(b, a))
+}
+
+// shapesOf returns the shapes whose GTFS headsign ends where the daily headsign does. A loop, or a
+// line with one shape only, has every shape: the daily timetable names no place to match.
+func shapesOf(shapes map[int32]string, headsign string, circular bool) []int32 {
+	var out []int32
+	for shape, head := range shapes {
+		if circular || len(shapes) == 1 || endMatches(head, headsign) {
+			out = append(out, shape)
+		}
+	}
+	return out
 }
 
 // markDailySeen sets the seen flags of today's daily timetable of line from the buses that left
 // the start of a shape ending where the direction does.
-func (a *App) markDailySeen(f *gtfs.Feed, line string, resp *ScheduleResponse, today time.Time) {
+func (a *App) markDailySeen(f *gtfs.Feed, line string, resp *ScheduleResponse, today time.Time, circular bool) {
 	now := a.now()
 	shapes := map[int32]string{}
 	for _, ti := range f.TripsForLine(line) {
@@ -201,10 +255,7 @@ func (a *App) markDailySeen(f *gtfs.Feed, line string, resp *ScheduleResponse, t
 		d := &resp.Directions[i]
 		var starts []time.Time
 		since := now
-		for shape, head := range shapes {
-			if !endMatches(head, d.Headsign) {
-				continue
-			}
+		for _, shape := range shapesOf(shapes, d.Headsign, circular) {
 			got, s := a.starts.of(f, line, shape, now)
 			starts = append(starts, got...)
 			since = s
