@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
+	"github.com/angelospk/athens-transit-rt/internal/gtfs/gtfstest"
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/sched"
 )
@@ -254,5 +255,49 @@ func TestStopJSONMatchesFixture(t *testing.T) {
 	}
 	if got, want := keys(t, body), keys(t, fix); !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys %v, fixture %v", got, want)
+	}
+}
+
+// The timetable's running time to the stop ends at its arrival, not after its wait there; the
+// waits at the stops on the way count.
+func TestStopBoardTravelEndsAtArrival(t *testing.T) {
+	a := newApp(t, monday1020)
+	a.SetFeed(gtfstest.StraightLine{Stops: 5, Trips: 6, First: 10 * 3600, Headway: 10, Leg: 5, Dwell: 60}.Feed(t), nil)
+	w := a.world()
+	f := w.feed
+	trip := f.Trip(0)
+	g := w.matcher.Geometry(trip)
+	if got := boardTravel(f, g, f.ShapeID(trip), nil, 0, trip, g.StopAlong[2], g.StopAlong[3]); math.Abs(got-240) > 1 {
+		t.Fatalf("S2 to S3: %.0f s, want 240 (leaves 10:11, due 10:15)", got)
+	}
+	if got := boardTravel(f, g, f.ShapeID(trip), nil, 0, trip, g.StopAlong[1], g.StopAlong[3]); math.Abs(got-540) > 1 {
+		t.Fatalf("S1 to S3: %.0f s, want 540 (the wait at S2 counts)", got)
+	}
+}
+
+// A bus whose fix is stale, or that went on to another line, no longer runs its trip: the
+// trip's timetable row comes back.
+func TestStopBoardGoneBusLeavesItsTripToTheTimetable(t *testing.T) {
+	now := time.Date(2026, 10, 5, 10, 25, 0, 0, gtfs.Athens)
+	isT03 := func(sr StopResponse) (live, sched bool) {
+		for _, r := range sr.Arrivals {
+			if r.TripID != nil && *r.TripID == "T03" {
+				live, sched = live || r.Source == "live", sched || r.Source == "schedule"
+			}
+		}
+		return
+	}
+	a := newAppWith(t, sched.DefaultConfig(), func() time.Time { return now.Add(staleFix) })
+	pollOne(a, now, "w", 23.7001, now.Add(-10*time.Second)) // waiting at S0 for T03 (10:30)
+	if live, sch := isT03(func() StopResponse { sr, _ := stopBody(t, a, "S2"); return sr }()); live || !sch {
+		t.Fatalf("stale bus: live %v, schedule %v", live, sch)
+	}
+	b := newApp(t, now)
+	pollOne(b, now, "w", 23.7001, now.Add(-10*time.Second))
+	b.mu.Lock()
+	b.lines["Α1"] = &lineData{updated: now, feed: b.w.feed, results: []match.Result{{VehicleID: "w", Line: "Α1", Trip: -1, Time: now}}}
+	b.mu.Unlock()
+	if live, sch := isT03(func() StopResponse { sr, _ := stopBody(t, b, "S2"); return sr }()); live || !sch {
+		t.Fatalf("bus on another line: live %v, schedule %v", live, sch)
 	}
 }

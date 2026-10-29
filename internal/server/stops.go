@@ -225,10 +225,13 @@ func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []S
 		}
 		for i := range d.results {
 			r := &d.results[i]
+			if newest[r.VehicleID].line != l || now.Sub(r.Time) >= staleFix {
+				continue
+			}
 			if r.Matched() {
 				running[[2]int64{int64(r.Trip), r.Day.Unix()}] = true
 			}
-			if newest[r.VehicleID].line != l || now.Sub(r.Time) >= staleFix || i >= len(d.board) {
+			if i >= len(d.board) {
 				continue
 			}
 			buses = append(buses, boardVehicle{l, r, d.board[i]})
@@ -348,7 +351,7 @@ func boardTravel(f *gtfs.Feed, g *geo.Geometry, shape string, tab *segspeed.Tabl
 		if v, ok := tab.Speed(shape, bin, slot); ok {
 			secs += (end - x) / max(v, boardMinBinMS)
 		} else if trip != nil {
-			secs += schedAt(f, g, trip, end) - schedAt(f, g, trip, x)
+			secs += schedAt(f, g, trip, end, end == to) - schedAt(f, g, trip, x, false)
 		} else {
 			secs += (end - x) / boardDefaultMS
 		}
@@ -358,9 +361,13 @@ func boardTravel(f *gtfs.Feed, g *geo.Geometry, shape string, tab *segspeed.Tabl
 }
 
 // schedAt is the trip's scheduled time (seconds of its service day) at a point along g, between
-// the stops' times as the matcher measures delay.
-func schedAt(f *gtfs.Feed, g *geo.Geometry, t *gtfs.Trip, along float64) float64 {
+// the stops' times as the matcher measures delay. At a stop it is the departure, or with arrive
+// the arrival: the wait at the stop asked for is not driving time to it.
+func schedAt(f *gtfs.Feed, g *geo.Geometry, t *gtfs.Trip, along float64, arrive bool) float64 {
 	p := g.Progress(along)
+	if k := int(p); arrive && float64(k) == p && k > 0 {
+		return float64(f.StopTime(t, k).Arr)
+	}
 	seg := min(int(p), f.NumStops(t)-2)
 	a, b := f.StopTime(t, seg), f.StopTime(t, seg+1)
 	return float64(a.Dep) + (p-float64(seg))*float64(b.Arr-a.Dep)
