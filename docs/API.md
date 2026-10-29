@@ -22,7 +22,8 @@ The list of endpoints, their parameters and response schemas is the OpenAPI 3.1 
 
 Live: `/v1/lines/{line_id}`, `/v1/lines/{line_id}/schedule`, `/v1/vehicles`,
 `/v1/vehicles/tiles/{z}/{x}/{y}`, `/v1/gtfs-rt/{vehicle_positions,trip_updates}.{pb,json}`,
-`/v1/stops/{stop_id}`, `/v1/status`, `/v1/stats`, `/v1/stats/days/{YYYY-MM-DD}`, `/v1/rail/stasy/departures`,
+`/v1/stops/{stop_id}`, `/v1/stops/{stop_id}/arrivals`, `/v1/status`, `/v1/stats`,
+`/v1/stats/days/{YYYY-MM-DD}`, `/v1/rail/stasy/departures`,
 `/v1/rail/stasy/vehicles`, `/v1/rail/stasy/trips/{id}`, `/v1/rail/suburban/stations`,
 `/v1/rail/suburban/stations/{id}/departures`, `/v1/rail/suburban/vehicles`,
 `/v1/rail/suburban/trains/{no}`, `/healthz`. Static
@@ -138,6 +139,29 @@ GTFS-RT trip updates. Only buses already on a trip (driving it or waiting at its
 listed; buses not heard of for 5 minutes are left out.
 The request raises the polling priority of the stop's lines that have a bus on the way (in
 `arrivals`); a line with none keeps its usual rate. Cached 15 s.
+
+## OASA's predictions at a stop
+
+`GET /v1/stops/{stop_id}/arrivals` gives OASA's own predictions for a stop, soonest first:
+
+```bash
+curl -s https://transit.haroldpoi.dev/v1/stops/240084/arrivals
+# {"stop_id":"240084","stop_name":"ΠΛ. ΔΑΒΑΚΗ","updated_at":1793210650,
+#  "arrivals":[{"line":"5","route_code":"1992","vehicle":"88019","minutes":28}]}
+```
+
+`stop_id` is the GTFS `stop_id` (the OASA stop code), as in the stops of
+`static/v1/lines/{line_id}.json`. The predictions come from OASA (`getStopArrivals`), so they
+work without a GTFS trip match, also while the static GTFS is expired and `/v1/stops/{stop_id}`
+has no matched buses to list. `line` is empty when the route code is not in OASA's line list.
+
+Each stop costs one OASA call per 30 s: answers are cached 30 s per stop, requests for the same
+stop at the same moment share one call, and `Cache-Control` lasts until that cache expires
+(`max-age` 5-30). The calls share the server's OASA budget with the line polls but get at most
+one request slot in four, so the vehicle positions keep at least three quarters of it. At most
+16 such calls wait at once; past that the answer is `503 busy`. When OASA or the queue cannot
+answer, the stop's last good answer up to 2 minutes old is served instead, with its own
+`updated_at` and `max-age=5`. Unknown stop ids get `404` without asking OASA.
 
 ## Schedules
 
@@ -390,8 +414,11 @@ stateless, no authentication, read-only). Names are Greek, times are Europe/Athe
 | `404` | `{"error":"unknown_line"}` | no such line |
 | `404` | `{"error":"unknown_stop"}` | no such stop |
 | `404` | `{"error":"not_found"}` | unknown path or feed name |
+| `404` | `{"error":"unknown_stop"}` | no such stop in the GTFS |
 | `503` | `{"error":"warming_up"}` | the line was not polled yet after a start; retry in a few seconds |
 | `503` | `{"error":"feed_unavailable"}` | the GTFS-RT feed is not built yet after a start |
+| `503` | `{"error":"busy"}` | stop arrivals: the server's OASA request queue is full and nothing recent is cached; retry shortly |
+| `502` | `{"error":"upstream_unavailable"}` | OASA (or the rail source) failed and nothing recent is cached |
 | `429` | (from Cloudflare) | more than about 30 requests per 10 s from one IP; wait at least 10 s |
 
 - `/v1/status` reports `ok: false` when no line poll succeeded in the last 5 minutes. During an
