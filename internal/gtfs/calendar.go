@@ -90,6 +90,27 @@ func (f *Feed) PlanningTime(now time.Time) time.Time {
 	return now
 }
 
+// ShapesAround returns the shapes of the line's trips whose run, padded as in CandidateTrips,
+// covers the time of day of now on any service day: what may run around now whatever the
+// calendar says (the OASA GTFS puts some weekly variants on the wrong weekday).
+func (f *Feed) ShapesAround(line string, now time.Time, before, after int32) map[int32]bool {
+	out := map[int32]bool{}
+	today := ServiceDay(now)
+	for _, day := range []time.Time{today, ServiceDay(dayDate(today).Add(-24 * time.Hour))} {
+		secs := int32(now.Sub(day) / time.Second)
+		for _, ti := range f.byStart[line] {
+			t := &f.Trips[ti]
+			if f.Start(t)-before > secs {
+				break // sorted by start
+			}
+			if secs <= f.End(t)+after {
+				out[t.Shape] = true
+			}
+		}
+	}
+	return out
+}
+
 // Candidate is a trip whose scheduled run (padded) covers a moment.
 type Candidate struct {
 	Trip int32

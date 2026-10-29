@@ -9,6 +9,12 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Buses on a weekly variant route ("every Thursday, street market") are polled again. The OASA
+  GTFS puts these variants of Α3, 447, 731, 120, 856 and others on the wrong weekday, so on
+  the real day their route code was never asked and the buses of that leg were missing from the
+  map and from the seen flags. A route code is now polled when its shapes run at this time of
+  day on any weekday; an empty one backs off to every 5 min as before
+  ([#20](https://github.com/angelospk/athens-transit-rt/issues/20)).
 - Live responses send `Access-Control-Expose-Headers: Date` (contract rev 10), so a browser
   `fetch()` can read the server time and a new tab sees a stopped feed on its first response
   ([#3](https://github.com/angelospk/athens-transit-rt/issues/3)).
