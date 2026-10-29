@@ -225,9 +225,10 @@ type v2StopsBody struct {
 }
 
 // handleV2Stops serves the stop index from bytes built once and reused until the stops or a
-// Source's state change. An ok Source's updated_at is left out of that key, so the strong
-// ETag (and 304) holds while the index stays the same; the body then carries the updated_at
-// of its build. A stale Source's updated_at no longer moves, so it is in the key.
+// Source's state change. The updated_at of an ok or indicative Source moves with every poll
+// and changes no stop, so it is left out of that key: the strong ETag (and 304) holds while
+// the index stays the same, and the body carries the updated_at of its build. A stale
+// Source's updated_at no longer moves, so it is in the key.
 func (a *App) handleV2Stops(w http.ResponseWriter, r *http.Request) {
 	out := []model.IndexEntry{}
 	for _, ad := range a.adapters {
@@ -247,7 +248,7 @@ func (a *App) handleV2Stops(w http.ResponseWriter, r *http.Request) {
 	sum.Write(stops)
 	for _, s := range src {
 		fmt.Fprintf(sum, "|%s=%s", s.ID, s.State)
-		if s.State != model.OK && s.UpdatedAt != nil {
+		if s.State == model.Stale && s.UpdatedAt != nil {
 			fmt.Fprintf(sum, "@%d", *s.UpdatedAt)
 		}
 	}

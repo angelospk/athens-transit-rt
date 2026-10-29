@@ -108,3 +108,26 @@ func TestV2StopsPrebuilt(t *testing.T) {
 		t.Fatalf("state change kept the old body: %q %.300s", r.Header.Get("ETag"), b)
 	}
 }
+
+// With an expired GTFS (oasa indicative), oasa's updated_at moves on every poll; the stop index
+// does not, so /v2/stops keeps its ETag across polls and answers 304.
+func TestV2StopsPrebuiltOnExpiredGTFS(t *testing.T) {
+	now := time.Date(2026, 10, 12, 10, 20, 0, 0, gtfs.Athens) // a Monday; the feed ends 2026-10-06
+	a := oasaOnly(newAppWith(t, sched.DefaultConfig(), func() time.Time { return now }))
+	poll(a, now)
+	var ls v2Lines
+	if v2get(t, a, "/v2/lines", &ls); stateOf(ls.Sources, "oasa") != model.Indicative {
+		t.Fatalf("oasa %s", asJSON(ls.Sources))
+	}
+	r1, _ := do(a, "GET", "/v2/stops", nil)
+	etag := r1.Header.Get("ETag")
+	now = now.Add(30 * time.Second)
+	poll(a, now) // a new publish: oasa's updated_at moves
+	if v2get(t, a, "/v2/lines", &ls); stateOf(ls.Sources, "oasa") != model.Indicative {
+		t.Fatalf("oasa after the second poll %s", asJSON(ls.Sources))
+	}
+	r2, _ := do(a, "GET", "/v2/stops", map[string]string{"If-None-Match": etag})
+	if etag == "" || r2.StatusCode != 304 || r2.Header.Get("ETag") != etag {
+		t.Fatalf("ETag %q then %d %q", etag, r2.StatusCode, r2.Header.Get("ETag"))
+	}
+}
