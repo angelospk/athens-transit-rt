@@ -173,7 +173,8 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
 
 - **Ids** are `<source>:<native>` and must be percent-encoded in a URL: `oasa:040`,
   `stasy:M2`, `stasy:συνταγμα-metro`, `proastiakos:KIATO`,
-  `proastiakos:6928c3c150ab5bc72b39cee6`, `oasa:run:<trip_id>:<YYYY-MM-DD>`,
+  `proastiakos:6928c3c150ab5bc72b39cee6`, `oasa:run:<trip_id>:<YYYY-MM-DD>` (a run of OASA's daily
+  schedule on an expired GTFS: `oasa:run:<trip_id>@<HHMM>:<YYYY-MM-DD>`),
   `proastiakos:run:<train no.>:<YYYY-MM-DD>`. An old id of a renamed Stop still answers, with
   the current `id` in the body. Unknown ids: `404` `unknown_line` / `unknown_stop` /
   `unknown_run`.
@@ -182,9 +183,12 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
   `ETag`; a complete one cached 1 h has a weak `ETag` and answers `304`.
 - **`position.kind`** is `gps` for buses and suburban trains, `estimate` for metro and tram (from
   the timetable; `motion.knots` moves them between snapshots). Arrival **`source`** is `live`
-  when GPS or a reported delay set `at`, else `timetable`.
+  when GPS or a reported delay set `at`, else `timetable`. When the OASA GTFS has expired, bus
+  `timetable` Arrivals and their Runs come from OASA's daily schedule of today (departure plus the
+  GTFS stop offsets); `oasa` is `indicative` only for lines whose daily schedule is not cached.
 - Suburban trains are only in `/v2/vehicles/suburban`, so map traffic (buses, metro, tram) does
-  not keep the railway.gov.gr stream open. Load it only while a suburban layer is on. A suburban Stop or Line vehicles request opens it too; it closes
+  not keep the railway.gov.gr stream open. Load it only while a suburban layer is on. A suburban
+  Stop or Line vehicles request opens the stream too; it closes
   3 minutes after the last such request.
 
 ```bash

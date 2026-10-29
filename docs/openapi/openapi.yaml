@@ -1668,7 +1668,9 @@ paths:
             Run id, namespaced and percent-encoded:
             `oasa:run:<trip_id>:<date>`, `stasy:run:<trip_id>:<date>`,
             `proastiakos:run:<train no.>:<date>`, e.g.
-            `proastiakos:run:1226:2026-10-29`. Clients never store it.
+            `proastiakos:run:1226:2026-10-29`. On an expired OASA GTFS a run of
+            OASA's daily schedule is `oasa:run:<trip_id>@<HHMM>:<date>`. Clients
+            never store it.
           schema: {type: string}
           example: "proastiakos:run:1226:2026-10-29"
       responses:
