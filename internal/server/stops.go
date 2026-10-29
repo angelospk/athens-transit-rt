@@ -348,7 +348,7 @@ func liveArrival(f *gtfs.Feed, tab *segspeed.Table, stop int32, b boardVehicle, 
 			dep := r.Day.Add(time.Duration(f.Start(t)) * time.Second)
 			if !leave.IsZero() {
 				dep = leave
-				row.Scheduled = ptr(leave.Unix() + int64(f.StopTime(t, j).Arr-f.Start(t)))
+				row.Scheduled, row.DelayS = ptr(leave.Unix()+int64(f.StopTime(t, j).Arr-f.Start(t))), 0
 			}
 			start = maxTime(dep, now)
 		}
