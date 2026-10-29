@@ -170,6 +170,8 @@ type Vehicle struct {
 	Position Position `json:"position"`
 	DelayS   *int     `json:"delay_s"`
 	NextStop *string  `json:"next_stop"`
+	// AtTerminus: matched and waiting at the first stop of its Run (bus only; false otherwise).
+	AtTerminus bool `json:"at_terminus"`
 	// Direction: the direction (0/1) of the Pattern it runs, nil when unknown.
 	Direction *int    `json:"direction"`
 	Motion    *Motion `json:"motion"`
@@ -178,21 +180,22 @@ type Vehicle struct {
 
 // LiteVehicle is a Vehicle without motion (vehicle tiles at zoom 9: the key is absent).
 type LiteVehicle struct {
-	ID        string   `json:"id"`
-	Line      string   `json:"line"`
-	Run       *string  `json:"run"`
-	Mode      string   `json:"mode"`
-	Headsign  *string  `json:"headsign"`
-	Label     *string  `json:"label"`
-	Position  Position `json:"position"`
-	DelayS    *int     `json:"delay_s"`
-	NextStop  *string  `json:"next_stop"`
-	Direction *int     `json:"direction"`
-	Source    string   `json:"source"`
+	ID         string   `json:"id"`
+	Line       string   `json:"line"`
+	Run        *string  `json:"run"`
+	Mode       string   `json:"mode"`
+	Headsign   *string  `json:"headsign"`
+	Label      *string  `json:"label"`
+	Position   Position `json:"position"`
+	DelayS     *int     `json:"delay_s"`
+	NextStop   *string  `json:"next_stop"`
+	AtTerminus bool     `json:"at_terminus"`
+	Direction  *int     `json:"direction"`
+	Source     string   `json:"source"`
 }
 
 func (v Vehicle) Lite() LiteVehicle {
-	return LiteVehicle{v.ID, v.Line, v.Run, v.Mode, v.Headsign, v.Label, v.Position, v.DelayS, v.NextStop, v.Direction, v.Source}
+	return LiteVehicle{v.ID, v.Line, v.Run, v.Mode, v.Headsign, v.Label, v.Position, v.DelayS, v.NextStop, v.AtTerminus, v.Direction, v.Source}
 }
 
 type Arrival struct {

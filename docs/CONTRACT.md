@@ -16,7 +16,7 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
 
 Revision: 12 (2026-10-29): `direction` on `/v2` Vehicles; STASY Pattern directions follow
 branches (M3 airport)
-(rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
+(rev 11: `/v2/stops/{id}` bus Arrivals include OASA's own predictions; rev 10: live responses send `Access-Control-Expose-Headers: Date`; rev 9: `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles; rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
 ([below](#unified-api-v2-rev-8)); rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
 `path` on vehicles)
 
@@ -32,7 +32,10 @@ branches (M3 airport)
 All JSON is UTF-8. Line ids are the OASA telematics `LineID` in Greek uppercase
 (`040`, `550`, `Α1`, `Χ96`), percent-encoded in URLs. The backend also accepts the
 Latin look-alikes (`A1` → `Α1`). Times are Unix seconds (integers).
-CORS: every live and static response has `Access-Control-Allow-Origin: *`.
+CORS: every live and static response has `Access-Control-Allow-Origin: *`. Live responses
+also send `Access-Control-Expose-Headers: Date` (rev 10), so a browser `fetch()` can read the
+server's `Date`. A copy from the browser cache keeps its old `Date`: use it as a lower bound on
+server time.
 
 ## Live API (`transit.haroldpoi.dev`)
 
@@ -58,6 +61,7 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
       "trip_label": "00:35 ΠΕΙΡΑΙΑΣ → ΣΥΝΤΑΓΜΑ",
       "delay_s": 140,
       "next_stop_id": "400012",
+      "at_terminus": false,
       "speed": 6.4,
       "path": [[37.9755, 23.7348], [37.97601, 23.73502], [37.9781, 23.7356]],
       "path_beyond": [[37.9781, 23.7356], [37.98145, 23.73668], [37.98466, 23.73771]],
@@ -70,6 +74,10 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
 
 - `trip_id`, `trip_label`, `delay_s`, `next_stop_id` are `null` when the vehicle is
   not matched to a scheduled trip. `bearing` may be `null`.
+- `at_terminus` (rev 9): `true` when the vehicle is matched and waiting at the first stop of
+  its trip (within 100 m of it, before the scheduled departure); its `delay_s` is then a
+  departure delay, not a running delay. `false` otherwise. Older responses lack the key:
+  treat a missing key as `false`.
 - `variant` keys into `static/v1/lines/{line_id}.json` → `variants` (for shape + stops).
   It may be `null` if no static variant matches.
 - `speed` (rev 3): smoothed speed along the route in m/s, one decimal, 0..20. It is the
@@ -358,7 +366,7 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
 - **Suburban Arrivals** are only runs of the three corridors (CHALKIDA, KIATO, PIRAIR), by the
   board's own corridor field (22). A board delay is `live` only for a run under way; a run not
   started is `timetable` (23). A train on the stream with no delay keeps `timetable` but names its
-  `vehicle` (24). ose.mpass is not used by `/v2`: with no board, the Source is `down` (25).
+  `vehicle` (24). ose.mpass is not used by `/v2`: with no board and its last fetch failed, the Source is `down` (25).
 - **Suburban stale**: board over 30 min old and its refresh failing, or the open stream silent
   for 2 min (26).
 - **Suburban Vehicles** far (> 300 m) from their corridor keep their GPS position with
@@ -368,7 +376,16 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
 - **An unmatched bus on its way is still an Arrival** (`run`, `scheduled_at`, `delay_s` null),
   as `/v1/stops/{id}` lists it (2). A Run's last stop is not an Arrival (15).
 - **`status: delayed`** from 5 minutes of delay in every mode (3). oasa Stop `name_en` and stasy
-  Line/Stop `name_en` are `null`: the sources have no English names (5, 13, 14).
+  Line `name_en` are `null`: the sources have no English names (5, 14). stasy Stop `name` and
+  `name_en` come from a hand-checked table built from OpenStreetMap
+  (`internal/railgeo/stasy_stops.json`, `scripts/stasy-stop-names.py`): metro "Σύνταγμα",
+  not STASY's "ΣΥΝΤΑΓΜΑ"; tram names as STASY writes them. A Stop the table lacks (new or
+  renamed in the feed) keeps the STASY name with `name_en: null` and is logged; a renamed Stop
+  gets a permanent alias in the table (13, review #9 items 4 and 7). A point of the feed that
+  is no station is merged into its Stop by an alias too: ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ, where M3
+  airport trains move onto the suburban tracks 91 m past Δουκίσσης Πλακεντίας, is not in
+  `/v2/stops`; a Pattern or Run lists Πλακεντίας once, arriving at the station and leaving at
+  the point's departure, and its Arrivals are Πλακεντίας Arrivals.
 - `/v2/vehicles/rail` is metro and tram only, cached 15 s. Suburban trains are in
   `/v2/vehicles/suburban`, cached 5 s while trains are in it, else 15 s (review #9, item 11).
 
@@ -392,7 +409,7 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
 |---|---|---|---|---|
 | `oasa` | OASA static GTFS + telematics API | bus, trolley | `internal/gtfs`, `internal/telematics`, `internal/match`, `internal/server/stops.go` | GPS every 30-150 s; delay from the matcher |
 | `stasy` | STASY static GTFS (data.gov.gr CKAN) + OSM track geometry | metro, tram | `internal/rail/stasy*.go` | none: timetable only |
-| `proastiakos` | railway.gov.gr stations, schedule boards, train-stream (SSE); ose.mpass fallback | suburban | `internal/rail/proastiakos.go`, `trainstream.go` | GPS + delay while the stream is open |
+| `proastiakos` | railway.gov.gr stations, schedule boards, train-stream (SSE); ose.mpass is not used by `/v2` (25) | suburban | `internal/rail/proastiakos.go`, `trainstream.go` | GPS + delay while the stream is open |
 
 New per adapter (phase 2): a stable id scheme (§3), Line names and colours, geometry, and an
 alias table for ids that the upstream renames.
@@ -487,6 +504,7 @@ and compare them; they never parse them.
   "position": {"kind": "estimate", "lat": 37.9722, "lon": 23.7325, "bearing": 205, "at": 1793205600},
   "delay_s": null,
   "next_stop": "stasy:ακροπολη-metro",
+  "at_terminus": false,
   "direction": 0,
   "motion": {
     "path": [[37.9722, 23.7325], [37.96882, 23.72963]],
@@ -507,6 +525,9 @@ and compare them; they never parse them.
 - `delay_s`: `null` when there is no live signal (always for metro/tram).
 - `run`: Run id, `null` when the Vehicle is not matched to a Run.
 - `next_stop`: Stop id, `null` when unmatched.
+- `at_terminus` (rev 9): `true` when a bus or trolley is matched and waiting at the first Stop
+  of its Run (the `/v1` meaning); always `false` for metro, tram and suburban. Present in tiles
+  at zoom 9 too.
 - `direction` (rev 12): the `direction` (0/1) of the Pattern the Vehicle runs, so a client can
   put it on one of the Line's two tracks without a `/v2/runs` call. Metro and tram: always set.
   Bus and trolley: the matched trip's direction, else the direction of the trip the bus was
@@ -554,16 +575,23 @@ and compare them; they never parse them.
 ```
 
 - `at`: the expected time (leaving time for rail; see the Glossary). Always present.
-- `scheduled_at`: the timetable time; `null` when the Source has no timetable for it (an OASA bus
-  matched to no trip is not listed at all, as in rev 7).
+- `scheduled_at`: the timetable time; `null` when the Source has no timetable for it: an OASA bus
+  on its way but matched to no trip is listed with `scheduled_at`, `run` and `delay_s` `null`, as
+  `/v1/stops/{id}` lists it (2).
 - `delay_s`: the **observed** delay of the Vehicle (or the Source's reported delay for the
   Run), else `null`. Normally `at = scheduled_at + delay_s`, but `at` is clamped to now (a bus
   already due), so clients must not compute one from the other.
 - `source`: `live` | `timetable`. `live` only when GPS or a reported delay set `at`. Suburban
   precedence: stream delay (stream open) → board delay (board ≤ 10 min old) → timetable; the
   first two give `live`.
-- `run`: Run id, so the card can open the Run even before it starts; `null` only for an OASA
-  bus matched to no trip (not listed today).
+- `run`: Run id, so the card can open the Run even before it starts; `null` for an OASA bus
+  matched to no trip and for an OASA prediction (below).
+- OASA predictions (rev 11): an OASA stop also lists OASA's own predictions (`getStopArrivals`)
+  for the buses the backend has no Arrival of, as `source: live`, `at` = OASA's minutes from its
+  last answer (whole minutes, at most 2 min old, refreshed in the background every 30 s while
+  the stop is asked for), `vehicle` and `vehicle_label` set; `scheduled_at`, `delay_s` and `run`
+  `null`. A bus both list appears once, with the backend's time. Such a bus may also be the one
+  that will run a `timetable` Arrival of the same line: OASA does not say which trip it runs.
 - `vehicle`, `vehicle_label`: `null` when no Vehicle is on the Run yet or none is known. Metro/tram:
   `vehicle` is set only while the Run is under way; `vehicle_label` is always `null`.
 - `platform`: `null` unless the Source gives one (only railway.gov.gr today).
@@ -586,8 +614,8 @@ because their signals differ:
 | Source | `stale` when | `indicative` when | `down` when |
 |---|---|---|---|
 | `oasa` | no successful line poll for 5 min (as `/v1/status` `ok:false`) | static GTFS expired and no OASA daily schedule of today cached for the response's lines (any line for the lists) | no data since start |
-| `stasy` | the daily check failed and the loaded timetable is from an earlier day | timetable expired (today's `indicative:true`) | no timetable loaded |
-| `proastiakos` | stream open but no event for 2 min, or board older than 30 min | never | no board and no ose.mpass answer |
+| `stasy` | not reported yet: the timetable store does not expose its last check (19) | timetable expired (today's `indicative:true`) | no timetable loaded |
+| `proastiakos` | board older than 30 min and its last refresh failed, or the stream open and silent for 2 min (a stream that never sent an event is not stale) (26) | never | no board, none cached, and the last board fetch failed (an idle start with no board yet is `ok`) (25) |
 
 `updated_at`: the last good data of that Source (GPS fix, stream event, board fetch, timetable
 load). Only the
@@ -679,7 +707,7 @@ Rules:
 |---|---|---|---|
 | Line `label` | ✓ | ✓ | — (badge falls back) |
 | Line `color` | ✓ (GTFS / default) | ✓ GTFS `route_color` | adapter table |
-| Stop `name_en` | ✓ most | ✓ | ✓ |
+| Stop `name_en` | — (`null`: not in the OASA GTFS) | ✓ name table (OSM, checked by hand) | ✓ |
 | Pattern `shape` | ✓ GTFS | ✓ OSM track | ✓ corridor path |
 | Vehicle `position.kind` | `gps` | `estimate` | `gps` ↻ |
 | Vehicle `label` | ✓ fleet no. | — | ✓ train no. |
@@ -700,7 +728,8 @@ Rules:
 - **`oasa`**: Line, Pattern, Stop from the OASA GTFS (today's static `lines.json` /
   `lines/{id}.json` data); Vehicle from the matcher's vehicles (today's `/v1/lines/{id}` fields
   renamed: `bearing`, `position_at` → `position`; `variant` → Pattern id; `trip_label` dropped
-  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`. On an
+  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`, plus
+  OASA's `getStopArrivals` for buses it does not have (rev 11). On an
   expired GTFS the timetable Arrivals and their Runs come from OASA's daily schedule
   (`getDailySchedule`, cached and prefetched once a day; a request never asks OASA for it): the
   run's departure plus the stop's offset in the GTFS trip of that direction that starts nearest
@@ -713,8 +742,9 @@ Rules:
 - **`proastiakos`**: Line from the corridor table (names and colours in the adapter, as
   `suburban.json` has them); Stop from `corridor-stations` (ids merged, aliases kept); Pattern
   from the corridor path and its ordered stations; Vehicle from the train-stream (snapped to the
-  corridor path; `course` → `bearing`); Arrival from the board + stream delay; ose.mpass when the
-  board fails.
+  corridor path; `course` → `bearing`); Arrival from the board + stream delay; with no board and none
+  cached, no Arrivals, and the Source is `down` once the board fetch has failed (ose.mpass has no corridor, so it cannot give a
+  Line).
 
 ### 8. Not in rev 8
 

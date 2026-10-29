@@ -1,7 +1,8 @@
-# UI spec (DRAFT): one stop card, one line card, one vehicle marker
+# UI spec: one stop card, one line card, one vehicle marker
 
-Status: **draft for Harold's approval, 2026-10-29.** For the app (Flutter, `athens-transit-app`)
-and the web (Svelte, `athens-transit-map`). Data: [CONTRACT-rev8-draft.md](CONTRACT-rev8-draft.md).
+Status: **approved 2026-10-29**; built in phases 3 (app) and 4 (web). For the app (Flutter,
+`athens-transit-app`) and the web (Svelte, `athens-transit-map`). Data: the `/v2` section of
+[CONTRACT.md](CONTRACT.md#unified-api-v2-rev-8).
 Terms: [GLOSSARY.md](GLOSSARY.md). Text spec only; the layout follows today's bus StopCard, so no
 mockup is needed.
 

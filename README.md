@@ -236,6 +236,7 @@ Use it only on a host that can reach OASA. Both listeners are on 127.0.0.1 only.
 | `ci` | push, PR | gofmt, `go vet`, `go test -race`, build; lint the OpenAPI spec |
 | `gtfs` | every 6 h at :17, manual, push to `docs/openapi/` | HEAD data.gov.gr; if ETag/Last-Modified/size changed (or forced), build the snapshot, upload release assets, deploy Pages; on a docs push, deploy Pages with the same static data |
 | `upstream-watch` | daily | compare `UPSTREAM.md` with upstream `main`; open one issue per new upstream head |
+| `live-check` | daily 08:23 UTC, manual | `scripts/check-openapi-live.py` against the public instance (every endpoint, strict schemas, /v2 data rules); a failure opens or comments on the `live-check` issue, a pass closes it |
 
 Static data: <https://angelospk.github.io/athens-transit-rt/static/v1/lines.json>.
 API docs: the same Pages site serves `docs/openapi/` at its root. Check the spec against the
