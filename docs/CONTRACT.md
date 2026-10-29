@@ -656,7 +656,7 @@ Rules:
 |---|---|---|---|
 | Line `label` | ✓ | ✓ | — (badge falls back) |
 | Line `color` | ✓ (GTFS / default) | ✓ GTFS `route_color` | adapter table |
-| Stop `name_en` | ✓ most | ✓ | ✓ |
+| Stop `name_en` | — (`null`: not in the OASA GTFS) | ✓ name table (OSM, checked by hand) | ✓ |
 | Pattern `shape` | ✓ GTFS | ✓ OSM track | ✓ corridor path |
 | Vehicle `position.kind` | `gps` | `estimate` | `gps` ↻ |
 | Vehicle `label` | ✓ fleet no. | — | ✓ train no. |
