@@ -93,6 +93,20 @@ func (a *App) states(now time.Time, ads ...Adapter) []model.SourceState {
 	return out
 }
 
+// lineStater is an Adapter whose state depends on the lines of the request: an expired timetable
+// of one line is not that of another.
+type lineStater interface {
+	StateOf(now time.Time, lines []string) model.SourceState
+}
+
+// statesOf is states for one adapter, with the lines of the request.
+func (a *App) statesOf(now time.Time, ad Adapter, lines []string) []model.SourceState {
+	if ls, ok := ad.(lineStater); ok {
+		return []model.SourceState{ls.StateOf(now, lines)}
+	}
+	return a.states(now, ad)
+}
+
 func (a *App) routeV2(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v2/lines", a.handleV2Lines)
 	mux.HandleFunc("GET /v2/lines/{id}", a.handleV2Line)
@@ -173,7 +187,7 @@ func (a *App) handleV2Line(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "unknown_line")
 		return
 	}
-	src := a.states(a.now(), ad)
+	src := a.statesOf(a.now(), ad, []string{id})
 	body := map[string]any{"line": nil, "patterns": []model.Pattern{}, "stops": map[string]model.Stop{}, "sources": src}
 	if err == nil {
 		body["line"], body["patterns"], body["stops"] = d.Line, d.Patterns, d.Stops
@@ -199,7 +213,7 @@ func (a *App) handleV2LineVehicles(w http.ResponseWriter, r *http.Request) {
 	if lv.Vehicles == nil {
 		lv.Vehicles = []model.Vehicle{}
 	}
-	src := a.states(now, ad)
+	src := a.statesOf(now, ad, []string{id})
 	writeV2(w, r, lv.MaxAge, src, map[string]any{"line": id, "updated_at": lv.UpdatedAt,
 		"next_update_at": lv.NextUpdateAt, "vehicles": lv.Vehicles, "sources": src})
 }
@@ -240,7 +254,11 @@ func (a *App) handleV2Stop(w http.ResponseWriter, r *http.Request) {
 			arr = got
 		}
 	}
-	src := a.states(now, ad)
+	ids := []string(nil)
+	if st != nil {
+		ids = st.Lines
+	}
+	src := a.statesOf(now, ad, ids)
 	writeV2(w, r, stopMaxAge, src, map[string]any{"stop": st, "lines": lines, "arrivals": arr,
 		"updated_at": now.Unix(), "sources": src})
 }
@@ -257,7 +275,11 @@ func (a *App) handleV2Run(w http.ResponseWriter, r *http.Request) {
 		notFound(w, "unknown_run")
 		return
 	}
-	src := a.states(now, ad)
+	ids := []string(nil)
+	if run != nil {
+		ids = []string{run.Line}
+	}
+	src := a.statesOf(now, ad, ids)
 	writeV2(w, r, v2RunMaxAge, src, map[string]any{"run": run, "sources": src})
 }
 

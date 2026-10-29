@@ -423,7 +423,8 @@ and compare them; they never parse them.
   (never removed), and a published Line or Stop id is **never reused** for another Line or Stop,
   so a saved Alert always resolves or fails with `404`, never to the wrong place.
 - Run ids (`oasa:run:<trip_id>:<date>`, `stasy:run:<trip_id>:<date>`,
-  `proastiakos:run:<train no.>:<date>`) and `stasy:run:*` Vehicle ids live only for their service
+  `proastiakos:run:<train no.>:<date>`; on an expired OASA GTFS a run of OASA's daily schedule is
+  `oasa:run:<trip_id>@<HHMM>:<date>`, its departure and the GTFS trip that gives its stop times) and `stasy:run:*` Vehicle ids live only for their service
   day. Clients never store Vehicle or Run ids.
 - `/v1` ids map 1:1: `/v1` line `040` = `oasa:040`; `/v1` stop `400012` = `oasa:400012`.
 
@@ -572,7 +573,7 @@ because their signals differ:
 
 | Source | `stale` when | `indicative` when | `down` when |
 |---|---|---|---|
-| `oasa` | no successful line poll for 5 min (as `/v1/status` `ok:false`) | static GTFS expired | no data since start |
+| `oasa` | no successful line poll for 5 min (as `/v1/status` `ok:false`) | static GTFS expired and no OASA daily schedule of today cached for the response's lines (any line for the lists) | no data since start |
 | `stasy` | the daily check failed and the loaded timetable is from an earlier day | timetable expired (today's `indicative:true`) | no timetable loaded |
 | `proastiakos` | stream open but no event for 2 min, or board older than 30 min | never | no board and no ose.mpass answer |
 
@@ -672,7 +673,11 @@ Rules:
 - **`oasa`**: Line, Pattern, Stop from the OASA GTFS (today's static `lines.json` /
   `lines/{id}.json` data); Vehicle from the matcher's vehicles (today's `/v1/lines/{id}` fields
   renamed: `bearing`, `position_at` → `position`; `variant` → Pattern id; `trip_label` dropped
-  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`.
+  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`. On an
+  expired GTFS the timetable Arrivals and their Runs come from OASA's daily schedule
+  (`getDailySchedule`, cached and prefetched once a day; a request never asks OASA for it): the
+  run's departure plus the stop's offset in the GTFS trip of that direction that starts nearest
+  in time. A line not cached yet has no timetable Arrivals (live ones only).
 - **`stasy`**: Line from `routes.txt` (+ default names "Γραμμή 1" … when the feed leaves them
   empty); Stop by folding `stops.txt` names per mode; Pattern from the distinct stop sequences of
   `trips.txt` + the OSM track cut between stops; Vehicle from `STASY.Vehicles` (`from`/`to`

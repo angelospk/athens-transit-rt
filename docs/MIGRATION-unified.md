@@ -96,5 +96,11 @@ Effect on this plan:
 - **Q1** Path prefix: `/v2/...`.
 - **Q2** Cross-mode places: separate Stops + "nearby Stops" list in the Stop card.
 - **Q3** Timetable bus Arrivals: yes, in phase 2 (step 3b).
+- **Frequent lines** (headway ≤ 20′): the Line card shows a frequency summary instead of
+  seen/missed per run: «X από Y σήμερα», runs per hour, and the longest gap. With buses every
+  few minutes, the seen window ([-3, +20] min) cannot tell which run a departure was, so
+  per-run flags say «some bus left», not «this run ran». Phase 3 (app) and phase 4 (web) build
+  this card; the `/v2` backend must give the numbers (runs seen and planned today, per hour,
+  longest gap between departures). (Harold, 2026-10-29.)
 - (Decided, not asked: rail vehicles come from `/v2/vehicles/rail`, not the bus tiles; Codex
   review 2026-10-29.)

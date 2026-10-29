@@ -18,6 +18,10 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   timetable on their OSM track and glide between snapshots (`motion.knots`); suburban trains come
   from the railway.gov.gr stream, snapped to their corridor. Rail geometry is now embedded in the
   backend. `/v1` is unchanged. Choices made on the way: `docs/DECISIONS-phase2.md`.
+- `/v2` on an expired OASA GTFS: bus timetable Arrivals and `/v2/runs` come from OASA's daily
+  schedule of today (cached, never asked per request): the departure plus the stop's offset in
+  the nearest GTFS trip of that direction. Run id `oasa:run:<trip_id>@<HHMM>:<date>`. `oasa` is
+  `indicative` only for lines without a cached daily schedule.
 - `GET /v1/stops/{stop_id}` (contract rev 8): arrival times now come from each bus's position
   and the typical driving speed to the stop (else the timetable's running time) instead of the
   timetable time plus delay; unmatched buses placed on their shape are listed too, and while

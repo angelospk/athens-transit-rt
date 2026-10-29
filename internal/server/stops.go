@@ -11,6 +11,7 @@ import (
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/segspeed"
+	"github.com/angelospk/athens-transit-rt/internal/telematics"
 )
 
 // Stop boards: the buses on their way to one stop and about when they get there, from what the
@@ -201,7 +202,7 @@ type boardVehicle struct {
 func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []StopArrival {
 	out := []StopArrival{}
 	per := map[[2]string]int{}
-	for _, row := range a.stopRows(w, stop, lines, now, boardHorizon) {
+	for _, row := range a.stopRows(w, stop, lines, now, boardHorizon, nil) {
 		k := [2]string{row.Line, row.Variant}
 		if per[k] < boardPerVariant {
 			per[k]++
@@ -212,8 +213,10 @@ func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []S
 	return out
 }
 
-// stopRows is every row of the stop board up to horizon ahead, soonest first, uncut.
-func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, horizon time.Duration) []StopArrival {
+// stopRows is every row of the stop board up to horizon ahead, soonest first, uncut. daily is
+// the line's timetable for an expired GTFS, nil when there is none (/v1).
+func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, horizon time.Duration,
+	daily func(line string) (telematics.DailySchedule, bool)) []StopArrival {
 	f := w.feed
 	a.mu.RLock()
 	// A bus that changed lines keeps its old line's result for a while: only its newest fix counts.
@@ -267,10 +270,25 @@ func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, hori
 			rows = append(rows, row)
 		}
 	}
-	// An expired timetable still matches vehicles (PlanningTime), but its times are not OASA's.
+	// An expired timetable still matches vehicles (PlanningTime), but its times are not OASA's:
+	// the rows of a line come from OASA's daily schedule when the cache has it.
 	if end := f.FeedEnd(); end.IsZero() || !gtfs.Midnight(now).After(end) {
 		for _, l := range lines {
 			rows = append(rows, scheduleArrivals(f, l, stop, now, horizon, running)...)
+		}
+	} else if daily != nil {
+		waiting := map[[2]string]int{} // a bus waiting at its start makes its variant's next run
+		for _, b := range buses {
+			if b.pos.waiting && b.r.Matched() {
+				if t := f.Trip(b.r.Trip); t.Shape >= 0 {
+					waiting[[2]string{b.line, f.ShapeID(t)}]++
+				}
+			}
+		}
+		for _, l := range lines {
+			if d, ok := daily(l); ok {
+				rows = append(rows, dailyArrivals(f, l, d, stop, now, horizon, waiting)...)
+			}
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool {

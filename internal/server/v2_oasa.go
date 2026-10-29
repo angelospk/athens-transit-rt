@@ -10,6 +10,7 @@ import (
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/model"
 	"github.com/angelospk/athens-transit-rt/internal/staticsite"
+	"github.com/angelospk/athens-transit-rt/internal/telematics"
 )
 
 // The oasa adapter: buses and trolleys from the OASA GTFS, the matcher's line polls and the
@@ -39,6 +40,16 @@ func (o *oasaAdapter) Resolve(kind Kind, id string) string {
 // succeeded for 5 minutes (as /v1/status ok:false), indicative on an expired GTFS. Never down:
 // the static feed always stands in.
 func (o *oasaAdapter) State(now time.Time) model.SourceState {
+	return o.state(now, nil)
+}
+
+// StateOf is State for the lines of one request: on an expired GTFS only a line without a daily
+// schedule of today cached is indicative; the others still have OASA's timetable.
+func (o *oasaAdapter) StateOf(now time.Time, lines []string) model.SourceState {
+	return o.state(now, lines)
+}
+
+func (o *oasaAdapter) state(now time.Time, lines []string) model.SourceState {
 	a := o.a
 	s := model.SourceState{ID: oasaNS, State: model.OK}
 	a.mu.RLock()
@@ -53,10 +64,25 @@ func (o *oasaAdapter) State(now time.Time) model.SourceState {
 		s.State = model.WarmingUp
 	case !ok:
 		s.State = model.Stale
-	case expired(w.feed, now):
+	case expired(w.feed, now) && !a.dailyToday(now, lines):
 		s.State = model.Indicative
 	}
 	return s
+}
+
+// dailyToday tells whether OASA's daily schedule of today is cached for every line id of the
+// request, or for some line of the feed when the request names none.
+func (a *App) dailyToday(now time.Time, lines []string) bool {
+	today := gtfs.Midnight(now)
+	if len(lines) == 0 {
+		return a.anyDailyCached(today)
+	}
+	for _, id := range lines {
+		if _, ok := a.dailyCached(strings.TrimPrefix(id, oasaPrefix), today); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // expired: the feed's calendar ended before today (its times then are not OASA's).
@@ -209,7 +235,8 @@ func (o *oasaAdapter) Arrivals(_ context.Context, stopID string, now time.Time) 
 	out := []model.Arrival{}
 	per := map[[2]string]int{}
 	watched := map[string]bool{}
-	for _, row := range o.a.stopRows(w, i, w.stopLines[i], now, v2Horizon) {
+	for _, row := range o.a.stopRows(w, i, w.stopLines[i], now, v2Horizon,
+		func(l string) (telematics.DailySchedule, bool) { return o.a.dailyCached(l, gtfs.Midnight(now)) }) {
 		k := [2]string{row.Line, row.Headsign}
 		if per[k] >= v2PerHeadsign {
 			continue
@@ -353,7 +380,8 @@ func (o *oasaAdapter) Vehicles(now time.Time) ([]model.Vehicle, error) {
 
 // Run is a trip of yesterday, today or tomorrow that runs that day: its stops at their
 // timetable times, plus the delay of the bus matched to it (a fix of the last 5 minutes). The
-// stops the bus has passed are marked; without a bus none is (no signal says it left).
+// stops the bus has passed are marked; without a bus none is (no signal says it left). A run of
+// OASA's daily schedule ("<trip>@<HHMM>") is the timetable of the trip that stands for it, no bus.
 func (o *oasaAdapter) Run(id string, now time.Time) (*model.Run, error) {
 	a := o.a
 	w := a.world()
@@ -365,14 +393,19 @@ func (o *oasaAdapter) Run(id string, now time.Time) (*model.Run, error) {
 	if !ok {
 		return nil, errUnknown
 	}
+	day := gtfs.ServiceDay(noon)
+	if d := noon.Sub(gtfs.ServiceDay(now).Add(12 * time.Hour)); d > oasaRunDayLeew || d < -oasaRunDayLeew {
+		return nil, errUnknown
+	}
+	if trip, hhmm, daily := strings.Cut(native, "@"); daily {
+		return o.dailyRun(f, id, trip, hhmm, day, now)
+	}
 	ti := f.TripIndex(native)
 	if ti < 0 {
 		return nil, errUnknown
 	}
 	t := f.Trip(ti)
-	day := gtfs.ServiceDay(noon)
-	if d := noon.Sub(gtfs.ServiceDay(now).Add(12 * time.Hour)); d > oasaRunDayLeew || d < -oasaRunDayLeew ||
-		!f.ServiceActive(t.Service, day) {
+	if !f.ServiceActive(t.Service, day) {
 		return nil, errUnknown
 	}
 	line := f.Line(t)
@@ -410,6 +443,44 @@ func (o *oasaAdapter) Run(id string, now time.Time) (*model.Run, error) {
 			}
 		}
 		run.Stops[k] = rs
+	}
+	return run, nil
+}
+
+// dailyRun is a run of OASA's daily schedule id "<trip>@<HHMM>": the timetable of that trip,
+// from today's departure plus the stops' offsets. The bus that makes it is not matched to the
+// trip, so no vehicle is shown.
+func (o *oasaAdapter) dailyRun(f *gtfs.Feed, id, trip, hhmm string, day, now time.Time) (*model.Run, error) {
+	m, ok := dailyMinutes(hhmm)
+	ti := f.TripIndex(trip)
+	if !ok || ti < 0 || !day.Equal(gtfs.ServiceDay(now)) {
+		return nil, errUnknown
+	}
+	t := f.Trip(ti)
+	line := f.Line(t)
+	d, cached := o.a.dailyCached(line, gtfs.Midnight(now))
+	if !cached {
+		return nil, errUnknown
+	}
+	dep, found := int64(0), false
+	for _, r := range dailyRuns(f, line, gtfs.Midnight(now).Format(time.DateOnly), d, day) {
+		if r.m == m && r.trip == ti {
+			dep, found = dailyAt(gtfs.Midnight(now), m).Unix(), true
+			break
+		}
+	}
+	if !found {
+		return nil, errUnknown
+	}
+	run := &model.Run{ID: id, Line: oasaPrefix + line, Headsign: f.Headsign(t), Status: model.Scheduled,
+		Stops: make([]model.RunStop, f.NumStops(t))}
+	if t.Shape >= 0 {
+		run.Pattern = model.Ptr(oasaPrefix + f.Shapes[t.Shape].ID)
+	}
+	for k := range run.Stops {
+		at := dep + int64(f.StopTime(t, k).Arr) - int64(f.Start(t))
+		run.Stops[k] = model.RunStop{Stop: oasaPrefix + f.Stops[f.StopTime(t, k).Stop].ID, ScheduledAt: model.Ptr(at),
+			At: at, Source: model.SourceTable}
 	}
 	return run, nil
 }

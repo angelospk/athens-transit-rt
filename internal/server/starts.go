@@ -239,10 +239,8 @@ func shapesOf(shapes map[int32]string, headsign string, loop bool) []int32 {
 	return out
 }
 
-// markDailySeen sets the seen flags of today's daily timetable of line from the buses that left
-// the start of a shape ending where the direction does.
-func (a *App) markDailySeen(f *gtfs.Feed, line string, resp *ScheduleResponse, today time.Time, circular bool) {
-	now := a.now()
+// lineShapes maps each shape of the line to the headsign of its first trip on it.
+func lineShapes(f *gtfs.Feed, line string) map[int32]string {
 	shapes := map[int32]string{}
 	for _, ti := range f.TripsForLine(line) {
 		t := f.Trip(ti)
@@ -252,6 +250,14 @@ func (a *App) markDailySeen(f *gtfs.Feed, line string, resp *ScheduleResponse, t
 			}
 		}
 	}
+	return shapes
+}
+
+// markDailySeen sets the seen flags of today's daily timetable of line from the buses that left
+// the start of a shape ending where the direction does.
+func (a *App) markDailySeen(f *gtfs.Feed, line string, resp *ScheduleResponse, today time.Time, circular bool) {
+	now := a.now()
+	shapes := lineShapes(f, line)
 	loop := circular || len(shapes) == 1 && len(resp.Directions) == 1 // one shape, one direction: a loop too
 	for i := range resp.Directions {
 		d := &resp.Directions[i]
