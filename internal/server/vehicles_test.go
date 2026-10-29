@@ -61,25 +61,25 @@ func TestVehiclesSnapshot(t *testing.T) {
 		t.Fatal("/v1/vehicles marked a line watched")
 	}
 	v := decodeVehicles(t, body)
-	if res.StatusCode != 200 || len(v.Vehicles) != 2 || v.UpdatedAt != now.Unix() || v.NextUpdateAt != now.Unix()+30 {
+	if res.StatusCode != 200 || len(v.Vehicles) != 2 || v.UpdatedAt != now.Unix() || v.NextUpdateAt != now.Unix()+10 {
 		t.Fatalf("%d %s", res.StatusCode, body)
 	}
 	if c := v.Vehicles[0]; c.Line != "L" || c.ID != "44548" || c.Lat != 37.98 || c.Lon != 23.725 || c.Variant == nil {
 		t.Fatalf("vehicle %+v", c)
 	}
-	if ma := maxAge(t, res); ma != 30 {
+	if ma := maxAge(t, res); ma != 10 {
 		t.Fatalf("max-age %d", ma)
 	}
 	etag := res.Header.Get("ETag")
 
 	// Same bytes until the next build, whatever was polled meanwhile (this poll replaces L's vehicles).
 	pollOne(a, now, "77", 23.71, now)
-	now = now.Add(26 * time.Second)
+	now = now.Add(7 * time.Second)
 	res2, body2 := get(t, a, "/v1/vehicles")
 	if !bytes.Equal(body, body2) || res2.Header.Get("ETag") != etag || maxAge(t, res2) != 5 {
 		t.Fatalf("not the same snapshot: max-age %d", maxAge(t, res2))
 	}
-	now = now.Add(4 * time.Second)
+	now = now.Add(3 * time.Second)
 	_, body3 := get(t, a, "/v1/vehicles")
 	if v := decodeVehicles(t, body3); len(v.Vehicles) != 1 || v.Vehicles[0].ID != "77" || v.UpdatedAt != now.Unix() {
 		t.Fatalf("not rebuilt: %s", body3)
