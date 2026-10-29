@@ -6,7 +6,7 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 [docs/openapi/openapi.yaml](docs/openapi/openapi.yaml), viewer with try-it:
 <https://angelospk.github.io/athens-transit-rt/>. Contract for clients: [docs/CONTRACT.md](docs/CONTRACT.md).
 
-## Unreleased
+## v0.2.0 (2026-10-30)
 
 ### Live API
 - `/v2` metro Stops Δημοτικό Θέατρο, Μανιάτικα, Νίκαια and Παλλήνη have proper names (they kept
