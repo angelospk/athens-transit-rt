@@ -160,4 +160,13 @@ func TestV2WaitingBusLeavesAtDailyDeparture(t *testing.T) {
 		*s.Arrivals[0].ScheduledAt != oct12(10, 50) || s.Arrivals[1].At != oct12(11, 5) {
 		t.Fatalf("arrivals %s", asJSON(s.Arrivals))
 	}
+	// Its Run says the same.
+	var r struct {
+		Run *model.Run `json:"run"`
+	}
+	v2get(t, a, "/v2/runs/"+esc(*s.Arrivals[0].Run), &r)
+	if r.Run == nil || r.Run.Vehicle == nil || *r.Run.Vehicle != "oasa:w" || r.Run.Stops[2].At != oct12(10, 50) ||
+		*r.Run.Stops[2].ScheduledAt != oct12(10, 50) || r.Run.Stops[0].At != oct12(10, 40) {
+		t.Fatalf("run %s", asJSON(r.Run))
+	}
 }

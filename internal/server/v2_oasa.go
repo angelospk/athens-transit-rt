@@ -429,15 +429,29 @@ func (o *oasaAdapter) Run(id string, now time.Time) (*model.Run, error) {
 		run.Vehicle, run.VehicleLabel = model.Ptr(oasaPrefix+bus.VehicleID), model.Ptr(bus.VehicleID)
 		run.Status = model.StatusOf(true, &bus.Delay)
 	}
+	// On an expired GTFS a bus waiting at its start leaves at the daily run it makes, as on the
+	// stop board: the times shift to it, and the delay against the old trip does not apply.
+	shift, delay := int64(0), int64(0)
+	if bus != nil {
+		delay = int64(bus.Delay)
+		if bus.Waiting && expired(f, now) {
+			if d, ok := a.dailyCached(line, gtfs.Midnight(now)); ok {
+				pending := map[string][]dailyRun{line: dailyPending(f, line, d, now)}
+				if leave := takeRun(f, pending, line, t.Shape, now); !leave.IsZero() {
+					shift, delay = leave.Unix()-day.Unix()-int64(f.Start(t)), 0
+				}
+			}
+		}
+	}
 	for k := range run.Stops {
 		st := f.StopTime(t, k)
-		sched := day.Unix() + int64(st.Arr)
+		sched := day.Unix() + int64(st.Arr) + shift
 		rs := model.RunStop{Stop: oasaPrefix + f.Stops[st.Stop].ID, ScheduledAt: model.Ptr(sched), At: sched,
 			Source: model.SourceTable}
 		if bus != nil {
 			rs.Source, rs.DelayS = model.SourceLive, model.Ptr(bus.Delay)
 			rs.Passed = !bus.Waiting && k < bus.NextIndex
-			rs.At = sched + int64(bus.Delay)
+			rs.At = sched + delay
 			if !rs.Passed {
 				rs.At = max(rs.At, now.Unix())
 			}
