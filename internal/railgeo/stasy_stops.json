@@ -1,0 +1,514 @@
+{
+ "source": "Names © OpenStreetMap contributors (ODbL), checked by hand; ids from STASY GTFS",
+ "stops": {
+  "stasy:1η-αγιου-κοσμα-tram": {
+   "name": "1η Αγίου Κοσμά",
+   "name_en": "1st Aghiou Kosma"
+  },
+  "stasy:2η-αγιου-κοσμα-tram": {
+   "name": "2η Αγίου Κοσμά",
+   "name_en": "2nd Aghiou Kosma"
+  },
+  "stasy:34ου-συνταγματοσ-tram": {
+   "name": "34ου Συντάγματος",
+   "name_en": "34ou Syntagmatos"
+  },
+  "stasy:αγ.-δημητριοσ-metro": {
+   "name": "Άγιος Δημήτριος",
+   "name_en": "Agios Dimitrios"
+  },
+  "stasy:αγγ.-μεταξα-tram": {
+   "name": "Αγγ. Μεταξά",
+   "name_en": "Angelou Metaxa"
+  },
+  "stasy:αγια-βαρβαρα-metro": {
+   "name": "Αγία Βαρβάρα",
+   "name_en": "Agia Varvara"
+  },
+  "stasy:αγια-μαρινα-metro": {
+   "name": "Αγία Μαρίνα",
+   "name_en": "Agia Marina"
+  },
+  "stasy:αγια-παρασκευη-metro": {
+   "name": "Αγία Παρασκευή",
+   "name_en": "Agia Paraskevi"
+  },
+  "stasy:αγια-παρασκευη-tram": {
+   "name": "Αγία Παρασκευή",
+   "name_en": "Aghia Paraskevi"
+  },
+  "stasy:αγια-σκεπη-tram": {
+   "name": "Αγία Σκέπη",
+   "name_en": "Aghia Skepi"
+  },
+  "stasy:αγια-τριαδα-tram": {
+   "name": "Αγία Τριάδα",
+   "name_en": "Agia Triada"
+  },
+  "stasy:αγιασ-φωτεινησ-tram": {
+   "name": "Αγίας Φωτεινής",
+   "name_en": "Agias Fotinis"
+  },
+  "stasy:αγιοσ-αλεξανδροσ-tram": {
+   "name": "Άγιος Αλέξανδρος",
+   "name_en": "Aghios Alexandros"
+  },
+  "stasy:αγιοσ-αντωνιοσ-metro": {
+   "name": "Άγιος Αντώνιος",
+   "name_en": "Agios Antonios"
+  },
+  "stasy:αγιοσ-ελευθεριοσ-metro": {
+   "name": "Άγιος Ελευθέριος",
+   "name_en": "Agios Eleftherios"
+  },
+  "stasy:αγιοσ-ιωαννησ-metro": {
+   "name": "Άγιος Ιωάννης",
+   "name_en": "Agios Ioannis"
+  },
+  "stasy:αγιοσ-νικολαοσ-metro": {
+   "name": "Άγιος Νικόλαος",
+   "name_en": "Agios Nikolaos"
+  },
+  "stasy:αιγαιου-tram": {
+   "name": "Αιγαίου",
+   "name_en": "Aegeou"
+  },
+  "stasy:αιγαλεω-metro": {
+   "name": "Αιγάλεω",
+   "name_en": "Egaleo"
+  },
+  "stasy:ακροπολη-metro": {
+   "name": "Ακρόπολη",
+   "name_en": "Akropoli"
+  },
+  "stasy:ακτη-ποσειδωνοσ-tram": {
+   "name": "Ακτή Ποσειδώνος",
+   "name_en": "Akti Poseidonos"
+  },
+  "stasy:αλιμοσ-metro": {
+   "name": "Άλιμος",
+   "name_en": "Alimos"
+  },
+  "stasy:αμπελοκηποι-metro": {
+   "name": "Αμπελόκηποι",
+   "name_en": "Ambelokipi"
+  },
+  "stasy:αμφιθεασ-tram": {
+   "name": "Αμφιθέας",
+   "name_en": "Amfitheas"
+  },
+  "stasy:ανδρουτσου-tram": {
+   "name": "Ανδρούτσου",
+   "name_en": "Androutsou"
+  },
+  "stasy:ανθουπολη-metro": {
+   "name": "Ανθούπολη",
+   "name_en": "Anthoupoli"
+  },
+  "stasy:ανω-πατησια-metro": {
+   "name": "Άνω Πατήσια",
+   "name_en": "Ano Patisia"
+  },
+  "stasy:αργυρουπολη-metro": {
+   "name": "Αργυρούπολη",
+   "name_en": "Argyroupoli"
+  },
+  "stasy:αττικη-metro": {
+   "name": "Αττική",
+   "name_en": "Attiki"
+  },
+  "stasy:αχιλλεωσ-tram": {
+   "name": "Αχιλλέως",
+   "name_en": "Achilleos"
+  },
+  "stasy:βικτωρια-metro": {
+   "name": "Βικτώρια",
+   "name_en": "Victoria"
+  },
+  "stasy:βουλα-tram": {
+   "name": "Βούλα",
+   "name_en": "Voula"
+  },
+  "stasy:βουλιαγμενησ-tram": {
+   "name": "Βουλιαγμένης",
+   "name_en": "Vouliagmenis"
+  },
+  "stasy:γηπεδο-καραισκακη-tram": {
+   "name": "Γήπεδο ΚαραΙσκάκη",
+   "name_en": "Gipedo Karaiskaki"
+  },
+  "stasy:δ.-πλακεντιασ-metro": {
+   "name": "Δουκίσσης Πλακεντίας",
+   "name_en": "Doukissis Plakentias"
+  },
+  "stasy:δαφνη-metro": {
+   "name": "Δάφνη",
+   "name_en": "Dafni"
+  },
+  "stasy:δελτα-φαληρου-tram": {
+   "name": "Δέλτα Φαλήρου",
+   "name_en": "Delta Falirou"
+  },
+  "stasy:δημαρχειο-tram": {
+   "name": "Δημαρχείο",
+   "name_en": "Dimarcheio"
+  },
+  "stasy:δημοτικο-θεατρο-metro": {
+   "name": "ΔΗΜΟΤΙΚΟ ΘΕΑΤΡΟ",
+   "name_en": "Dimotiko Theatro"
+  },
+  "stasy:εδεμ-tram": {
+   "name": "Εδέμ",
+   "name_en": "Edem"
+  },
+  "stasy:εθνικη-αμυνα-metro": {
+   "name": "Εθνική Άμυνα",
+   "name_en": "Ethniki Amyna"
+  },
+  "stasy:ειρηνη-metro": {
+   "name": "Ειρήνη",
+   "name_en": "Eirini"
+  },
+  "stasy:ελ.-βενιζελοσ-metro": {
+   "name": "Αεροδρόμιο",
+   "name_en": "Airport"
+  },
+  "stasy:ελαιωνασ-metro": {
+   "name": "Ελαιώνας",
+   "name_en": "Eleonas"
+  },
+  "stasy:ελληνικο-metro": {
+   "name": "Ελληνικό",
+   "name_en": "Elliniko"
+  },
+  "stasy:ελληνικο-tram": {
+   "name": "Ελληνικό",
+   "name_en": "Elliniko"
+  },
+  "stasy:ελληνων-ολυμπιονικων-tram": {
+   "name": "Ελλήνων Ολυμπιονικών",
+   "name_en": "Ellinon Olymbionikon"
+  },
+  "stasy:ευαγγελικη-σχολη-tram": {
+   "name": "Ευαγγελική Σχολή",
+   "name_en": "Evangeliki Scholi"
+  },
+  "stasy:ευαγγελισμοσ-metro": {
+   "name": "Ευαγγελισμός",
+   "name_en": "Evangelismos"
+  },
+  "stasy:ευαγγελιστρια-tram": {
+   "name": "Ευαγγελίστρια",
+   "name_en": "Evangelistria"
+  },
+  "stasy:ζαππειο-tram": {
+   "name": "Ζάππειο",
+   "name_en": "Zappeion"
+  },
+  "stasy:ζεφυροσ-tram": {
+   "name": "Ζέφυρος",
+   "name_en": "Zefyros"
+  },
+  "stasy:ηλιουπολη-metro": {
+   "name": "Ηλιούπολη",
+   "name_en": "Ilioupoli"
+  },
+  "stasy:ηρακλειο-metro": {
+   "name": "Ηράκλειο",
+   "name_en": "Irakleio"
+  },
+  "stasy:θησειο-metro": {
+   "name": "Θησείο",
+   "name_en": "Thiseio"
+  },
+  "stasy:καλαμακι-tram": {
+   "name": "Καλαμάκι",
+   "name_en": "Kalamaki"
+  },
+  "stasy:καλλιθεα-metro": {
+   "name": "Καλλιθέα",
+   "name_en": "Kallithea"
+  },
+  "stasy:καλλιθεα-tram": {
+   "name": "Καλλιθέα",
+   "name_en": "Kallithea"
+  },
+  "stasy:καντζα-metro": {
+   "name": "Παιανία-Κάντζα",
+   "name_en": "Peania-Kantza"
+  },
+  "stasy:κασομουλη-tram": {
+   "name": "Κασομούλη",
+   "name_en": "Kasomouli"
+  },
+  "stasy:κατ-metro": {
+   "name": "ΚΑΤ",
+   "name_en": "KAT"
+  },
+  "stasy:κατεχακη-metro": {
+   "name": "Κατεχάκη",
+   "name_en": "Katechaki"
+  },
+  "stasy:κατω-πατησια-metro": {
+   "name": "Κάτω Πατήσια",
+   "name_en": "Kato Patisia"
+  },
+  "stasy:κεντρο-ιστιοπλοιασ-tram": {
+   "name": "Κέντρο Ιστιοπλοϊας",
+   "name_en": "Kentro Istioploias"
+  },
+  "stasy:κεραμικοσ-metro": {
+   "name": "Κεραμεικός",
+   "name_en": "Kerameikos"
+  },
+  "stasy:κηφισια-metro": {
+   "name": "Κηφισιά",
+   "name_en": "Kifissia"
+  },
+  "stasy:κολυμβητηριο-(γλυφαδα)-tram": {
+   "name": "Κολυμβητήριο (Γλύφαδα)",
+   "name_en": "Kolymvitirio (Glyfada)"
+  },
+  "stasy:κορυδαλλοσ-metro": {
+   "name": "Κορυδαλλός",
+   "name_en": "Korydallos"
+  },
+  "stasy:κορωπι-metro": {
+   "name": "Κορωπί",
+   "name_en": "Koropi"
+  },
+  "stasy:λαμπρακη-tram": {
+   "name": "Λαμπράκη",
+   "name_en": "Lambraki"
+  },
+  "stasy:λουτρα-αλιμου-tram": {
+   "name": "Λουτρά Αλίμου",
+   "name_en": "Loutra Alimou"
+  },
+  "stasy:μανιατικα-metro": {
+   "name": "ΜΑΝΙΑΤΙΚΑ",
+   "name_en": "Maniatika"
+  },
+  "stasy:μαρινα-αλιμου-tram": {
+   "name": "Μαρίνα Αλίμου",
+   "name_en": "Marina Alimou"
+  },
+  "stasy:μαρουσι-metro": {
+   "name": "Μαρούσι",
+   "name_en": "Marousi"
+  },
+  "stasy:μεγαλου-αλεξανδρου-tram": {
+   "name": "Μεγάλου Αλεξάνδρου",
+   "name_en": "Alexander the Great"
+  },
+  "stasy:μεγαρο-μουσικησ-metro": {
+   "name": "Μέγαρο Μουσικής",
+   "name_en": "Megaro Mousikis"
+  },
+  "stasy:μεταξουργειο-metro": {
+   "name": "Μεταξουργείο",
+   "name_en": "Metaxourgeio"
+  },
+  "stasy:μηδειασ-μυκαλησ-tram": {
+   "name": "Μηδείας - Μυκάλης",
+   "name_en": "Medeas - Mykalis"
+  },
+  "stasy:μικρασ-ασιασ-tram": {
+   "name": "Μικράς Ασίας",
+   "name_en": "Mikras Asias"
+  },
+  "stasy:μοναστηρακι-metro": {
+   "name": "Μοναστηράκι",
+   "name_en": "Monastiraki"
+  },
+  "stasy:μοσχατο-metro": {
+   "name": "Μοσχάτο",
+   "name_en": "Moschato"
+  },
+  "stasy:μοσχατο-tram": {
+   "name": "Μοσχάτο",
+   "name_en": "Moschato"
+  },
+  "stasy:μουσσων-tram": {
+   "name": "Μουσσών",
+   "name_en": "Mousson"
+  },
+  "stasy:μπακνανα-tram": {
+   "name": "Μπακνανά",
+   "name_en": "Baknana"
+  },
+  "stasy:μπατησ-tram": {
+   "name": "Μπάτης",
+   "name_en": "Batis"
+  },
+  "stasy:ν.κοσμοσ-metro": {
+   "name": "Νέος Κόσμος",
+   "name_en": "Neos Kosmos"
+  },
+  "stasy:νεα-ιωνια-metro": {
+   "name": "Νέα Ιωνία",
+   "name_en": "Nea Ionia"
+  },
+  "stasy:νεο-φαληρο-tram": {
+   "name": "Νέο Φάληρο",
+   "name_en": "Neo Faliro"
+  },
+  "stasy:νεοσ-κοσμοσ-tram": {
+   "name": "Νέος Κόσμος",
+   "name_en": "Neos Kosmos"
+  },
+  "stasy:νερατζιωτισσα-metro": {
+   "name": "Νερατζιώτισσα",
+   "name_en": "Neratziotissa"
+  },
+  "stasy:νικαια-metro": {
+   "name": "ΝΙΚΑΙΑ",
+   "name_en": "Nikaia"
+  },
+  "stasy:νομισματοκοπειο-metro": {
+   "name": "Νομισματοκοπείο",
+   "name_en": "Nomismatokopio"
+  },
+  "stasy:ομονοια-metro": {
+   "name": "Ομόνοια",
+   "name_en": "Omonia"
+  },
+  "stasy:παλαιο-δημαρχειο-tram": {
+   "name": "Παλαιό Δημαρχείο",
+   "name_en": "Paleo Demarhio"
+  },
+  "stasy:παλληνη-metro": {
+   "name": "ΠΑΛΛΗΝΗ",
+   "name_en": "Pallini"
+  },
+  "stasy:παναγιτσα-tram": {
+   "name": "Παναγίτσα",
+   "name_en": "Panaghitsa"
+  },
+  "stasy:πανεπιστημιο-metro": {
+   "name": "Πανεπιστήμιο",
+   "name_en": "Panepistimio"
+  },
+  "stasy:πανορμου-metro": {
+   "name": "Πανόρμου",
+   "name_en": "Panormou"
+  },
+  "stasy:παραλια-γλυφαδασ-tram": {
+   "name": "Παραλία Γλυφάδας",
+   "name_en": "Paralia Glyfadas"
+  },
+  "stasy:παρκο-φλοισβου-tram": {
+   "name": "Πάρκο Φλοίσβου",
+   "name_en": "Parko Flisvou"
+  },
+  "stasy:πειραιασ-metro": {
+   "name": "Πειραιάς",
+   "name_en": "Piraeus"
+  },
+  "stasy:περισσοσ-metro": {
+   "name": "Περισσός",
+   "name_en": "Perissos"
+  },
+  "stasy:περιστερι-metro": {
+   "name": "Περιστέρι",
+   "name_en": "Peristeri"
+  },
+  "stasy:πετραλωνα-metro": {
+   "name": "Πετράλωνα",
+   "name_en": "Petralona"
+  },
+  "stasy:πευκακια-metro": {
+   "name": "Πευκάκια",
+   "name_en": "Pefkakia"
+  },
+  "stasy:πικροδαφνη-tram": {
+   "name": "Πικροδάφνη",
+   "name_en": "Pikrodafni"
+  },
+  "stasy:πλατεια-βεργωτη-tram": {
+   "name": "Πλατεία Βεργώτη",
+   "name_en": "Platia Vergoti"
+  },
+  "stasy:πλατεια-δεληγιαννη-tram": {
+   "name": "Πλατεία Δεληγιάννη",
+   "name_en": "Plateia Deligianni"
+  },
+  "stasy:πλατεια-εσπεριδων-tram": {
+   "name": "Πλατεία Εσπερίδων",
+   "name_en": "Platia Esperidon"
+  },
+  "stasy:πλατεια-ιπποδαμειασ-tram": {
+   "name": "Πλατεία Ιπποδαμείας",
+   "name_en": "Plateia Ippodameias"
+  },
+  "stasy:πλατεια-κατρακη-tram": {
+   "name": "Πλατεία Κατράκη",
+   "name_en": "Platia Katraki"
+  },
+  "stasy:σ.-λαρισησ-metro": {
+   "name": "Σταθμός Λαρίσης",
+   "name_en": "Larissa Station"
+  },
+  "stasy:σεπολια-metro": {
+   "name": "Σεπόλια",
+   "name_en": "Sepolia"
+  },
+  "stasy:σεφ-(νεο-φαληρο)-tram": {
+   "name": "ΣΕΦ (Νέο Φάληρο)",
+   "name_en": "SEF (Neo Faliro)"
+  },
+  "stasy:σκυλιτση-tram": {
+   "name": "Σκυλίτση",
+   "name_en": "Skylitsi"
+  },
+  "stasy:συγγρου-φιξ-metro": {
+   "name": "Συγγρού-Φιξ",
+   "name_en": "Syngrou-Fix"
+  },
+  "stasy:συνδεση-προαστιακου-metro": {
+   "name": "Σύνδεση Προαστιακού",
+   "name_en": null
+  },
+  "stasy:συνταγμα-(κεντρο)-tram": {
+   "name": "Σύνταγμα (Κέντρο)",
+   "name_en": "Syntagma (Kentro)"
+  },
+  "stasy:συνταγμα-metro": {
+   "name": "Σύνταγμα",
+   "name_en": "Syntagma"
+  },
+  "stasy:ταυροσ-metro": {
+   "name": "Ταύρος",
+   "name_en": "Tavros"
+  },
+  "stasy:τζιτζιφιεσ-tram": {
+   "name": "Τζιτζιφιές",
+   "name_en": "Tzitzifies"
+  },
+  "stasy:τροκαντερο-tram": {
+   "name": "Τροκαντερό",
+   "name_en": "Trocadero"
+  },
+  "stasy:φαληρο-metro": {
+   "name": "Φάληρο",
+   "name_en": "Faliro"
+  },
+  "stasy:φιξ-tram": {
+   "name": "Φιξ",
+   "name_en": "Fix"
+  },
+  "stasy:φλοισβοσ-tram": {
+   "name": "Φλοίσβος",
+   "name_en": "Flisvos"
+  },
+  "stasy:χαλανδρι-metro": {
+   "name": "Χαλάνδρι",
+   "name_en": "Chalandri"
+  },
+  "stasy:χολαργοσ-metro": {
+   "name": "Χολαργός",
+   "name_en": "Cholargos"
+  }
+ },
+ "aliases": {}
+}

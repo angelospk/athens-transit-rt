@@ -9,6 +9,11 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `/v2` metro and tram Stops have proper names and English names: "Σύνταγμα" / "Syntagma"
+  instead of STASY's "ΣΥΝΤΑΓΜΑ" and `null` (126 of 127 Stops with `name_en`). They come from a
+  hand-checked table built from OpenStreetMap (`internal/railgeo/stasy_stops.json`,
+  regenerate with `scripts/stasy-stop-names.py`). A Stop new to the STASY feed keeps STASY's
+  name, has no English name and is logged at load; a renamed Stop gets a permanent alias there.
 - **`/v2`: one model for every mode** (contract rev 8): buses, trolleys, metro, tram and the
   suburban railway as Line, Stop, Pattern, Vehicle, Arrival and Run, with `<source>:<native>`
   ids, permanent aliases and a `sources` freshness block in every body. Endpoints:

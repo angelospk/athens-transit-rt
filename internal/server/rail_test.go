@@ -118,11 +118,17 @@ func TestSuburbanHandlers(t *testing.T) {
 }
 
 // stasyApp is an App with the STASY test timetable loaded from disk, at now.
-func stasyApp(t *testing.T, now time.Time) *App {
+func stasyApp(t *testing.T, now time.Time) *App { return stasyAppEdit(t, now, nil) }
+
+// stasyAppEdit loads the STASY test files after edit changes them in their directory.
+func stasyAppEdit(t *testing.T, now time.Time, edit func(dir string)) *App {
 	t.Helper()
 	a := newAppConfig(t, now, Config{STASYURL: "http://127.0.0.1:1/none"})
 	if err := os.CopyFS(a.stasy.Dir, os.DirFS(filepath.Join("..", "rail", "testdata", "stasy"))); err != nil {
 		t.Fatal(err)
+	}
+	if edit != nil {
+		edit(a.stasy.Dir)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Run loads the files on disk, then stops at once: no catalogue check

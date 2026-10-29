@@ -44,6 +44,7 @@ type stasyIndex struct {
 	byID     map[string]int
 	patterns [][]stasyPattern // by route index, most trips first
 	tripPat  []int32          // trip -> pattern number within its route
+	unnamed  []string         // Stop ids the name table lacks (they keep the STASY name)
 }
 
 type stasyStop struct {
@@ -72,7 +73,11 @@ func (s *stasyAdapter) Resolve(kind Kind, id string) string {
 		return stasyPrefix + strings.ToUpper(native)
 	case KindStop:
 		if i := strings.LastIndexByte(native, '-'); i > 0 {
-			return stasyKey(strings.ReplaceAll(native[:i], "-", " "), native[i+1:])
+			key := stasyKey(strings.ReplaceAll(native[:i], "-", " "), native[i+1:])
+			if to, ok := railgeo.STASYAlias(key); ok {
+				return to // a renamed Stop answers under its current id
+			}
+			return key
 		}
 	}
 	return id
@@ -87,6 +92,11 @@ func (s *stasyAdapter) index() (*stasyIndex, error) {
 	defer s.mu.Unlock()
 	if s.idx == nil || s.idx.f != f {
 		s.idx = buildSTASYIndex(f)
+		if len(s.idx.unnamed) > 0 {
+			// A new or renamed Stop: it shows STASY's capitals and no English name until
+			// scripts/stasy-stop-names.py adds it (and, for a rename, an alias).
+			s.a.log.Warn("stasy: stops not in the name table", "ids", s.idx.unnamed)
+		}
 	}
 	return s.idx, nil
 }
@@ -136,8 +146,13 @@ func buildSTASYIndex(f *rail.STASY) *stasyIndex {
 		if !ok {
 			k = len(x.stops)
 			x.byID[id] = k
-			x.stops = append(x.stops, stasyStop{m: model.Stop{ID: id, Name: f.Stops[p].Name, Modes: []string{mode},
-				Source: stasyNS}})
+			st := model.Stop{ID: id, Name: f.Stops[p].Name, Modes: []string{mode}, Source: stasyNS}
+			if n, ok := railgeo.STASYStopName(id); ok {
+				st.Name, st.NameEn = n.Name, n.NameEn
+			} else {
+				x.unnamed = append(x.unnamed, id)
+			}
+			x.stops = append(x.stops, stasyStop{m: st})
 		}
 		x.stopOf[p] = k
 		st := &x.stops[k]

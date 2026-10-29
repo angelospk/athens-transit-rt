@@ -1,6 +1,8 @@
 package server
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +41,10 @@ func TestV2STASYLinesAndStops(t *testing.T) {
 	}
 	st := s.Stop
 	// Both platforms are one Stop, at their mean.
-	if st.Name != "ΣΥΝΤΑΓΜΑ" || st.Lat != 37.975 || st.Lon != 23.7355 || strings.Join(st.Modes, ",") != "metro" ||
-		strings.Join(st.Lines, ",") != "stasy:M1,stasy:M2" || st.NameEn != nil || len(s.Lines) != 2 {
+	// Its name from the name table (OSM, checked by hand), not STASY's capitals.
+	if st.Name != "Σύνταγμα" || st.NameEn == nil || *st.NameEn != "Syntagma" || st.Lat != 37.975 ||
+		st.Lon != 23.7355 || strings.Join(st.Modes, ",") != "metro" ||
+		strings.Join(st.Lines, ",") != "stasy:M1,stasy:M2" || len(s.Lines) != 2 {
 		t.Fatalf("stop %s", asJSON(s))
 	}
 	// Ids as users type them: an unfolded name.
@@ -202,5 +206,32 @@ func TestSTASYKeyStableThroughResolve(t *testing.T) {
 	}
 	if stasyKey("Α - Β", "tram") != stasyKey("Α-Β", "tram") {
 		t.Error("punctuation changes the id")
+	}
+}
+
+// A Stop the name table lacks (new or renamed in the feed) keeps STASY's name with no English
+// name, and the index lists it, so the timetable load logs it.
+func TestV2STASYStopNotInNameTable(t *testing.T) {
+	a := stasyAppEdit(t, wed1000, func(dir string) {
+		p := filepath.Join(dir, "stops.txt")
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(strings.ReplaceAll(string(b), "ΚΗΦΙΣΙΑ", "ΝΕΑ ΣΤΑΣΗ")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var s v2Stop
+	v2get(t, a, "/v2/stops/"+esc("stasy:νεα-σταση-metro"), &s)
+	if s.Stop == nil || s.Stop.Name != "ΝΕΑ ΣΤΑΣΗ" || s.Stop.NameEn != nil {
+		t.Fatalf("%s", asJSON(s.Stop))
+	}
+	x, err := a.adapter("stasy:x").(*stasyAdapter).index()
+	if err != nil || strings.Join(x.unnamed, ",") != "stasy:νεα-σταση-metro" {
+		t.Fatalf("%v unnamed %v", err, x.unnamed)
+	}
+	if code, _ := v2get(t, a, "/v2/stops/"+esc("stasy:κηφισια-metro"), nil); code != 404 {
+		t.Fatalf("old id answers %d without an alias", code)
 	}
 }

@@ -367,7 +367,12 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
 - **An unmatched bus on its way is still an Arrival** (`run`, `scheduled_at`, `delay_s` null),
   as `/v1/stops/{id}` lists it (2). A Run's last stop is not an Arrival (15).
 - **`status: delayed`** from 5 minutes of delay in every mode (3). oasa Stop `name_en` and stasy
-  Line/Stop `name_en` are `null`: the sources have no English names (5, 13, 14).
+  Line `name_en` are `null`: the sources have no English names (5, 14). stasy Stop `name` and
+  `name_en` come from a hand-checked table built from OpenStreetMap
+  (`internal/railgeo/stasy_stops.json`, `scripts/stasy-stop-names.py`): metro "Σύνταγμα",
+  not STASY's "ΣΥΝΤΑΓΜΑ"; tram names as STASY writes them. A Stop the table lacks (new or
+  renamed in the feed) keeps the STASY name with `name_en: null` and is logged; a renamed Stop
+  gets a permanent alias in the table (13, review #9 items 4 and 7).
 - `/v2/vehicles/rail` is cached 5 s while suburban trains are in it, else 15 s.
 
 ### 1. Goal and rules
