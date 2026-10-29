@@ -637,7 +637,8 @@ Rules:
   explicit suburban demand. Clients merge all three into one vehicles layer (one marker
   component). Tile zoom 9 entries drop `motion`
   (key absent), as rev 5 drops the path keys.
-- Metro/tram vehicles are placed at build time (every 10 s); their `knots` keep them moving.
+- Metro/tram vehicles are placed when `/v2/vehicles/rail` is built (per request, cached 15 s);
+  their `knots` keep them moving.
 - `/v2/runs/{id}` replaces `/v1/rail/stasy/trips/{id}` and `/v1/rail/suburban/trains/{no}` for
   the line card. It answers for any Run of the service day, started or not (`vehicle: null`
   before it starts). OASA: the matched trip's stops, timetable time plus observed delay.
