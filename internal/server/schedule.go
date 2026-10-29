@@ -111,6 +111,32 @@ func (a *App) dailyOfLine(ctx context.Context, line string, today time.Time) (te
 	return a.dailyVia(ctx, line, today, a.daily, dailyTimeout, true)
 }
 
+// dailyCached is today's daily schedule of a line only when the cache already has it (the
+// prefetch fetches it): a request never asks OASA for it, and a line without one has no rows.
+func (a *App) dailyCached(line string, today time.Time) (telematics.DailySchedule, bool) {
+	day := today.Format(time.DateOnly)
+	a.dailyMu.Lock()
+	defer a.dailyMu.Unlock()
+	e, ok := a.dailyCache[line]
+	if !ok || e.day != day || !e.ok {
+		return telematics.DailySchedule{}, false
+	}
+	return e.d, true
+}
+
+// anyDailyCached tells whether today's daily schedule of some line is cached.
+func (a *App) anyDailyCached(today time.Time) bool {
+	day := today.Format(time.DateOnly)
+	a.dailyMu.Lock()
+	defer a.dailyMu.Unlock()
+	for _, e := range a.dailyCache {
+		if e.day == day && e.ok {
+			return true
+		}
+	}
+	return false
+}
+
 // dailyVia is dailyOfLine with the way to ask OASA (urgent for a request, background for the
 // prefetch) and the time the caller may wait, for its own fetch or one in flight. detach: the
 // fetch outlives the caller (a request); the prefetch's ends with the service instead.
