@@ -34,7 +34,7 @@ fixtures and diff tests pass, `/v1` fixtures unchanged.
 ## Phase 3: app (`athens-transit-app`, Flutter), 36-48 h
 
 1. `lib/core/model_v2.dart` + API client for `/v2`; parse the contract fixtures in tests. 4-6 h.
-2. One mover for every mode (port of the contract client rule; unit tests on `knots`, dwell
+2. One mover for every mode (port of the contract client rule; unit tests on `docs/fixtures/v2/motion-cases.json` + `knots`, dwell
    and speed paths). 5-7 h.
 3. **Trains on the map**: one vehicles layer from bus tiles + `/v2/vehicles/rail`, mode toggles,
    dashed estimate outline. Drop bundled `assets/suburban.json` after `/v2/lines/{id}` gives
@@ -53,7 +53,7 @@ fixtures and diff tests pass, `/v1` fixtures unchanged.
 ## Phase 4: web (`athens-transit-map`, Svelte), 21-28 h
 
 1. `src/lib/v2.ts` types + fetchers; one poll helper (today it is copied in four cards). 3-4 h.
-2. One mover (`motion.ts` gains the `knots` rule; delete `railSegment`/`RailGlide` paths that
+2. One mover (`motion.ts` gains the `knots` rule, tested on `docs/fixtures/v2/motion-cases.json`; delete `railSegment`/`RailGlide` paths that
    the backend now feeds). 4-5 h.
 3. One `StopCard` replacing `StopCard`, `StationCard`, `RailCard`; one `LineCard` replacing
    `TrainCard` + InfoCard's stop list. 7-9 h.

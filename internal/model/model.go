@@ -278,3 +278,23 @@ func ParseRunID(ns, id string, loc *time.Location) (native string, noon time.Tim
 }
 
 func Ptr[T any](v T) *T { return &v }
+
+// CheckKnots reports how knots break the contract's rules (Vehicle, motion.knots), or "": the
+// first knot is at metre 0, times strictly increase, metres never decrease.
+func CheckKnots(knots [][2]int64) string {
+	if len(knots) == 0 {
+		return "no knots"
+	}
+	if knots[0][0] != 0 {
+		return fmt.Sprintf("first knot at %d m", knots[0][0])
+	}
+	for i := 1; i < len(knots); i++ {
+		if knots[i][1] <= knots[i-1][1] {
+			return fmt.Sprintf("knot %d: time %d not after %d", i, knots[i][1], knots[i-1][1])
+		}
+		if knots[i][0] < knots[i-1][0] {
+			return fmt.Sprintf("knot %d: %d m before %d m", i, knots[i][0], knots[i-1][0])
+		}
+	}
+	return ""
+}

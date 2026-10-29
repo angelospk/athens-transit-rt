@@ -520,7 +520,10 @@ and compare them; they never parse them.
     the first knot at metre 0, between two knots linearly in metres (equal metres = dwell at the
     Stop), after the last knot at its metres until the next snapshot. Otherwise use the rev 6
     speed rule (`path_speeds`, then `speed`, then 1.5 m/s) and stop at the end of the points.
-    This is the "trains glide along the track" behaviour.
+    This is the "trains glide along the track" behaviour. Test cases for a client's mover:
+    [`fixtures/v2/motion-cases.json`](fixtures/v2/motion-cases.json) (time → metres, checked
+    against a reference in `internal/model/motion_test.go`); the backend checks these rules on
+    every train of its test feed through a service day.
 - `source`: the Source id.
 
 #### Arrival
