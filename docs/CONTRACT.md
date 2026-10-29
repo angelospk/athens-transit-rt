@@ -160,9 +160,9 @@ to ~2.5 min staler than `/v1/lines/{id}` for lines nobody watches.
   `/v1/lines/{line}` when the user selects a vehicle.
 - Vehicles with a GPS fix older than 5 min are left out. A vehicle seen on two lines
   appears once (newest fix). Sorted by `line`, then `id`. `vehicles` may be `[]`.
-- One snapshot for everyone, built at most every 30 s (`updated_at` = build time,
+- One snapshot for everyone, built at most every 10 s (`updated_at` = build time,
   `next_update_at` = earliest next build). Refetch at `next_update_at + 1..3 s`.
-- Headers: `Cache-Control: public, max-age=<seconds until next_update_at, min 5, max 30>`
+- Headers: `Cache-Control: public, max-age=<seconds until next_update_at, min 5, max 10>`
   (the 5 s floor can keep a copy up to 5 s past `next_update_at`). `ETag`;
   `If-None-Match` gives `304`. In a browser, let the HTTP cache revalidate (plain
   `fetch`); do not set `If-None-Match` from JS: it is not a CORS-safelisted header and
@@ -199,7 +199,7 @@ Example: `/v1/vehicles/tiles/13/4636/3160` (around Syntagma).
   `lat`/`lon` is in that tile. A vehicle is in exactly one tile per zoom; its paths may run on
   into other tiles. `z` 13 entries are byte-identical to `/v1/vehicles`; `z` 9 entries have
   `line, id, lat, lon, bearing, position_at, variant, delay_s, speed` only.
-- Same snapshot as `/v1/vehicles`: one build, at most every 30 s, gives `/v1/vehicles` and all
+- Same snapshot as `/v1/vehicles`: one build, at most every 10 s, gives `/v1/vehicles` and all
   tiles the same `updated_at` and `next_update_at`. No OASA request, no line marked watched.
 - Tiles exist only for the box lat 37.5..38.5, lon 22.9..24.5: `z` 9 x 288..290, y 196..198;
   `z` 13 x 4617..4653, y 3145..3174. A tile in the box with no vehicle → `200` with
@@ -213,7 +213,7 @@ tile is too); one farther out is in no tile (none seen so far).
   `{"error":"query_not_allowed"}` (`no-store`) for any query string, even a bare `?`: each
   variant would be another Cloudflare cache entry. Never add cache busters.
 - Headers as `/v1/vehicles`: `Cache-Control: public, max-age=<seconds until next_update_at,
-  min 5, max 30>`, `ETag`, `If-None-Match` → `304`, gzip when asked, `Vary: Accept-Encoding`.
+  min 5, max 10>`, `ETag`, `If-None-Match` → `304`, gzip when asked, `Vary: Accept-Encoding`.
   Let the browser HTTP cache handle them (plain `fetch`); a tile asked again within its max-age
   then costs no request.
 
@@ -665,7 +665,8 @@ Rules:
   explicit suburban demand. Clients merge all three into one vehicles layer (one marker
   component). Tile zoom 9 entries drop `motion`
   (key absent), as rev 5 drops the path keys.
-- Metro/tram vehicles are placed at build time (every 30 s); their `knots` keep them moving.
+- Metro/tram vehicles are placed when `/v2/vehicles/rail` is built (per request, cached 15 s);
+  their `knots` keep them moving.
 - `/v2/runs/{id}` replaces `/v1/rail/stasy/trips/{id}` and `/v1/rail/suburban/trains/{no}` for
   the line card. It answers for any Run of the service day, started or not (`vehicle: null`
   before it starts). OASA: the matched trip's stops, timetable time plus observed delay.

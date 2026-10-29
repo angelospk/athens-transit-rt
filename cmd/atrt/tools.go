@@ -21,7 +21,7 @@ import (
 const toolRPS = 2
 
 func toolClient(fs *flag.FlagSet) (*float64, *string) {
-	return fs.Float64("rps", toolRPS, "OASA requests per second (max 5)"),
+	return fs.Float64("rps", toolRPS, "OASA requests per second (max 6)"),
 		fs.String("telematics-url", "", "OASA telematics API base URL")
 }
 

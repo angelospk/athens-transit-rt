@@ -9,7 +9,7 @@ services:
     # answers loopback clients only). Publish the API with your own reverse proxy or tunnel.
     network_mode: host
     command: ["serve", "--listen", "127.0.0.1:8095", "--metrics-listen", "127.0.0.1:8096",
-              "--state", "/var/lib/atrt", "--rps", "4"]
+              "--state", "/var/lib/atrt", "--rps", "6"]
     volumes:
       - atrt-state:/var/lib/atrt
     mem_limit: 200m

@@ -154,8 +154,10 @@ func New(cfg Config, log *slog.Logger) *App {
 		roads: livespeed.New(), starts: newRunStarts()}
 	a.motion = newMotion(a.roads)
 	a.pacer = telematics.NewPacer(cfg.RPS)
+	a.pacer.Log = log
 	a.client = telematics.New(cfg.TelematicsURL, nil) // the scheduler paces every request
 	a.client.MinGap = a.pacer.BaseInterval()
+	a.client.Stopped = a.pacer.Stopped
 	if cfg.Proxy != "" {
 		// Validated by the serve command; the Transport dials socks5/socks5h and http proxies.
 		if u, err := url.Parse(cfg.Proxy); err == nil {
