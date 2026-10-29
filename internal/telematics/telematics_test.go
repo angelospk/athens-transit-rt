@@ -1,8 +1,11 @@
 package telematics
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -128,6 +131,39 @@ func TestClientHTTPError(t *testing.T) {
 	}
 }
 
+// A refusal is an *HTTPError even when its body breaks off, so the pacer sees it and stops.
+func TestClientRefusalWithBrokenBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte("slow"))
+	}))
+	defer srv.Close()
+	_, err := New(srv.URL+"/", nil).Lines(context.Background())
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Status != http.StatusTooManyRequests {
+		t.Fatalf("err %v, want HTTP 429", err)
+	}
+}
+
+// A request that passed the pacer but still waits at the send gate is not sent once the pacer
+// has stopped after a refusal.
+func TestClientSendsNothingWhileStopped(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer srv.Close()
+	p := NewPacer(6)
+	c := New(srv.URL+"/", nil)
+	c.Stopped = p.Stopped
+	p.Report(0, &HTTPError{Act: "getBusLocation", Status: http.StatusTooManyRequests})
+	if !p.Stopped() {
+		t.Fatal("pacer not stopped after a 429")
+	}
+	if _, err := c.Lines(context.Background()); !errors.Is(err, ErrStopped) || hits != 0 {
+		t.Fatalf("err %v, %d requests reached OASA", err, hits)
+	}
+}
+
 func TestPacerSpacing(t *testing.T) {
 	p := NewPacer(4)
 	t0 := time.Unix(1000, 0)
@@ -240,11 +276,47 @@ func TestPacerBackoff(t *testing.T) {
 }
 
 func TestPacerClamp(t *testing.T) {
-	if NewPacer(50).Interval() != 200*time.Millisecond {
-		t.Fatal("rps not clamped to 5")
+	if NewPacer(50).Interval() != time.Second/6 {
+		t.Fatal("rps not clamped to 6")
 	}
-	if NewPacer(0).Interval() != 250*time.Millisecond {
-		t.Fatal("non-positive rps should use the default 4")
+	if NewPacer(0).Interval() != time.Second/6 {
+		t.Fatal("non-positive rps should use the default 6")
+	}
+}
+
+// OASA answering 403 or 429 stops every request for BlockPause, then the pace restarts at its
+// slowest. The stop is logged once; a refusal during the pause does not extend it, and a healthy
+// answer during the pause does not speed up the restart.
+func TestPacerStopsOnBlock(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		var buf bytes.Buffer
+		p := NewPacer(6)
+		p.Log = slog.New(slog.NewTextHandler(&buf, nil))
+		t0 := time.Unix(1000, 0)
+		p.grant(t0)
+		p.report(t0, 100*time.Millisecond, &HTTPError{Act: "getBusLocation", Status: status})
+		if d := p.grant(t0.Add(time.Second)); d != BlockPause-time.Second {
+			t.Fatalf("%d: wait %v during the stop, want %v", status, d, BlockPause-time.Second)
+		}
+		p.report(t0.Add(2*time.Second), 0, fmt.Errorf("wrapped: %w", &HTTPError{Act: "getBusLocation", Status: status}))
+		p.report(t0.Add(3*time.Second), 100*time.Millisecond, nil) // an in-flight request answering fine
+		if d := p.grant(t0.Add(BlockPause)); d != 0 {
+			t.Fatalf("%d: still stopped after BlockPause (a refusal during the stop extended it): %v", status, d)
+		}
+		if p.Interval() != maxBackoff*p.BaseInterval() {
+			t.Fatalf("%d: restarts at %v, want the slowest pace", status, p.Interval())
+		}
+		if n := strings.Count(buf.String(), "OASA refused requests"); n != 1 || !strings.Contains(buf.String(), fmt.Sprintf("status=%d", status)) {
+			t.Fatalf("%d: log %q", status, buf.String())
+		}
+	}
+	// Other errors only back off.
+	p := NewPacer(6)
+	t0 := time.Unix(1000, 0)
+	p.grant(t0)
+	p.report(t0, 0, &HTTPError{Act: "getBusLocation", Status: http.StatusBadGateway})
+	if d := p.grant(t0.Add(time.Second)); d != 0 {
+		t.Fatalf("502 stopped the pacer: wait %v", d)
 	}
 }
 

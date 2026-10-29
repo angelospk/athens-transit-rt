@@ -16,6 +16,11 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   along its Run's direction). Metro Pattern directions now follow branches: on M3 the trips to the airport
   (ΕΛ. ΒΕΝΙΖΕΛΟΣ) are direction 1 like those to Δ. ΠΛΑΚΕΝΤΙΑΣ; before, some got 0 in both
   directions ([#31](https://github.com/angelospk/athens-transit-rt/issues/31)).
+- Fresher bus positions (#30): the whole-city snapshot (`/v1/vehicles`, `/v2/vehicles`, tiles)
+  is rebuilt at most every 10 s instead of 30 s (`max-age` at most 10), and the OASA budget is
+  6 req/s by default (max 6, was 4 and 5). With that budget, lines nobody is looking at should
+  be polled about every 150 s instead of ~300 s. A 403 or 429 from OASA stops all OASA
+  requests for 10 minutes, logs `OASA refused requests`, and restarts at the slowest pace.
 
 ## v0.2.0 (2026-10-30)
 
@@ -76,7 +81,7 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   metro no longer keeps that stream (~80 KB/s) open.
 - `/v2` caching: a Source that is `indicative` (expired timetable) or `stale` no longer makes a
   response incomplete, so `/v2/lines`, `/v2/stops` and `/v2/lines/{id}` keep `max-age=3600` with
-  an `ETag` while the OASA GTFS is expired, and the `/v2/vehicles` snapshot keeps its 30 s life.
+  an `ETag` while the OASA GTFS is expired, and the `/v2/vehicles` snapshot keeps its full life.
   Only `warming_up` and `down` cut a response to `max-age=5`. `/v2/stops` (about 760 KB raw) is
   built and gzipped once and served with a strong `ETag` while the stops and Source states stay
   the same.

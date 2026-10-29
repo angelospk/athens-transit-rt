@@ -141,7 +141,7 @@ paths:
       summary: All vehicles of all lines
       description: |
         Every vehicle with a GPS fix from the last 5 minutes, sorted by `line`, then `id`.
-        One snapshot for everyone, rebuilt at most every 30 s. It does not raise any line's
+        One snapshot for everyone, rebuilt at most every 10 s. It does not raise any line's
         polling priority and causes no OASA request, so lines nobody watches update about every
         150 s. A vehicle seen on two lines appears once (newest fix). Coordinates have
         5 decimals. For `route_code`, `trip_id`, `trip_label` and `next_stop_id`, fetch
@@ -1374,7 +1374,7 @@ paths:
       summary: All buses and trolleys now
       description: |
         Every bus and trolley with a GPS fix from the last 5 minutes, sorted by `line`, then
-        `id`: one snapshot for everyone, rebuilt at most every 30 s. No rail vehicle is here:
+        `id`: one snapshot for everyone, rebuilt at most every 10 s. No rail vehicle is here:
         metro and tram come from `/v2/vehicles/rail`, suburban trains from
         `/v2/vehicles/suburban`, so map traffic never opens the suburban stream unless a
         suburban layer is on. A client merges them into one layer.

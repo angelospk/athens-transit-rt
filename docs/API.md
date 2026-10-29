@@ -116,7 +116,7 @@ percent-encoded. Latin look-alikes also work (`A1` → `Α1`).
 ## All vehicles
 
 `GET /v1/vehicles` returns every vehicle with a GPS fix from the last 5 minutes, one snapshot
-for everyone, rebuilt at most every 30 s. Each vehicle has `line`, `id`, `lat`, `lon`,
+for everyone, rebuilt at most every 10 s. Each vehicle has `line`, `id`, `lat`, `lon`,
 `bearing`, `position_at`, `variant`, `delay_s`, `speed`, `path`, `path_beyond`, `path_stops` and `path_speeds`
 (same meanings as above).
 It does not raise any line's polling priority, so lines nobody watches update about every
