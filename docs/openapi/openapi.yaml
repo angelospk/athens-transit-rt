@@ -1053,7 +1053,7 @@ paths:
         says `warming_up` in `sources`; no card is blanked for it.
 
         `Cache-Control: public, max-age=3600`, weak `ETag`; `If-None-Match` gives `304`. A
-        response with a Source neither `ok` nor `stale` is `max-age=5` with no `ETag`.
+        response with a Source `warming_up` or `down` is `max-age=5` with no `ETag`.
       responses:
         "200":
           description: The lines and the state of every Source.
@@ -1110,7 +1110,7 @@ paths:
         answer carries `warming_up` in `sources` and empty `patterns` and `stops`.
 
         `Cache-Control: public, max-age=3600`, weak `ETag`; `If-None-Match` gives `304`. A
-        response with a Source neither `ok` nor `stale` is `max-age=5` with no `ETag`.
+        response with a Source `warming_up` or `down` is `max-age=5` with no `ETag`.
       parameters:
         - name: id
           in: path
@@ -1191,8 +1191,8 @@ paths:
         (`proastiakos`). Refetch at `next_update_at`, not earlier.
 
         `Cache-Control: public, max-age=<seconds until next_update_at, 5..300>`, with a weak
-        `ETag` and `304` when that is at least 60 s. A response with a Source neither `ok` nor
-        `stale` is `max-age=5` with no `ETag`.
+        `ETag` and `304` when that is at least 60 s. A response with a Source `warming_up` or
+        `down` is `max-age=5` with no `ETag`.
       parameters:
         - name: id
           in: path
@@ -1259,8 +1259,11 @@ paths:
         by `id`: about 9000 stops, under 250 KB gzip. A client filters it by name and by the box
         it shows; the full Stop is at `/v2/stops/{id}`.
 
-        `Cache-Control: public, max-age=3600`, weak `ETag`; `If-None-Match` gives `304`. A
-        response with a Source neither `ok` nor `stale` is `max-age=5` with no `ETag`.
+        `Cache-Control: public, max-age=3600` and a strong `ETag`; `If-None-Match` gives `304`.
+        Keep the index and send its `ETag` back: it holds while the stops and the Source states
+        stay the same (an `ok` Source's `updated_at` does not change it, so the body carries the
+        `updated_at` of its build). A response with a Source `warming_up` or `down` is
+        `max-age=5` with no `ETag`.
       responses:
         "200":
           description: The index and the state of every Source.
@@ -1296,7 +1299,7 @@ paths:
 
         Raises the priority of the stop's lines (`oasa`) and opens the stream (`proastiakos`).
         `Cache-Control: public, max-age=15`; no `ETag` (cached 15 s or less). A response with a
-        Source neither `ok` nor `stale` is `max-age=5`.
+        Source `warming_up` or `down` is `max-age=5`.
       parameters:
         - name: id
           in: path
@@ -1373,7 +1376,7 @@ paths:
         opens the suburban stream. A client merges the two into one layer.
 
         `Cache-Control: public, max-age=<seconds until next_update_at, 5..30>`, gzip, strong
-        `ETag`; `If-None-Match` gives `304`. A response with a Source neither `ok` nor `stale` is
+        `ETag`; `If-None-Match` gives `304`. A response with a Source `warming_up` or `down` is
         `max-age=5` with no `ETag`.
       responses:
         "200":
@@ -1566,7 +1569,7 @@ paths:
         metro and tram `knots` keep them moving between snapshots.
 
         `Cache-Control: public, max-age=5` while suburban trains are present, else `15`; no
-        `ETag` (cached 15 s or less). A response with a Source neither `ok` nor `stale` is
+        `ETag` (cached 15 s or less). A response with a Source `warming_up` or `down` is
         `max-age=5`.
       responses:
         "200":
@@ -1634,7 +1637,7 @@ paths:
         service day: `404 unknown_run`.
 
         `Cache-Control: public, max-age=15`; no `ETag` (cached 15 s or less). A response with a
-        Source neither `ok` nor `stale` is `max-age=5`.
+        Source `warming_up` or `down` is `max-age=5`.
       parameters:
         - name: id
           in: path

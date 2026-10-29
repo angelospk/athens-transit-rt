@@ -641,8 +641,14 @@ Rules:
   corridor table loads, never `404` then). Never `503`, so one slow Source does not blank a card
   that also shows other Sources.
 - **Incomplete responses are cached at most 5 s** (`max-age=5`, no `ETag`): any response with a
-  Source not `ok` or `stale`. The long `max-age` above applies only to complete responses, so a
-  Source that recovers shows within seconds, not after an hour.
+  Source `warming_up` or `down`. The long `max-age` above applies only to complete responses, so a
+  Source that recovers shows within seconds, not after an hour. `stale` and `indicative` are
+  complete: they are steady states (an expired timetable can stand in for weeks), and the
+  `sources` block already says so.
+- **`/v2/stops` has a strong `ETag`.** Its bytes are built once and kept while the stops and the
+  Source states stay the same; an `ok` Source's `updated_at` does not change them, so the body
+  carries the `updated_at` of its build. Clients keep the index and send `If-None-Match`; a `304`
+  costs no body.
 
 ### 6. Mode × field availability
 
