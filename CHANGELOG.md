@@ -9,6 +9,8 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Metro stations Δημοτικό Θέατρο, Μανιάτικα, Νίκαια and Παλλήνη have their proper names, no
+  longer STASY's capitals. The live check accepts ΚΑΤ, a real acronym. (#39)
 - Docs: CONTRACT.md's `/v2` text now says what the code does (unmatched buses are Arrivals;
   ose.mpass is not used; when `stasy` and `proastiakos` are `stale`). The draft contract is a
   record of what changed; MIGRATION and UI-SPEC carry their real status, and MIGRATION's
