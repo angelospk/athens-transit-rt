@@ -146,6 +146,24 @@ func TestClientRefusalWithBrokenBody(t *testing.T) {
 	}
 }
 
+// A request that passed the pacer but still waits at the send gate is not sent once the pacer
+// has stopped after a refusal.
+func TestClientSendsNothingWhileStopped(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer srv.Close()
+	p := NewPacer(6)
+	c := New(srv.URL+"/", nil)
+	c.Stopped = p.Stopped
+	p.Report(0, &HTTPError{Act: "getBusLocation", Status: http.StatusTooManyRequests})
+	if !p.Stopped() {
+		t.Fatal("pacer not stopped after a 429")
+	}
+	if _, err := c.Lines(context.Background()); !errors.Is(err, ErrStopped) || hits != 0 {
+		t.Fatalf("err %v, %d requests reached OASA", err, hits)
+	}
+}
+
 func TestPacerSpacing(t *testing.T) {
 	p := NewPacer(4)
 	t0 := time.Unix(1000, 0)

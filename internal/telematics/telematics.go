@@ -7,6 +7,7 @@ package telematics
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -113,6 +114,7 @@ type Client struct {
 	Pacer     *Pacer
 	Log       RequestLog    // every request, per second
 	MinGap    time.Duration // never start two sends closer than this, nor write two requests closer than MinGap/4 (0 = no limit)
+	Stopped   func() bool   // true = send nothing, fail with ErrStopped (Pacer.Stopped; nil = never)
 	gapMu     chan struct{} // 1-slot lock that a waiter can abandon on cancel
 	lastAt    time.Time     // start of the last send, guarded by gapMu
 	lastWrite time.Time     // end of the last request write, guarded by gapMu
@@ -132,6 +134,7 @@ func New(baseURL string, pacer *Pacer) *Client {
 	c.SetTransport(http.DefaultTransport)
 	if pacer != nil {
 		c.MinGap = pacer.BaseInterval()
+		c.Stopped = pacer.Stopped
 	}
 	return c
 }
@@ -173,6 +176,11 @@ func (g *gapTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			<-c.gapMu
 			return nil, ctx.Err()
 		}
+	}
+	// A request granted before OASA refused us may still be waiting here (behind a slow connect).
+	if c.Stopped != nil && c.Stopped() {
+		<-c.gapMu
+		return nil, ErrStopped
 	}
 	// Hold the gate until the request is written (or fails). A failed send still uses its gap.
 	c.lastAt = time.Now()
@@ -254,6 +262,9 @@ func (c *Client) do(ctx context.Context, out any, act, u string) error {
 	}
 	return nil
 }
+
+// ErrStopped: the request was not sent because OASA refused us recently (see Pacer).
+var ErrStopped = errors.New("OASA requests stopped after a refusal")
 
 type HTTPError struct {
 	Act    string

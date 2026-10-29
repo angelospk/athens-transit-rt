@@ -95,6 +95,13 @@ func (p *Pacer) Wait(ctx context.Context) error {
 	}
 }
 
+// Stopped reports whether OASA requests are stopped after a 403 or 429.
+func (p *Pacer) Stopped() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return time.Now().Before(p.stopped)
+}
+
 // Report feeds the outcome of one request back into the pace.
 func (p *Pacer) Report(latency time.Duration, err error) { p.report(time.Now(), latency, err) }
 
