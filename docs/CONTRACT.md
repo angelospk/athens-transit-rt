@@ -373,7 +373,8 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
   not STASY's "ΣΥΝΤΑΓΜΑ"; tram names as STASY writes them. A Stop the table lacks (new or
   renamed in the feed) keeps the STASY name with `name_en: null` and is logged; a renamed Stop
   gets a permanent alias in the table (13, review #9 items 4 and 7).
-- `/v2/vehicles/rail` is cached 5 s while suburban trains are in it, else 15 s.
+- `/v2/vehicles/rail` is metro and tram only, cached 15 s. Suburban trains are in
+  `/v2/vehicles/suburban`, cached 5 s while trains are in it, else 15 s (review #9, item 11).
 
 ### 1. Goal and rules
 
@@ -428,7 +429,8 @@ and compare them; they never parse them.
   (never removed), and a published Line or Stop id is **never reused** for another Line or Stop,
   so a saved Alert always resolves or fails with `404`, never to the wrong place.
 - Run ids (`oasa:run:<trip_id>:<date>`, `stasy:run:<trip_id>:<date>`,
-  `proastiakos:run:<train no.>:<date>`) and `stasy:run:*` Vehicle ids live only for their service
+  `proastiakos:run:<train no.>:<date>`; on an expired OASA GTFS a run of OASA's daily schedule is
+  `oasa:run:<trip_id>@<HHMM>:<date>`, its departure and the GTFS trip that gives its stop times) and `stasy:run:*` Vehicle ids live only for their service
   day. Clients never store Vehicle or Run ids.
 - `/v1` ids map 1:1: `/v1` line `040` = `oasa:040`; `/v1` stop `400012` = `oasa:400012`.
 
@@ -577,7 +579,7 @@ because their signals differ:
 
 | Source | `stale` when | `indicative` when | `down` when |
 |---|---|---|---|
-| `oasa` | no successful line poll for 5 min (as `/v1/status` `ok:false`) | static GTFS expired | no data since start |
+| `oasa` | no successful line poll for 5 min (as `/v1/status` `ok:false`) | static GTFS expired and no OASA daily schedule of today cached for the response's lines (any line for the lists) | no data since start |
 | `stasy` | the daily check failed and the loaded timetable is from an earlier day | timetable expired (today's `indicative:true`) | no timetable loaded |
 | `proastiakos` | stream open but no event for 2 min, or board older than 30 min | never | no board and no ose.mpass answer |
 
@@ -601,7 +603,8 @@ All: UTF-8 JSON, `Access-Control-Allow-Origin: *`, gzip, times in Unix seconds, 
 | `GET /v2/stops/{id}` | `{stop: Stop, lines: [Line], arrivals: [Arrival], updated_at, sources}` | 15 | `oasa`: raises its lines' priority; `proastiakos`: opens the stream |
 | `GET /v2/vehicles` | `{updated_at, next_update_at, vehicles: [Vehicle], sources}` bus + trolley | until `next_update_at`, 5-30 | none |
 | `GET /v2/vehicles/tiles/{z}/{x}/{y}` | as `/v2/vehicles`, tile-cut as rev 5 | as above | none |
-| `GET /v2/vehicles/rail` | as `/v2/vehicles`, metro + tram + suburban (~100 vehicles, one body) | until `next_update_at`, 5-30 | `proastiakos`: opens the stream |
+| `GET /v2/vehicles/rail` | as `/v2/vehicles`, metro + tram (~60 vehicles, one body) | until `next_update_at`, 5-30 | none |
+| `GET /v2/vehicles/suburban` | as `/v2/vehicles`, suburban trains (~10, one body) | until `next_update_at`, 5-30 | `proastiakos`: opens the stream |
 | `GET /v2/runs/{id}` | `{run: Run, sources}` | 15 | none |
 
 Shapes not shown above:
@@ -630,9 +633,11 @@ Rules:
   2026-10-29). Metro/tram: the STASY
   timetable. Suburban: the board, with the stream's delay when it is open.
 - `/v2/vehicles` and tiles carry bus and trolley only, like rev 3/5: map traffic must not keep
-  the railway.gov.gr stream open. Rail vehicles come from `/v2/vehicles/rail`, which a client
-  loads only while its rail layer is on; that request is the explicit suburban demand. Clients
-  merge both into one vehicles layer (one marker component). Tile zoom 9 entries drop `motion`
+  the railway.gov.gr stream open. Metro and tram vehicles come from `/v2/vehicles/rail`, which
+  opens nothing upstream. Suburban vehicles come from `/v2/vehicles/suburban`, which a client
+  loads only while its suburban layer is on and a corridor is in view; that request is the
+  explicit suburban demand. Clients merge all three into one vehicles layer (one marker
+  component). Tile zoom 9 entries drop `motion`
   (key absent), as rev 5 drops the path keys.
 - Metro/tram vehicles are placed at build time (every 30 s); their `knots` keep them moving.
 - `/v2/runs/{id}` replaces `/v1/rail/stasy/trips/{id}` and `/v1/rail/suburban/trains/{no}` for
@@ -645,8 +650,14 @@ Rules:
   corridor table loads, never `404` then). Never `503`, so one slow Source does not blank a card
   that also shows other Sources.
 - **Incomplete responses are cached at most 5 s** (`max-age=5`, no `ETag`): any response with a
-  Source not `ok` or `stale`. The long `max-age` above applies only to complete responses, so a
-  Source that recovers shows within seconds, not after an hour.
+  Source `warming_up` or `down`. The long `max-age` above applies only to complete responses, so a
+  Source that recovers shows within seconds, not after an hour. `stale` and `indicative` are
+  complete: they are steady states (an expired timetable can stand in for weeks), and the
+  `sources` block already says so.
+- **`/v2/stops` has a strong `ETag`.** Its bytes are built once and kept while the stops and the
+  Source states stay the same; an `ok` Source's `updated_at` does not change them, so the body
+  carries the `updated_at` of its build. Clients keep the index and send `If-None-Match`; a `304`
+  costs no body.
 
 ### 6. Mode × field availability
 
@@ -677,7 +688,11 @@ Rules:
 - **`oasa`**: Line, Pattern, Stop from the OASA GTFS (today's static `lines.json` /
   `lines/{id}.json` data); Vehicle from the matcher's vehicles (today's `/v1/lines/{id}` fields
   renamed: `bearing`, `position_at` → `position`; `variant` → Pattern id; `trip_label` dropped
-  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`.
+  (the card builds it); `path*` → `motion`); Arrival from `internal/server/stops.go`. On an
+  expired GTFS the timetable Arrivals and their Runs come from OASA's daily schedule
+  (`getDailySchedule`, cached and prefetched once a day; a request never asks OASA for it): the
+  run's departure plus the stop's offset in the GTFS trip of that direction that starts nearest
+  in time. A line not cached yet has no timetable Arrivals (live ones only).
 - **`stasy`**: Line from `routes.txt` (+ default names "Γραμμή 1" … when the feed leaves them
   empty); Stop by folding `stops.txt` names per mode; Pattern from the distinct stop sequences of
   `trips.txt` + the OSM track cut between stops; Vehicle from `STASY.Vehicles` (`from`/`to`

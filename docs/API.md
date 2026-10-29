@@ -167,23 +167,29 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
 | `GET /v2/stops` | every Stop, compact rows `[id, name, lat, lon, modes, lines]` | 1 h |
 | `GET /v2/stops/{id}` | one Stop, its Lines and the next Arrivals (2 h, 4 per Line + headsign, 30 in all) | 15 s |
 | `GET /v2/vehicles`, `/v2/vehicles/tiles/{z}/{x}/{y}` | buses and trolleys (as `/v1/vehicles` and its tiles) | until `next_update_at` |
-| `GET /v2/vehicles/rail` | metro, tram and suburban trains | 5 s with suburban trains, else 15 s |
+| `GET /v2/vehicles/rail` | metro and tram trains | 15 s |
+| `GET /v2/vehicles/suburban` | suburban trains (opens the railway.gov.gr stream) | 5 s with trains, else 15 s |
 | `GET /v2/runs/{id}` | one Run (a trip of one day) with every stop and its time | 15 s |
 
 - **Ids** are `<source>:<native>` and must be percent-encoded in a URL: `oasa:040`,
   `stasy:M2`, `stasy:συνταγμα-metro`, `proastiakos:KIATO`,
-  `proastiakos:6928c3c150ab5bc72b39cee6`, `oasa:run:<trip_id>:<YYYY-MM-DD>`,
+  `proastiakos:6928c3c150ab5bc72b39cee6`, `oasa:run:<trip_id>:<YYYY-MM-DD>` (a run of OASA's daily
+  schedule on an expired GTFS: `oasa:run:<trip_id>@<HHMM>:<YYYY-MM-DD>`),
   `proastiakos:run:<train no.>:<YYYY-MM-DD>`. An old id of a renamed Stop still answers, with
   the current `id` in the body. Unknown ids: `404` `unknown_line` / `unknown_stop` /
   `unknown_run`.
 - **`sources`** in every body says how fresh each Source is (`ok`, `warming_up`, `stale`,
-  `indicative`, `down`). A body with a Source neither `ok` nor `stale` is cached 5 s, with no
-  `ETag`; a complete one cached 1 h has a weak `ETag` and answers `304`.
+  `indicative`, `down`). A body with a Source `warming_up` or `down` is cached 5 s, with no
+  `ETag`; a complete one cached 1 h has an `ETag` and answers `304` (`/v2/stops`: a strong one
+  that holds while the stops stay the same, so keep the index and send `If-None-Match`).
 - **`position.kind`** is `gps` for buses and suburban trains, `estimate` for metro and tram (from
   the timetable; `motion.knots` moves them between snapshots). Arrival **`source`** is `live`
-  when GPS or a reported delay set `at`, else `timetable`.
-- Suburban trains are only in `/v2/vehicles/rail`, so map traffic does not keep the
-  railway.gov.gr stream open. A suburban Stop or Line vehicles request opens it too; it closes
+  when GPS or a reported delay set `at`, else `timetable`. When the OASA GTFS has expired, bus
+  `timetable` Arrivals and their Runs come from OASA's daily schedule of today (departure plus the
+  GTFS stop offsets); `oasa` is `indicative` only for lines whose daily schedule is not cached.
+- Suburban trains are only in `/v2/vehicles/suburban`, so map traffic (buses, metro, tram) does
+  not keep the railway.gov.gr stream open. Load it only while a suburban layer is on. A suburban
+  Stop or Line vehicles request opens the stream too; it closes
   3 minutes after the last such request.
 
 ```bash
@@ -191,8 +197,9 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
 curl -s "https://transit.haroldpoi.dev/v2/stops/$(jq -rn '"stasy:συνταγμα-metro"|@uri')" \
   | jq -r '.arrivals[] | [.line, .headsign, (.at|localtime|strftime("%H:%M")), .source] | @tsv'
 
-# Every train on the rail network now
-curl -s --compressed https://transit.haroldpoi.dev/v2/vehicles/rail | jq -r '.vehicles[] | [.line, .label // "-", .position.kind] | @tsv'
+# Every metro and tram train now, then every suburban train
+curl -s --compressed https://transit.haroldpoi.dev/v2/vehicles/rail | jq -r '.vehicles[] | [.line, .headsign, .position.kind] | @tsv'
+curl -s --compressed https://transit.haroldpoi.dev/v2/vehicles/suburban | jq -r '.vehicles[] | [.line, .label, .position.kind] | @tsv'
 ```
 
 ## OASA's predictions at a stop

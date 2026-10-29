@@ -111,6 +111,9 @@ type App struct {
 	vehMu   sync.Mutex // lock order: vehMu, then mu
 	vehSnap *vehiclesSnapshot
 
+	v2StopsMu sync.Mutex // the /v2/stops body, rebuilt when its stops or Source states change
+	v2Stops   *v2StopsBody
+
 	adapters []Adapter  // the /v2 Sources, in the order of their "sources" entries
 	v2Mu     sync.Mutex // lock order: v2Mu, then mu
 	v2Snap   *v2Snapshot

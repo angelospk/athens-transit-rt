@@ -11,6 +11,7 @@ import (
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/segspeed"
+	"github.com/angelospk/athens-transit-rt/internal/telematics"
 )
 
 // Stop boards: the buses on their way to one stop and about when they get there, from what the
@@ -201,7 +202,7 @@ type boardVehicle struct {
 func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []StopArrival {
 	out := []StopArrival{}
 	per := map[[2]string]int{}
-	for _, row := range a.stopRows(w, stop, lines, now, boardHorizon) {
+	for _, row := range a.stopRows(w, stop, lines, now, boardHorizon, nil) {
 		k := [2]string{row.Line, row.Variant}
 		if per[k] < boardPerVariant {
 			per[k]++
@@ -212,8 +213,10 @@ func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []S
 	return out
 }
 
-// stopRows is every row of the stop board up to horizon ahead, soonest first, uncut.
-func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, horizon time.Duration) []StopArrival {
+// stopRows is every row of the stop board up to horizon ahead, soonest first, uncut. daily is
+// the line's timetable for an expired GTFS, nil when there is none (/v1).
+func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, horizon time.Duration,
+	daily func(line string) (telematics.DailySchedule, bool)) []StopArrival {
 	f := w.feed
 	a.mu.RLock()
 	// A bus that changed lines keeps its old line's result for a while: only its newest fix counts.
@@ -260,18 +263,36 @@ func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, hori
 	if tab.Feed() != worldVersion(w) {
 		tab = nil
 	}
+	// An expired timetable still matches vehicles (PlanningTime), but its times are not OASA's:
+	// the runs of a line come from OASA's daily schedule when the cache has it.
+	valid := f.FeedEnd().IsZero() || !gtfs.Midnight(now).After(f.FeedEnd())
+	var pending map[string][]dailyRun
+	if !valid && daily != nil {
+		pending = map[string][]dailyRun{}
+		for _, l := range lines {
+			if d, ok := daily(l); ok {
+				pending[l] = dailyPending(f, l, d, now)
+			}
+		}
+	}
 	until := now.Add(horizon).Unix()
 	var rows []StopArrival
 	for _, b := range buses {
-		if row, ok := liveArrival(f, tab, stop, b, now); ok && row.At <= until {
+		var leave time.Time // a bus waiting at its start makes the next daily run of its shape
+		if b.pos.waiting && b.r.Matched() {
+			leave = takeRun(f, pending, b.line, f.Trip(b.r.Trip).Shape, now)
+		}
+		if row, ok := liveArrival(f, tab, stop, b, now, leave); ok && row.At <= until {
 			rows = append(rows, row)
 		}
 	}
-	// An expired timetable still matches vehicles (PlanningTime), but its times are not OASA's.
-	if end := f.FeedEnd(); end.IsZero() || !gtfs.Midnight(now).After(end) {
+	if valid {
 		for _, l := range lines {
 			rows = append(rows, scheduleArrivals(f, l, stop, now, horizon, running)...)
 		}
+	}
+	for _, l := range lines {
+		rows = append(rows, dailyArrivals(f, l, pending[l], stop, now, horizon)...)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].At != rows[j].At {
@@ -289,8 +310,9 @@ func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, hori
 // its fix, the time to drive there (boardTravel); a matched bus waiting at its first stop
 // leaves at its scheduled departure, or now when that is past. An unmatched bus standing at its
 // first stop has no time and is left out. Not past the stop by its last fix, it is never
-// overdue: late, it is due now.
-func liveArrival(f *gtfs.Feed, tab *segspeed.Table, stop int32, b boardVehicle, now time.Time) (StopArrival, bool) {
+// overdue: late, it is due now. leave, when not zero, is the departure of a waiting bus instead
+// of its trip's (OASA's daily run on an expired GTFS).
+func liveArrival(f *gtfs.Feed, tab *segspeed.Table, stop int32, b boardVehicle, now, leave time.Time) (StopArrival, bool) {
 	p, r := b.pos, b.r
 	if !p.ok {
 		return StopArrival{}, false
@@ -323,7 +345,12 @@ func liveArrival(f *gtfs.Feed, tab *segspeed.Table, stop int32, b boardVehicle, 
 		row.DelayS = r.Delay
 		timetable = t
 		if p.waiting {
-			start = maxTime(r.Day.Add(time.Duration(f.Start(t))*time.Second), now)
+			dep := r.Day.Add(time.Duration(f.Start(t)) * time.Second)
+			if !leave.IsZero() {
+				dep = leave
+				row.Scheduled, row.DelayS = ptr(leave.Unix()+int64(f.StopTime(t, j).Arr-f.Start(t))), 0
+			}
+			start = maxTime(dep, now)
 		}
 	} else if p.waiting {
 		return StopArrival{}, false // departure unknown
