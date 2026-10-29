@@ -71,6 +71,7 @@ func (a *App) Handler() http.Handler {
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "Date") // server time for browser clients (#3)
 		w.Header().Add("Vary", "Accept-Encoding")
 		if path.Clean(r.URL.Path) != r.URL.Path {
 			// ServeMux would answer 301 with the cleaned path; such ids are never valid.

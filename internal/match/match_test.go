@@ -165,6 +165,13 @@ func TestRouteMapperBySimilarity(t *testing.T) {
 	if _, cached := rm.cache[[2]string{"L", "unknown"}]; cached {
 		t.Fatal("unknown answer was cached")
 	}
+	// Cached answers only: a mapped code, never a lookup.
+	if got, ok := rm.Cached("L", "999"); !ok || !got[sh] {
+		t.Fatal("cached mapping not returned")
+	}
+	if _, ok := rm.Cached("L", "997"); ok {
+		t.Fatal("uncached code returned")
+	}
 }
 
 func TestAlongIsDistanceOnTheTripLine(t *testing.T) {
