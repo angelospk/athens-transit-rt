@@ -4,6 +4,7 @@
 // The data was generated in the athens-transit-map repo (scripts/metro.ts and
 // scripts/metro-osm.ts for metro.json, OSM corridor paths for suburban.json) at commit
 // 370af6a and copied here unchanged. Tracks © OpenStreetMap contributors (ODbL).
+// stasy_stops.json (Stop names) is built by scripts/stasy-stop-names.py from OpenStreetMap.
 package railgeo
 
 import (

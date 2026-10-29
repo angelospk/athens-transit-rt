@@ -51,6 +51,9 @@ one: choice, alternative, reason. The docs did not settle these points.
     itself (CodeRabbit, session 2).
 13. **stasy Stop `name`** is the first platform's name in the feed as written (metro names are
     upper case, tram names mixed case). `name_en` is `null`: the STASY files have no English names.
+    *Superseded (review #9, items 4 and 7):* both now come from `internal/railgeo/stasy_stops.json`,
+    built from OpenStreetMap by `scripts/stasy-stop-names.py` and checked by hand; the STASY
+    name stays only for a Stop the table lacks, which is logged.
 14. **stasy Line `name`** is the feed's `route_long_name` ("ΓΡΑΜΜΗ 1"), `"Γραμμή N"` when empty;
     `name_en` null; mode from `route_type` (0 tram, else metro; `T` prefix when missing).
 15. **A train's last stop is not an Arrival** (metro/tram and, for the same reason, bus): nobody

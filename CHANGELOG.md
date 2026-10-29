@@ -14,6 +14,46 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   record of what changed; MIGRATION and UI-SPEC carry their real status, and MIGRATION's
   hosting section describes the VPS and its automatic deploys. A test keeps the error codes of
   the code equal to the OpenAPI Error enum and every Source state in the contract.
+- Daily `live-check` workflow: `scripts/check-openapi-live.py` now has a case for every path of
+  the spec (the `/v1/stops`, `/v1/rail` and `/v2` paths were missing) and checks the /v2 data:
+  Lines of every mode, Arrivals at a bus and a metro Stop, no Source down, metro Stop names in
+  the name table, and the rail trains' `motion.knots` rules. Every response schema is closed
+  for the check, nested objects too (a part of an `allOf` through its whole): a field the spec
+  does not list fails. A failure opens an issue, with the log's last lines when the check stops
+  before its summary. The
+  OpenAPI parameter of `/v1/rail/suburban/trains/{no}` is quoted (`"no"`): YAML 1.1 read it as
+  the boolean `false`.
+- `/v2` metro and tram Stops have proper names and English names: "Σύνταγμα" / "Syntagma"
+  instead of STASY's "ΣΥΝΤΑΓΜΑ" and `null` (all 126 Stops have `name_en`). They come from a
+  hand-checked table built from OpenStreetMap (`internal/railgeo/stasy_stops.json`,
+  regenerate with `scripts/stasy-stop-names.py`). A Stop new to the STASY feed keeps STASY's
+  name, has no English name and is logged at load; a renamed Stop gets a permanent alias there.
+  ΣΥΝΔΕΣΗ ΠΡΟΑΣΤΙΑΚΟΥ, the point where M3 airport trains move onto the suburban tracks, is
+  merged into Δουκίσσης Πλακεντίας: its id is an alias of that Stop, it is not in `/v2/stops`,
+  Patterns and Runs list Πλακεντίας once, and a train stands there from its arrival at the
+  station to its departure from the point.
+- `/v2/stops/{id}` (OASA stops) lists OASA's own predictions (`getStopArrivals`) as `live`
+  Arrivals for the buses the backend has no Arrival of, so a client needs no OASA proxy for them
+  (contract rev 11). They are refreshed in the background, at most one OASA call per stop every
+  30 s through the shared request queue; a request never waits for OASA
+  ([#22](https://github.com/angelospk/athens-transit-rt/issues/22)).
+- Seen flags: a daily direction now finds its shape when one name abbreviates a word of the
+  other ("ΣΤ. ΚΗΦΙΣΙΑΣ" and "ΣΤΑΘΜΟΣ ΚΗΦΙΣΙΑΣ", "Α. ΠΑΤΗΣΙΑ" and "ΑΝΩ ΠΑΤΗΣΙΑ"). Fixes the
+  seen flags of 025, 11, 530, Β15, 022, 406 and 891; no other direction changes
+  ([#21](https://github.com/angelospk/athens-transit-rt/issues/21)).
+- Buses on a weekly variant route ("every Thursday, street market") are polled again. The OASA
+  GTFS puts these variants of Α3, 447, 731, 120, 856 and others on the wrong weekday, so on
+  the real day their route code was never asked and the buses of that leg were missing from the
+  map and from the seen flags. A route code is now polled when its shapes run at this time of
+  day on any weekday; an empty one backs off to every 5 min as before
+  ([#20](https://github.com/angelospk/athens-transit-rt/issues/20)).
+- Live responses send `Access-Control-Expose-Headers: Date` (contract rev 10), so a browser
+  `fetch()` can read the server time and a new tab sees a stopped feed on its first response
+  ([#3](https://github.com/angelospk/athens-transit-rt/issues/3)).
+- `at_terminus` (contract rev 9) on `/v1/lines/{id}` vehicles and on `/v2` Vehicles: `true`
+  when a bus is matched and waiting at the first stop of its trip, so clients can show
+  "waiting at the terminus" and leave its departure delay out of the line's running delay
+  ([#1](https://github.com/angelospk/athens-transit-rt/issues/1)).
 - `docs/fixtures/v2/motion-cases.json`: shared test cases for the `motion.knots` client rule
   (where a marker stands at a time), so the app and the web map test their movers against the
   same cases. The backend checks the knot rules on every train of its test feed through a day.

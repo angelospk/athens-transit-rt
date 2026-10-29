@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: athens-transit-rt
-  version: "1 (contract rev 8)"
+  version: "1 (contract rev 11)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
     Free public API, no key. Live data comes from `https://transit.haroldpoi.dev`; the static map
@@ -21,7 +21,8 @@ info:
 
     **Format.** JSON is UTF-8. Times are Unix seconds. Coordinates are WGS84 degrees. Responses
     are gzip-compressed when the request allows it. Every response has
-    `Access-Control-Allow-Origin: *`. There is no `OPTIONS` (preflight) support: from a browser,
+    `Access-Control-Allow-Origin: *`; live responses also have
+    `Access-Control-Expose-Headers: Date`, so browser code can read the server time. There is no `OPTIONS` (preflight) support: from a browser,
     use plain `GET` requests without custom headers.
 
     **Line ids** are the OASA line numbers in Greek uppercase (`040`, `550`, `Α1`, `Χ96`),
@@ -108,6 +109,7 @@ paths:
                     trip_label: 00:15 ΣΥΝΤΑΓΜΑ → ΠΕΙΡΑΙΑΣ
                     delay_s: -83
                     next_stop_id: "400088"
+                    at_terminus: false
                     speed: 4.8
                     path: [[37.94457, 23.66549], [37.94429, 23.66359], [37.94441, 23.66261], [37.9447, 23.66187], [37.94611, 23.65972]]
                     path_beyond: [[37.94611, 23.65972], [37.94769, 23.6573], [37.9482, 23.65584], [37.94876, 23.65289], [37.94878, 23.65119], [37.94803, 23.65064]]
@@ -1014,7 +1016,7 @@ paths:
         day. `t` is the scheduled arrival (the departure at the origin). `delay_min` of the run is the
         live delay while the stream is open. `Cache-Control: public, max-age=30`.
       parameters:
-        - name: no
+        - name: "no"
           in: path
           required: true
           description: The `train` of a vehicle or departure, e.g. `1226`.
@@ -1404,6 +1406,7 @@ paths:
                     position: {kind: gps, lat: 37.94454, lon: 23.6655, bearing: 258, at: 1793205565}
                     delay_s: 83
                     next_stop: "oasa:400088"
+                    at_terminus: false
                     motion:
                       path: [[37.94457, 23.66549], [37.94429, 23.66359]]
                       path_beyond: [[37.94429, 23.66359], [37.94441, 23.66261]]
@@ -1862,6 +1865,11 @@ components:
             next_stop_id:
               type: [string, "null"]
               description: GTFS `stop_id` of the next stop.
+            at_terminus:
+              type: boolean
+              description: |
+                Rev 9: `true` when matched and waiting at the first stop of its trip (its
+                `delay_s` is a departure delay). Missing in older responses: treat as `false`.
 
     CityVehicle:
       description: A vehicle of `/v1/vehicles` or a `z` 13 tile.
@@ -2713,6 +2721,11 @@ components:
         next_stop:
           type: [string, "null"]
           description: Stop id; `null` when unmatched.
+        at_terminus:
+          type: boolean
+          description: |
+            Rev 9: `true` when a bus or trolley is matched and waiting at the first Stop of its
+            Run; always `false` for rail. Missing in older responses: treat as `false`.
         motion:
           description: "`null` when there is nothing to move along (standing with no Run, no geometry)."
           anyOf:
@@ -2740,6 +2753,7 @@ components:
           $ref: "#/components/schemas/Position"
         delay_s: {type: [integer, "null"], description: Observed delay in seconds; `null` without a live signal.}
         next_stop: {type: [string, "null"], description: Stop id; `null` when unmatched.}
+        at_terminus: {type: boolean, description: "As `Vehicle`: waiting at the first Stop of its Run."}
         source:
           type: string
           enum: [oasa, stasy, proastiakos]
@@ -2771,10 +2785,13 @@ components:
         source:
           type: string
           enum: [live, timetable]
-          description: "`live` only when GPS or a reported delay set `at`."
+          description: |
+            `live` only when GPS, a reported delay or (rev 11, OASA stops) OASA's own prediction
+            set `at`. An OASA prediction is listed only for a bus the backend has no Arrival of;
+            it has `vehicle` set and `scheduled_at`, `delay_s`, `run` `null`.
         run:
           type: [string, "null"]
-          description: Run id, so the card can open the Run before it starts.
+          description: Run id, so the card can open the Run before it starts; `null` for an OASA prediction.
         vehicle:
           type: [string, "null"]
           description: |
