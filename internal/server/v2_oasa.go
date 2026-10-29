@@ -270,7 +270,7 @@ func (o *oasaAdapter) Arrivals(_ context.Context, stopID string, now time.Time) 
 func vehicleV2(f *gtfs.Feed, mode, line string, r *match.Result, v *Vehicle, b boardPos) model.Vehicle {
 	out := model.Vehicle{ID: oasaPrefix + v.ID, Line: oasaPrefix + line, Mode: mode, Label: model.Ptr(v.ID),
 		Position: model.Position{Kind: model.GPS, Lat: v.Lat, Lon: v.Lon, Bearing: v.Bearing, At: v.PositionAt},
-		DelayS:   v.DelayS, Source: oasaNS}
+		DelayS:   v.DelayS, AtTerminus: v.AtTerminus, Source: oasaNS}
 	if r.Matched() {
 		t := f.Trip(r.Trip)
 		out.Run = model.Ptr(model.RunID(oasaNS, t.ID, r.Day, gtfs.Athens))

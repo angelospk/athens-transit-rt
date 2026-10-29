@@ -98,6 +98,8 @@ percent-encoded. Latin look-alikes also work (`A1` → `Α1`).
 
 - `trip_id`, `trip_label`, `delay_s` and `next_stop_id` are `null` when the vehicle is not
   matched to a scheduled trip. `bearing` and `variant` may be `null`.
+- `at_terminus` is `true` when the vehicle is matched and waiting at the first stop of its
+  trip; its `delay_s` is then a departure delay.
 - Refetch at `next_update_at`, not earlier: until then the answer does not change.
 - Asking for a line raises its polling priority for about 10 minutes (about every 30 s). If
   nobody asked for it recently, it is polled at once: `next_update_at` is then a few seconds

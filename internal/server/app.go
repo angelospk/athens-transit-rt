@@ -374,6 +374,7 @@ type Vehicle struct {
 	PathBeyond [][2]float64 `json:"path_beyond"` // rev 4: on from path's end to the third stop
 	PathStops  []int        `json:"path_stops"`  // rev 4: metres along path + path_beyond of each stop
 	PathSpeeds []*float64   `json:"path_speeds"` // rev 6: typical m/s per 200 m step ahead; rev 7: with today's traffic
+	AtTerminus bool         `json:"at_terminus"` // matched and waiting at the first stop of its trip
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -403,6 +404,7 @@ func (a *App) vehicleView(w *world, r *match.Result) (Vehicle, boardPos) {
 	v.TripLabel = ptr(TripLabel(f, t))
 	v.DelayS = ptr(r.Delay)
 	v.NextStopID = ptr(f.Stops[feed.NextStop(f, r).Stop].ID)
+	v.AtTerminus = r.Waiting
 	return v, boardPosOf(w, r, t.Shape, r.Along, v.Speed)
 }
 
