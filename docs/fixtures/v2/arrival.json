@@ -1,0 +1,4 @@
+{"line": "proastiakos:PIRAIR", "stop": "proastiakos:6928c3c150ab5bc72b39cee5", "headsign": "Αεροδρόμιο",
+ "at": 1793205900, "scheduled_at": 1793205780, "delay_s": 120, "source": "live",
+ "run": "proastiakos:run:1226:2026-10-29", "vehicle": "proastiakos:1226", "vehicle_label": "1226",
+ "platform": "2", "status": "running"}

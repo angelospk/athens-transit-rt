@@ -100,20 +100,8 @@ func parseTileNum(s string) (int, bool) {
 // handleTile serves one tile of the current snapshot like /v1/vehicles (prebuilt bytes, same
 // cache headers). Only canonical URLs are served: anything else would be another cache key.
 func (a *App) handleTile(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawQuery != "" || r.URL.ForceQuery {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"query_not_allowed"}`))
-		return
-	}
-	z, okZ := parseTileNum(r.PathValue("z"))
-	x, okX := parseTileNum(r.PathValue("x"))
-	y, okY := parseTileNum(r.PathValue("y"))
-	k := tileKey{z, x, y}
-	if !okZ || !okX || !okY || (z != tileOverviewZ && z != tileDetailZ) || !inTileRange(k) ||
-		r.URL.EscapedPath() != r.URL.Path {
-		writeJSON(w, http.StatusNotFound, unknownMaxAge, map[string]string{"error": "not_found"})
+	k, ok := tileRequest(w, r)
+	if !ok {
 		return
 	}
 	a.serveSnapshot(w, r, func(s *vehiclesSnapshot) *encoded {
@@ -122,4 +110,25 @@ func (a *App) handleTile(w http.ResponseWriter, r *http.Request) {
 		}
 		return s.empty
 	})
+}
+
+// tileRequest is the tile a canonical tile URL names; otherwise it answers the error itself.
+func tileRequest(w http.ResponseWriter, r *http.Request) (tileKey, bool) {
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"query_not_allowed"}`))
+		return tileKey{}, false
+	}
+	z, okZ := parseTileNum(r.PathValue("z"))
+	x, okX := parseTileNum(r.PathValue("x"))
+	y, okY := parseTileNum(r.PathValue("y"))
+	k := tileKey{z, x, y}
+	if !okZ || !okX || !okY || (z != tileOverviewZ && z != tileDetailZ) || !inTileRange(k) ||
+		r.URL.EscapedPath() != r.URL.Path {
+		writeJSON(w, http.StatusNotFound, unknownMaxAge, map[string]string{"error": "not_found"})
+		return tileKey{}, false
+	}
+	return k, true
 }

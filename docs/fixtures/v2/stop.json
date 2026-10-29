@@ -1,0 +1,2 @@
+{"id": "stasy:συνταγμα-metro", "name": "Σύνταγμα", "name_en": "Syntagma", "lat": 37.97527, "lon": 23.73552,
+ "modes": ["metro"], "lines": ["stasy:M2", "stasy:M3"], "source": "stasy"}

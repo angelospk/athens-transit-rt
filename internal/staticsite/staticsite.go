@@ -78,29 +78,36 @@ func Write(f *gtfs.Feed, tel []telematics.Line, dir string) error {
 		if strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
 			continue
 		}
-		trips := f.TripsForLine(id)
-		// Name and colours of the line's route with the most trips.
-		routeCount, routeOrder := map[int32]int{}, []int32{}
-		for _, ti := range trips {
-			r := f.Trips[ti].Route
-			if routeCount[r] == 0 {
-				routeOrder = append(routeOrder, r)
-			}
-			routeCount[r]++
-		}
-		r := f.Routes[mostCommon(routeOrder, routeCount)]
-		kind := "bus"
-		if r.Type == 11 {
-			kind = "trolley"
-		}
-		out.Lines = append(out.Lines, Line{ID: id, Name: r.LongName, NameEn: englishName(tel, id, r.LongName),
-			Color: color(r.Color, "#1a73e8"), TextColor: color(r.TextColor, "#ffffff"), Kind: kind})
-		if err := writeJSON(filepath.Join(base, "lines", id+".json"), lineFile(f, id, trips)); err != nil {
+		out.Lines = append(out.Lines, LineInfo(f, tel, id))
+		if err := writeJSON(filepath.Join(base, "lines", id+".json"), LineFileOf(f, id)); err != nil {
 			return err
 		}
 	}
 	return writeJSON(filepath.Join(base, "lines.json"), out)
 }
+
+// LineInfo is a line's lines.json entry: name and colours of its route with the most trips.
+// The line must have trips.
+func LineInfo(f *gtfs.Feed, tel []telematics.Line, id string) Line {
+	routeCount, routeOrder := map[int32]int{}, []int32{}
+	for _, ti := range f.TripsForLine(id) {
+		r := f.Trips[ti].Route
+		if routeCount[r] == 0 {
+			routeOrder = append(routeOrder, r)
+		}
+		routeCount[r]++
+	}
+	r := f.Routes[mostCommon(routeOrder, routeCount)]
+	kind := "bus"
+	if r.Type == 11 {
+		kind = "trolley"
+	}
+	return Line{ID: id, Name: r.LongName, NameEn: englishName(tel, id, r.LongName),
+		Color: color(r.Color, "#1a73e8"), TextColor: color(r.TextColor, "#ffffff"), Kind: kind}
+}
+
+// LineFileOf is a line's lines/{id}.json.
+func LineFileOf(f *gtfs.Feed, id string) LineFile { return lineFile(f, id, f.TripsForLine(id)) }
 
 // englishName prefers the telematics LineCode whose Greek name equals the GTFS name.
 func englishName(tel []telematics.Line, id, greek string) string {

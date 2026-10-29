@@ -53,6 +53,8 @@ type StopArrival struct {
 	Scheduled  *int64  `json:"scheduled"`  // the trip's timetable time at the stop
 	StopsAway  *int    `json:"stops_away"` // 1: the stop is the bus's next one
 	DistanceM  *int    `json:"distance_m"` // along the route
+
+	day time.Time // service day of TripID (/v2 run ids); zero without a trip
 }
 
 type StopResponse struct {
@@ -197,6 +199,21 @@ type boardVehicle struct {
 // the timetable is valid, the trips that leave later and have no bus yet; soonest first, at
 // most boardPerVariant per line and variant.
 func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []StopArrival {
+	out := []StopArrival{}
+	per := map[[2]string]int{}
+	for _, row := range a.stopRows(w, stop, lines, now, boardHorizon) {
+		k := [2]string{row.Line, row.Variant}
+		if per[k] < boardPerVariant {
+			per[k]++
+			row.EtaS = int(max(0, row.At-now.Unix()))
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// stopRows is every row of the stop board up to horizon ahead, soonest first, uncut.
+func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, horizon time.Duration) []StopArrival {
 	f := w.feed
 	a.mu.RLock()
 	// A bus that changed lines keeps its old line's result for a while: only its newest fix counts.
@@ -243,17 +260,17 @@ func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []S
 	if tab.Feed() != worldVersion(w) {
 		tab = nil
 	}
-	horizon := now.Add(boardHorizon).Unix()
+	until := now.Add(horizon).Unix()
 	var rows []StopArrival
 	for _, b := range buses {
-		if row, ok := liveArrival(f, tab, stop, b, now); ok && row.At <= horizon {
+		if row, ok := liveArrival(f, tab, stop, b, now); ok && row.At <= until {
 			rows = append(rows, row)
 		}
 	}
 	// An expired timetable still matches vehicles (PlanningTime), but its times are not OASA's.
 	if end := f.FeedEnd(); end.IsZero() || !gtfs.Midnight(now).After(end) {
 		for _, l := range lines {
-			rows = append(rows, scheduleArrivals(f, l, stop, now, running)...)
+			rows = append(rows, scheduleArrivals(f, l, stop, now, horizon, running)...)
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -265,17 +282,7 @@ func (a *App) stopBoard(w *world, stop int32, lines []string, now time.Time) []S
 		}
 		return rows[i].Vehicle < rows[j].Vehicle
 	})
-	out := []StopArrival{}
-	per := map[[2]string]int{}
-	for _, row := range rows {
-		k := [2]string{row.Line, row.Variant}
-		if per[k] < boardPerVariant {
-			per[k]++
-			row.EtaS = int(max(0, row.At-now.Unix()))
-			out = append(out, row)
-		}
-	}
-	return out
+	return rows
 }
 
 // liveArrival is the bus's next pass of the stop (not as the last stop of its pattern): from
@@ -311,7 +318,7 @@ func liveArrival(f *gtfs.Feed, tab *segspeed.Table, stop int32, b boardVehicle, 
 	}
 	start, timetable := r.Time, (*gtfs.Trip)(nil)
 	if r.Matched() {
-		row.TripID = ptr(t.ID)
+		row.TripID, row.day = ptr(t.ID), r.Day
 		row.Scheduled = ptr(r.Day.Unix() + int64(f.StopTime(t, j).Arr))
 		row.DelayS = r.Delay
 		timetable = t
@@ -374,13 +381,13 @@ func schedAt(f *gtfs.Feed, g *geo.Geometry, t *gtfs.Trip, along float64, arrive 
 }
 
 // scheduleArrivals is the line's trips that have not left their first stop yet, pass the stop
-// within boardHorizon (the first pass, not as the last stop) and no matched bus runs.
-func scheduleArrivals(f *gtfs.Feed, line string, stop int32, now time.Time, running map[[2]int64]bool) []StopArrival {
+// within horizon (the first pass, not as the last stop) and no matched bus runs.
+func scheduleArrivals(f *gtfs.Feed, line string, stop int32, now time.Time, horizon time.Duration, running map[[2]int64]bool) []StopArrival {
 	var out []StopArrival
 	// Asked at the horizon, the candidates are the trips of its service day and the day before
 	// that started by then: at 23:50 tomorrow's trips from 00:00 too. Those already gone are
 	// skipped below.
-	for _, c := range f.CandidateTrips(line, now.Add(boardHorizon), 0, 48*3600) {
+	for _, c := range f.CandidateTrips(line, now.Add(horizon), 0, 48*3600) {
 		t := f.Trip(c.Trip)
 		if running[[2]int64{int64(c.Trip), c.Day.Unix()}] || c.Day.Add(time.Duration(f.Start(t))*time.Second).Before(now) {
 			continue
@@ -391,10 +398,10 @@ func scheduleArrivals(f *gtfs.Feed, line string, stop int32, now time.Time, runn
 			continue
 		}
 		at := c.Day.Unix() + int64(f.StopTime(t, j).Arr)
-		if at > now.Add(boardHorizon).Unix() {
+		if at > now.Add(horizon).Unix() {
 			continue
 		}
-		row := StopArrival{Line: line, Headsign: f.Headsign(t), TripID: ptr(t.ID), At: at, Scheduled: ptr(at), Source: "schedule"}
+		row := StopArrival{Line: line, Headsign: f.Headsign(t), TripID: ptr(t.ID), At: at, Scheduled: ptr(at), Source: "schedule", day: c.Day}
 		if t.Shape >= 0 {
 			row.Variant = f.Shapes[t.Shape].ID
 		}

@@ -65,6 +65,9 @@ type world struct {
 	matcher   *match.Matcher
 	mapper    *match.RouteMapper
 	stopLines map[int32][]string // stop index -> the lines calling there
+
+	modesOnce sync.Once
+	modes     map[string]string // line -> mode (/v2), built on first use
 }
 
 // lineData is the last published state of one line.
@@ -107,6 +110,10 @@ type App struct {
 
 	vehMu   sync.Mutex // lock order: vehMu, then mu
 	vehSnap *vehiclesSnapshot
+
+	adapters []Adapter  // the /v2 Sources, in the order of their "sources" entries
+	v2Mu     sync.Mutex // lock order: v2Mu, then mu
+	v2Snap   *v2Snapshot
 
 	hist *history.Writer                // nil: no fix history
 	segs atomic.Pointer[segspeed.Table] // typical speeds from the history; nil until built
@@ -177,6 +184,7 @@ func New(cfg Config, log *slog.Logger) *App {
 	// The stream has no end, so no client Timeout; only the wait for its headers is bounded.
 	stream := http.DefaultTransport.(*http.Transport).Clone()
 	stream.ResponseHeaderTimeout = 15 * time.Second
+	a.adapters = []Adapter{&oasaAdapter{a}}
 	a.trains = &rail.TrainStream{BaseURL: cfg.SuburbanURL, HTTP: &http.Client{Transport: stream}, Log: log,
 		Now: func() time.Time { return a.now() }}
 	return a
@@ -198,6 +206,9 @@ func (a *App) SetFeed(f *gtfs.Feed, m *release.Manifest) {
 	a.vehMu.Lock()
 	a.vehSnap = nil
 	a.vehMu.Unlock()
+	a.v2Mu.Lock()
+	a.v2Snap = nil
+	a.v2Mu.Unlock()
 	a.log.Info("static GTFS loaded", "version", a.gtfsVersion(), "trips", len(f.Trips), "lines", len(f.Lines()))
 	a.warnExpiry(true)
 	a.refreshLines()

@@ -60,6 +60,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/rail/suburban/trains/{no}", a.handleSuburbanTrain)
 	mux.HandleFunc("GET /v1/stats", a.handleStatsIndex)
 	mux.HandleFunc("GET /v1/stats/days/{date}", a.handleStatsDay)
+	a.routeV2(mux)
 	mux.Handle("/mcp", a.mcpHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -77,8 +78,9 @@ func (a *App) Handler() http.Handler {
 			return
 		}
 		if r.URL.Path == "/v1/vehicles" || strings.HasPrefix(r.URL.Path, "/v1/vehicles/tiles/") ||
+			r.URL.Path == "/v2/vehicles" || strings.HasPrefix(r.URL.Path, "/v2/vehicles/tiles/") ||
 			!acceptsGzip(r.Header.Get("Accept-Encoding")) {
-			// /v1/vehicles and its tiles serve bytes compressed once per build.
+			// /v1/vehicles, /v2/vehicles and their tiles serve bytes compressed once per build.
 			mux.ServeHTTP(w, r)
 			return
 		}

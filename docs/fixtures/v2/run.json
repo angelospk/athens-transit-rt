@@ -1,0 +1,5 @@
+{"id": "stasy:run:1012345:2026-10-29", "line": "stasy:M2", "headsign": "Ελληνικό",
+ "pattern": "stasy:M2-0", "vehicle": "stasy:run:1012345:2026-10-29", "vehicle_label": null,
+ "status": "running",
+ "stops": [{"stop": "stasy:ακροπολη-metro", "scheduled_at": 1793205660, "at": 1793205660,
+            "delay_s": null, "source": "timetable", "platform": null, "passed": false}]}
