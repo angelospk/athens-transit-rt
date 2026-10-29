@@ -230,12 +230,12 @@ func (c *Client) do(ctx context.Context, out any, act, u string) error {
 		return fmt.Errorf("%s: %w", act, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &HTTPError{Act: act, Status: resp.StatusCode} // before the body: a refusal must stay visible
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return fmt.Errorf("%s: %w", act, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return &HTTPError{Act: act, Status: resp.StatusCode}
 	}
 	b := strings.TrimSpace(string(body))
 	if b == "" || b == `""` || b == "null" {

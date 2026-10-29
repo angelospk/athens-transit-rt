@@ -131,6 +131,21 @@ func TestClientHTTPError(t *testing.T) {
 	}
 }
 
+// A refusal is an *HTTPError even when its body breaks off, so the pacer sees it and stops.
+func TestClientRefusalWithBrokenBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte("slow"))
+	}))
+	defer srv.Close()
+	_, err := New(srv.URL+"/", nil).Lines(context.Background())
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Status != http.StatusTooManyRequests {
+		t.Fatalf("err %v, want HTTP 429", err)
+	}
+}
+
 func TestPacerSpacing(t *testing.T) {
 	p := NewPacer(4)
 	t0 := time.Unix(1000, 0)
