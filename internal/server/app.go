@@ -271,6 +271,32 @@ func (a *App) warnExpiry(force bool) {
 	}
 }
 
+// lineSpec is what to poll of a line at plan: the line when it has trips now; of its route codes,
+// those whose shapes run around this time of day on any day (the GTFS puts the "every Thursday"
+// variants of some lines on Wednesday, #20; an empty route code backs off in the scheduler), and
+// those that map to no shape.
+func lineSpec(f *gtfs.Feed, mapper *match.RouteMapper, line string, plan time.Time, routes []meta.RouteRef) sched.LineSpec {
+	cands := f.CandidateTrips(line, plan, match.CandidateBefore, match.CandidateAfter)
+	spec := sched.LineSpec{ID: line, Active: len(cands) > 0 && len(routes) > 0}
+	var around map[int32]bool
+	if spec.Active {
+		around = f.ShapesAround(line, plan, match.CandidateBefore, match.CandidateAfter)
+	}
+	for _, r := range routes {
+		on := spec.Active
+		if on {
+			if shapes := mapper.ShapesFor(line, r.Code); len(shapes) > 0 {
+				on = false
+				for s := range shapes {
+					on = on || around[s]
+				}
+			}
+		}
+		spec.Routes = append(spec.Routes, sched.Route{Code: r.Code, LineCode: r.LineCode, Active: on})
+	}
+	return spec
+}
+
 // refreshLines recomputes which lines and route codes have scheduled service now.
 func (a *App) refreshLines() {
 	w := a.world()
@@ -292,26 +318,9 @@ func (a *App) refreshLines() {
 	bootstrapping := a.meta.Incomplete() // routes of some lines are not known yet
 	plan := w.feed.PlanningTime(now)     // which lines run now, even when the feed expired
 	for line := range known {
-		cands := w.feed.CandidateTrips(line, plan, match.CandidateBefore, match.CandidateAfter)
-		shapesNow := map[int32]bool{}
-		for _, c := range cands {
-			shapesNow[w.feed.Trips[c.Trip].Shape] = true
-		}
-		spec := sched.LineSpec{ID: line, Active: len(cands) > 0 && len(routes[line]) > 0}
-		if len(cands) > 0 && len(routes[line]) == 0 && bootstrapping {
+		spec := lineSpec(w.feed, w.mapper, line, plan, routes[line])
+		if len(routes[line]) == 0 && bootstrapping && len(w.feed.CandidateTrips(line, plan, match.CandidateBefore, match.CandidateAfter)) > 0 {
 			warming[line] = true
-		}
-		for _, r := range routes[line] {
-			on := spec.Active
-			if on {
-				if shapes := w.mapper.ShapesFor(line, r.Code); len(shapes) > 0 {
-					on = false
-					for s := range shapes {
-						on = on || shapesNow[s]
-					}
-				}
-			}
-			spec.Routes = append(spec.Routes, sched.Route{Code: r.Code, LineCode: r.LineCode, Active: on})
 		}
 		if spec.Active {
 			active++
@@ -376,6 +385,7 @@ type Vehicle struct {
 	PathBeyond [][2]float64 `json:"path_beyond"` // rev 4: on from path's end to the third stop
 	PathStops  []int        `json:"path_stops"`  // rev 4: metres along path + path_beyond of each stop
 	PathSpeeds []*float64   `json:"path_speeds"` // rev 6: typical m/s per 200 m step ahead; rev 7: with today's traffic
+	AtTerminus bool         `json:"at_terminus"` // matched and waiting at the first stop of its trip
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -405,6 +415,7 @@ func (a *App) vehicleView(w *world, r *match.Result) (Vehicle, boardPos) {
 	v.TripLabel = ptr(TripLabel(f, t))
 	v.DelayS = ptr(r.Delay)
 	v.NextStopID = ptr(f.Stops[feed.NextStop(f, r).Stop].ID)
+	v.AtTerminus = r.Waiting
 	return v, boardPosOf(w, r, t.Shape, r.Along, v.Speed)
 }
 
