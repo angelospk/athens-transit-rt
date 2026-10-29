@@ -47,13 +47,19 @@ func dailyRuns(f *gtfs.Feed, line, date string, d telematics.DailySchedule, day 
 // there are some, else all of them.
 func dailyCandidates(f *gtfs.Feed, line string, on []int32, day time.Time) []int32 {
 	var active, all []int32
+	runs := map[int32]bool{} // ServiceActive by service: it scans the calendar
 	for _, ti := range f.TripsForLine(line) {
 		t := f.Trip(ti)
 		if !slices.Contains(on, t.Shape) {
 			continue
 		}
 		all = append(all, ti)
-		if f.ServiceActive(t.Service, day) {
+		act, seen := runs[t.Service]
+		if !seen {
+			act = f.ServiceActive(t.Service, day)
+			runs[t.Service] = act
+		}
+		if act {
 			active = append(active, ti)
 		}
 	}
@@ -107,33 +113,45 @@ func dailyMinutes(hhmm string) (int, bool) {
 	return h*60 + m, true
 }
 
-// dailyArrivals is the line's daily runs that have not left yet and pass the stop within horizon
+// dailyPending is the line's daily runs that have not left yet, in time order.
+func dailyPending(f *gtfs.Feed, line string, d telematics.DailySchedule, now time.Time) []dailyRun {
+	today := gtfs.Midnight(now)
+	var out []dailyRun
+	for _, r := range dailyRuns(f, line, today.Format(time.DateOnly), d, gtfs.ServiceDay(now)) {
+		if !dailyAt(today, r.m).Before(now) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// takeRun removes the line's next pending run on shape and returns its departure: the run a bus
+// waiting at the start of that shape makes. Zero when there is none.
+func takeRun(f *gtfs.Feed, pending map[string][]dailyRun, line string, shape int32, now time.Time) time.Time {
+	rs := pending[line]
+	for i, r := range rs {
+		if f.Trip(r.trip).Shape == shape {
+			pending[line] = slices.Delete(rs, i, i+1)
+			return dailyAt(gtfs.Midnight(now), r.m)
+		}
+	}
+	return time.Time{}
+}
+
+// dailyArrivals is the rows of the line's pending daily runs that pass the stop within horizon
 // (the first pass, not as the last stop): OASA's departure plus the stop's offset in the trip
-// that stands for the run. A bus waiting at its first stop makes the next departure of its
-// variant (waiting counts them, by line and shape): that row is the live one, once.
-func dailyArrivals(f *gtfs.Feed, line string, d telematics.DailySchedule, stop int32, now time.Time,
-	horizon time.Duration, waiting map[[2]string]int) []StopArrival {
+// that stands for the run.
+func dailyArrivals(f *gtfs.Feed, line string, pending []dailyRun, stop int32, now time.Time, horizon time.Duration) []StopArrival {
 	day, today := gtfs.ServiceDay(now), gtfs.Midnight(now)
 	var out []StopArrival
-	for _, r := range dailyRuns(f, line, today.Format(time.DateOnly), d, day) {
+	for _, r := range pending {
 		t := f.Trip(r.trip)
-		dep := dailyAt(today, r.m)
-		if dep.Before(now) {
-			continue
-		}
-		if t.Shape >= 0 {
-			k := [2]string{line, f.ShapeID(t)}
-			if waiting[k] > 0 {
-				waiting[k]--
-				continue
-			}
-		}
 		stops := f.Patterns[t.Pattern].Stops
 		j := slices.Index(stops[:len(stops)-1], stop)
 		if j < 0 {
 			continue
 		}
-		at := dep.Unix() + int64(f.StopTime(t, j).Arr) - int64(f.Start(t))
+		at := dailyAt(today, r.m).Unix() + int64(f.StopTime(t, j).Arr) - int64(f.Start(t))
 		if at > now.Add(horizon).Unix() {
 			continue
 		}

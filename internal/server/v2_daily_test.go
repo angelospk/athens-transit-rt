@@ -147,3 +147,17 @@ func TestV2RunFromDaily(t *testing.T) {
 		}
 	}
 }
+
+// The waiting bus leaves at the daily departure it makes, not at its expired GTFS trip's: T03
+// starts 10:30 in the GTFS, OASA's run 10:40, S2 ten minutes on.
+func TestV2WaitingBusLeavesAtDailyDeparture(t *testing.T) {
+	now := time.Date(2026, 10, 12, 10, 25, 0, 0, gtfs.Athens)
+	a, _ := dailyApp(t, now, telematics.DailySchedule{Descr: "WEST - EAST", Go: []string{"10:40", "10:55"}})
+	pollOne(a, now, "w", 23.7001, now.Add(-10*time.Second))
+	var s v2Stop
+	v2get(t, a, "/v2/stops/"+esc("oasa:S2"), &s)
+	if len(s.Arrivals) != 2 || s.Arrivals[0].Source != model.SourceLive || s.Arrivals[0].At != oct12(10, 50) ||
+		*s.Arrivals[0].ScheduledAt != oct12(10, 50) || s.Arrivals[1].At != oct12(11, 5) {
+		t.Fatalf("arrivals %s", asJSON(s.Arrivals))
+	}
+}
