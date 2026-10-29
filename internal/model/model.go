@@ -234,11 +234,13 @@ type SourceState struct {
 	UpdatedAt *int64 `json:"updated_at"`
 }
 
-// Complete reports whether a response drawing on these Sources may be cached long: every
-// Source is ok or stale (contract rev 8 §5, "incomplete responses").
+// Complete reports whether a response drawing on these Sources may be cached long: no Source
+// is warming up or down (contract rev 8 §5, "incomplete responses"). An indicative Source is
+// complete: an expired timetable standing in is a steady state, often for weeks, not a load
+// that will finish in seconds.
 func Complete(sources []SourceState) bool {
 	for _, s := range sources {
-		if s.State != OK && s.State != Stale {
+		if s.State == WarmingUp || s.State == Down {
 			return false
 		}
 	}

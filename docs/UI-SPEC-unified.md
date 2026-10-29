@@ -89,9 +89,12 @@ This one card replaces web `TrainCard` + the bus InfoCard stop list, and the app
   each station; nothing jumps on the 30 s refresh unless the new snapshot disagrees by > 150 m.
 - **Tap**: bottom sheet: badge, → headsign, freshness tag, delay, vehicle label, «Επόμενη:
   <Stop>», button «Διαδρομή» → Line card focused on this Run.
-- **Layers**: one vehicles layer, fed by two requests: bus tiles (`/v2/vehicles/tiles`) and
-  `/v2/vehicles/rail`. Mode toggles (bus / metro+tram / suburban) in the map menu; the rail
-  request runs only while a rail toggle is on (it opens the suburban stream). Default on: all.
+- **Layers**: one vehicles layer, fed by three requests: bus tiles (`/v2/vehicles/tiles`),
+  `/v2/vehicles/rail` (metro + tram) and `/v2/vehicles/suburban`. Mode toggles (bus /
+  metro+tram / suburban) in the map menu. The suburban request runs only while the suburban
+  toggle is on **and** a suburban corridor is in view, because it opens the railway.gov.gr
+  stream (~80 KB/s while open). Default on: all; the view rule keeps the stream closed for a map
+  of the city centre.
 
 ## 4. Favourites and Alerts (any Stop)
 

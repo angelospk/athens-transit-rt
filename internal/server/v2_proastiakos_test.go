@@ -297,9 +297,35 @@ func TestV2ProastiakosVehicles(t *testing.T) {
 	if _, ma := v2get(t, a, "/v2/lines/"+esc("proastiakos:KIATO")+"/vehicles", &lv); ma != 5 || len(lv.Vehicles) != 2 {
 		t.Fatalf("line vehicles %d %s", ma, asJSON(lv))
 	}
+	var sv v2Vehicles
+	if _, ma := v2get(t, a, "/v2/vehicles/suburban", &sv); ma != subVehMaxAge || len(sv.Vehicles) != 3 ||
+		len(sv.Sources) != 1 || sv.Sources[0].ID != subNS {
+		t.Fatalf("suburban max-age %d %s", ma, asJSON(sv))
+	}
+}
+
+// /v2/vehicles/rail is metro and tram only and never opens the suburban stream: a map that
+// shows the metro must not keep railway.gov.gr streaming. /v2/vehicles/suburban opens it.
+func TestV2RailVehiclesLeaveTheStreamClosed(t *testing.T) {
+	a, _, ft := proastiakosApp(t, wed1000)
 	var rv v2Vehicles
-	if _, ma := v2get(t, a, "/v2/vehicles/rail", &rv); ma != 5 {
-		t.Fatalf("rail max-age %d", ma)
+	v2get(t, a, "/v2/vehicles/rail", &rv)
+	for _, v := range rv.Vehicles {
+		if v.Mode == model.Suburban {
+			t.Fatalf("suburban train in /v2/vehicles/rail: %s", asJSON(v))
+		}
+	}
+	for _, s := range rv.Sources {
+		if s.ID == subNS {
+			t.Fatalf("proastiakos in /v2/vehicles/rail sources: %s", asJSON(rv.Sources))
+		}
+	}
+	if ft.opened != 0 {
+		t.Fatalf("/v2/vehicles/rail opened the stream %d times", ft.opened)
+	}
+	v2get(t, a, "/v2/vehicles/suburban", nil)
+	if ft.opened != 1 {
+		t.Fatalf("/v2/vehicles/suburban opened the stream %d times", ft.opened)
 	}
 }
 

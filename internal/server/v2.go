@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/model"
@@ -22,7 +22,7 @@ import (
 const (
 	v2ListMaxAge    = 3600 // lines, stops, line detail
 	v2RunMaxAge     = 15
-	v2IncompleteAge = 5  // a response with a Source neither ok nor stale
+	v2IncompleteAge = 5  // a response with a Source warming up or down
 	v2ETagFrom      = 60 // ETag + 304 for complete responses cached at least this long
 )
 
@@ -116,10 +116,11 @@ func (a *App) routeV2(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v2/vehicles", a.handleV2Vehicles)
 	mux.HandleFunc("GET /v2/vehicles/tiles/{z}/{x}/{y}", a.handleV2Tile)
 	mux.HandleFunc("GET /v2/vehicles/rail", a.handleV2RailVehicles)
+	mux.HandleFunc("GET /v2/vehicles/suburban", a.handleV2SuburbanVehicles)
 	mux.HandleFunc("GET /v2/runs/{id}", a.handleV2Run)
 }
 
-// writeV2 writes a /v2 body: a response with a Source not ok or stale is cached at most 5 s
+// writeV2 writes a /v2 body: a response with a Source warming up or down is cached at most 5 s
 // with no ETag; a complete one cached a minute or more gets an ETag and answers 304.
 func writeV2(w http.ResponseWriter, r *http.Request, maxAge int, sources []model.SourceState, v any) {
 	if !model.Complete(sources) {
@@ -218,6 +219,18 @@ func (a *App) handleV2LineVehicles(w http.ResponseWriter, r *http.Request) {
 		"next_update_at": lv.NextUpdateAt, "vehicles": lv.Vehicles, "sources": src})
 }
 
+// v2StopsBody is the /v2/stops body, marshalled and gzipped once (758 KB raw for ~9000 stops)
+// and reused while key holds.
+type v2StopsBody struct {
+	key string
+	enc *encoded
+}
+
+// handleV2Stops serves the stop index from bytes built once and reused until the stops or a
+// Source's state change. The updated_at of an ok or indicative Source moves with every poll
+// and changes no stop, so it is left out of that key: the strong ETag (and 304) holds while
+// the index stays the same, and the body carries the updated_at of its build. A stale
+// Source's updated_at no longer moves, so it is in the key.
 func (a *App) handleV2Stops(w http.ResponseWriter, r *http.Request) {
 	out := []model.IndexEntry{}
 	for _, ad := range a.adapters {
@@ -228,7 +241,38 @@ func (a *App) handleV2Stops(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	src := a.states(a.now(), a.adapters...)
-	writeV2(w, r, v2ListMaxAge, src, map[string]any{"stops": out, "sources": src})
+	stops, err := json.Marshal(out)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, minMaxAge, map[string]string{"error": "internal"})
+		return
+	}
+	sum := sha256.New()
+	sum.Write(stops)
+	for _, s := range src {
+		fmt.Fprintf(sum, "|%s=%s", s.ID, s.State)
+		if s.State == model.Stale && s.UpdatedAt != nil {
+			fmt.Fprintf(sum, "@%d", *s.UpdatedAt)
+		}
+	}
+	key := hex.EncodeToString(sum.Sum(nil))
+	a.v2StopsMu.Lock()
+	b := a.v2Stops
+	if b == nil || b.key != key {
+		enc, err := encode(gzip.NewWriter(nil), map[string]any{"stops": json.RawMessage(stops), "sources": src})
+		if err != nil {
+			a.v2StopsMu.Unlock()
+			writeJSON(w, http.StatusInternalServerError, minMaxAge, map[string]string{"error": "internal"})
+			return
+		}
+		b = &v2StopsBody{key, enc}
+		a.v2Stops = b
+	}
+	a.v2StopsMu.Unlock()
+	if !model.Complete(src) {
+		serveEncoded(w, r, b.enc, v2IncompleteAge, false)
+		return
+	}
+	serveEncoded(w, r, b.enc, v2ListMaxAge, true)
 }
 
 func (a *App) handleV2Stop(w http.ResponseWriter, r *http.Request) {
@@ -301,43 +345,48 @@ type v2Snapshot struct {
 	empty    *encoded
 }
 
-// busAdapters are the Sources of /v2/vehicles and its tiles: bus and trolley only, so map
-// traffic never opens the suburban stream.
-func (a *App) busAdapters() []Adapter {
+// adaptersIn are the Sources with these namespaces, in their usual order.
+func (a *App) adaptersIn(ns ...string) []Adapter {
 	var out []Adapter
 	for _, ad := range a.adapters {
-		if ad.Namespace() == "oasa" {
+		if slices.Contains(ns, ad.Namespace()) {
 			out = append(out, ad)
 		}
 	}
 	return out
 }
 
-// railAdapters are the Sources of /v2/vehicles/rail: every one but oasa.
-func (a *App) railAdapters() []Adapter {
-	var out []Adapter
-	for _, ad := range a.adapters {
-		if ad.Namespace() != "oasa" {
-			out = append(out, ad)
-		}
-	}
-	return out
-}
+// busAdapters are the Sources of /v2/vehicles and its tiles: oasa only, so that map traffic
+// never opens the suburban stream.
+func (a *App) busAdapters() []Adapter { return a.adaptersIn(oasaNS) }
 
-// handleV2RailVehicles: metro, tram and suburban in one body, built per request (about 100
-// trains). Asking for it is the explicit demand for rail positions.
+// handleV2RailVehicles: metro and tram, placed from the STASY timetable, built per request
+// (about 60 trains). It never opens the suburban stream, so a map that shows the metro does
+// not keep the railway.gov.gr stream open.
 func (a *App) handleV2RailVehicles(w http.ResponseWriter, r *http.Request) {
+	a.serveV2Trains(w, r, a.adaptersIn(stasyNS), stasyVehMaxAge)
+}
+
+// handleV2SuburbanVehicles: suburban trains from the railway.gov.gr stream, which this request
+// opens (it closes 3 min after the last one). Clients load it only while their suburban layer
+// is on and a corridor is in view.
+func (a *App) handleV2SuburbanVehicles(w http.ResponseWriter, r *http.Request) {
+	a.serveV2Trains(w, r, a.adaptersIn(subNS), subVehMaxAge)
+}
+
+// serveV2Trains builds one body of the trains of ads. moving is the max-age while there are
+// trains (GPS trains move every second); with none, stasyVehMaxAge.
+func (a *App) serveV2Trains(w http.ResponseWriter, r *http.Request, ads []Adapter, moving int) {
 	now := a.now()
-	ads := a.railAdapters()
 	vs := []model.Vehicle{}
-	maxAge := stasyVehMaxAge
 	for _, ad := range ads {
 		if got, err := ad.Vehicles(now); err == nil {
 			vs = append(vs, got...)
-			if ad.Namespace() == subNS && len(got) > 0 {
-				maxAge = subVehMaxAge // GPS trains move every second
-			}
 		}
+	}
+	maxAge := stasyVehMaxAge
+	if len(vs) > 0 {
+		maxAge = moving
 	}
 	src := a.states(now, ads...)
 	if !model.Complete(src) {
@@ -428,33 +477,11 @@ func (a *App) serveV2Snapshot(w http.ResponseWriter, r *http.Request, pick func(
 		writeJSON(w, http.StatusInternalServerError, minMaxAge, map[string]string{"error": "internal"})
 		return
 	}
-	e := pick(s)
-	body, etag, gz := e.raw, e.etag, false
-	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
-		body, etag, gz = e.gz, e.gzETag, true
-	}
 	maxAge := clamp(int64(s.built.Add(s.life).Sub(a.now())/time.Second), minMaxAge, vehiclesMaxAge)
-	h := w.Header()
 	if !s.complete {
 		maxAge = min(maxAge, v2IncompleteAge)
-	} else {
-		h.Set("ETag", etag)
-		if etagMatch(r.Header.Get("If-None-Match"), etag) {
-			h.Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
 	}
-	h.Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
-	h.Set("Content-Type", "application/json; charset=utf-8")
-	if gz {
-		h.Set("Content-Encoding", "gzip")
-	}
-	h.Set("Content-Length", strconv.Itoa(len(body)))
-	w.WriteHeader(http.StatusOK)
-	if r.Method != http.MethodHead {
-		w.Write(body)
-	}
+	serveEncoded(w, r, pick(s), maxAge, s.complete)
 }
 
 // sortLines orders a Stop's Lines by mode, then label (or name).

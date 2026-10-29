@@ -79,8 +79,9 @@ func (a *App) Handler() http.Handler {
 		}
 		if r.URL.Path == "/v1/vehicles" || strings.HasPrefix(r.URL.Path, "/v1/vehicles/tiles/") ||
 			r.URL.Path == "/v2/vehicles" || strings.HasPrefix(r.URL.Path, "/v2/vehicles/tiles/") ||
+			r.URL.Path == "/v2/stops" ||
 			!acceptsGzip(r.Header.Get("Accept-Encoding")) {
-			// /v1/vehicles, /v2/vehicles and their tiles serve bytes compressed once per build.
+			// /v1/vehicles, /v2/vehicles, their tiles and /v2/stops serve bytes compressed once.
 			mux.ServeHTTP(w, r)
 			return
 		}

@@ -368,7 +368,8 @@ from the draft are in [DECISIONS-phase2.md](DECISIONS-phase2.md); the ones a cli
   as `/v1/stops/{id}` lists it (2). A Run's last stop is not an Arrival (15).
 - **`status: delayed`** from 5 minutes of delay in every mode (3). oasa Stop `name_en` and stasy
   Line/Stop `name_en` are `null`: the sources have no English names (5, 13, 14).
-- `/v2/vehicles/rail` is cached 5 s while suburban trains are in it, else 15 s.
+- `/v2/vehicles/rail` is metro and tram only, cached 15 s. Suburban trains are in
+  `/v2/vehicles/suburban`, cached 5 s while trains are in it, else 15 s (review #9, item 11).
 
 ### 1. Goal and rules
 
@@ -598,7 +599,8 @@ All: UTF-8 JSON, `Access-Control-Allow-Origin: *`, gzip, times in Unix seconds, 
 | `GET /v2/stops/{id}` | `{stop: Stop, lines: [Line], arrivals: [Arrival], updated_at, sources}` | 15 | `oasa`: raises its lines' priority; `proastiakos`: opens the stream |
 | `GET /v2/vehicles` | `{updated_at, next_update_at, vehicles: [Vehicle], sources}` bus + trolley | until `next_update_at`, 5-30 | none |
 | `GET /v2/vehicles/tiles/{z}/{x}/{y}` | as `/v2/vehicles`, tile-cut as rev 5 | as above | none |
-| `GET /v2/vehicles/rail` | as `/v2/vehicles`, metro + tram + suburban (~100 vehicles, one body) | until `next_update_at`, 5-30 | `proastiakos`: opens the stream |
+| `GET /v2/vehicles/rail` | as `/v2/vehicles`, metro + tram (~60 vehicles, one body) | until `next_update_at`, 5-30 | none |
+| `GET /v2/vehicles/suburban` | as `/v2/vehicles`, suburban trains (~10, one body) | until `next_update_at`, 5-30 | `proastiakos`: opens the stream |
 | `GET /v2/runs/{id}` | `{run: Run, sources}` | 15 | none |
 
 Shapes not shown above:
@@ -627,9 +629,11 @@ Rules:
   2026-10-29). Metro/tram: the STASY
   timetable. Suburban: the board, with the stream's delay when it is open.
 - `/v2/vehicles` and tiles carry bus and trolley only, like rev 3/5: map traffic must not keep
-  the railway.gov.gr stream open. Rail vehicles come from `/v2/vehicles/rail`, which a client
-  loads only while its rail layer is on; that request is the explicit suburban demand. Clients
-  merge both into one vehicles layer (one marker component). Tile zoom 9 entries drop `motion`
+  the railway.gov.gr stream open. Metro and tram vehicles come from `/v2/vehicles/rail`, which
+  opens nothing upstream. Suburban vehicles come from `/v2/vehicles/suburban`, which a client
+  loads only while its suburban layer is on and a corridor is in view; that request is the
+  explicit suburban demand. Clients merge all three into one vehicles layer (one marker
+  component). Tile zoom 9 entries drop `motion`
   (key absent), as rev 5 drops the path keys.
 - Metro/tram vehicles are placed at build time (every 30 s); their `knots` keep them moving.
 - `/v2/runs/{id}` replaces `/v1/rail/stasy/trips/{id}` and `/v1/rail/suburban/trains/{no}` for
@@ -642,8 +646,14 @@ Rules:
   corridor table loads, never `404` then). Never `503`, so one slow Source does not blank a card
   that also shows other Sources.
 - **Incomplete responses are cached at most 5 s** (`max-age=5`, no `ETag`): any response with a
-  Source not `ok` or `stale`. The long `max-age` above applies only to complete responses, so a
-  Source that recovers shows within seconds, not after an hour.
+  Source `warming_up` or `down`. The long `max-age` above applies only to complete responses, so a
+  Source that recovers shows within seconds, not after an hour. `stale` and `indicative` are
+  complete: they are steady states (an expired timetable can stand in for weeks), and the
+  `sources` block already says so.
+- **`/v2/stops` has a strong `ETag`.** Its bytes are built once and kept while the stops and the
+  Source states stay the same; an `ok` Source's `updated_at` does not change them, so the body
+  carries the `updated_at` of its build. Clients keep the index and send `If-None-Match`; a `304`
+  costs no body.
 
 ### 6. Mode × field availability
 
