@@ -98,3 +98,15 @@ func TestStatusAndComplete(t *testing.T) {
 		t.Fatal("complete")
 	}
 }
+
+// On a DST change day the run's noon is still 12:00 local (2026-10-25: clocks go back in Athens).
+func TestParseRunIDNoonOnDSTDay(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Athens")
+	if err != nil {
+		t.Skip(err)
+	}
+	_, noon, ok := ParseRunID("stasy", "stasy:run:x:2026-10-25", loc)
+	if !ok || !noon.Equal(time.Date(2026, 10, 25, 12, 0, 0, 0, loc)) {
+		t.Fatal(noon, ok)
+	}
+}

@@ -272,6 +272,7 @@ type v2Response[V any] struct {
 // v2Snapshot is the encoded /v2/vehicles body and tiles, built like the /v1 snapshot.
 type v2Snapshot struct {
 	built    time.Time
+	life     time.Duration // reused this long: vehiclesEvery, or v2IncompleteAge when incomplete
 	complete bool
 	all      *encoded
 	tiles    map[tileKey]*encoded
@@ -317,6 +318,9 @@ func (a *App) handleV2RailVehicles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	src := a.states(now, ads...)
+	if !model.Complete(src) {
+		maxAge = min(maxAge, v2IncompleteAge)
+	}
 	writeV2(w, r, maxAge, src, v2Response[model.Vehicle]{now.Unix(), now.Unix() + int64(maxAge), vs, src})
 }
 
@@ -324,7 +328,7 @@ func (a *App) v2Vehicles() (*v2Snapshot, error) {
 	a.v2Mu.Lock()
 	defer a.v2Mu.Unlock()
 	now := a.now()
-	if s := a.v2Snap; s != nil && now.Sub(s.built) < vehiclesEvery && !now.Before(s.built) {
+	if s := a.v2Snap; s != nil && now.Sub(s.built) < s.life && !now.Before(s.built) {
 		return s, nil
 	}
 	ads := a.busAdapters()
@@ -335,13 +339,18 @@ func (a *App) v2Vehicles() (*v2Snapshot, error) {
 		}
 	}
 	src := a.states(now, ads...)
-	next := now.Add(vehiclesEvery).Unix()
+	// An incomplete snapshot lives only as long as its max-age, so a recovered Source shows.
+	life := vehiclesEvery
+	if !model.Complete(src) {
+		life = v2IncompleteAge * time.Second
+	}
+	next := now.Add(life).Unix()
 	zw := gzip.NewWriter(nil)
 	all, err := encode(zw, v2Response[model.Vehicle]{now.Unix(), next, vs, src})
 	if err != nil {
 		return nil, err
 	}
-	s := &v2Snapshot{built: now, complete: model.Complete(src), all: all, tiles: map[tileKey]*encoded{}}
+	s := &v2Snapshot{built: now, life: life, complete: model.Complete(src), all: all, tiles: map[tileKey]*encoded{}}
 	detail := map[tileKey][]model.Vehicle{}
 	overview := map[tileKey][]model.LiteVehicle{}
 	for _, v := range vs {
@@ -402,7 +411,7 @@ func (a *App) serveV2Snapshot(w http.ResponseWriter, r *http.Request, pick func(
 	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
 		body, etag, gz = e.gz, e.gzETag, true
 	}
-	maxAge := clamp(int64(s.built.Add(vehiclesEvery).Sub(a.now())/time.Second), minMaxAge, vehiclesMaxAge)
+	maxAge := clamp(int64(s.built.Add(s.life).Sub(a.now())/time.Second), minMaxAge, vehiclesMaxAge)
 	h := w.Header()
 	if !s.complete {
 		maxAge = min(maxAge, v2IncompleteAge)

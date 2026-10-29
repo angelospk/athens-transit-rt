@@ -399,7 +399,11 @@ func (s *stasyAdapter) Arrivals(_ context.Context, stopID string, now time.Time)
 	f := x.f
 	until := now.Add(v2Horizon).Unix()
 	var out []model.Arrival
-	for _, d := range stasyDays(now) {
+	// Tomorrow too: before midnight the 2 h window can reach its first trips.
+	tm := noonOf(now).AddDate(0, 0, 1)
+	two := stasyDays(now)
+	days := append(two[:], stasyDay{tm, gtfs.ServiceDay(tm), 0})
+	for _, d := range days {
 		secs := int32(now.Sub(d.midnight) / time.Second)
 		for _, p := range st.platforms {
 			for _, row := range f.StopRows(p) {

@@ -278,9 +278,9 @@ func TestV2ProastiakosVehicles(t *testing.T) {
 		*v.NextStop != rentis || v.Source != "proastiakos" || m == nil {
 		t.Fatalf("2539 %s", asJSON(v))
 	}
-	// Path to Ρέντης, beyond it to Ρουφ (the third Stop ahead), at the GPS speed; no knots.
-	if len(m.Path) < 2 || len(m.PathBeyond) < 2 || len(m.PathStops) != 3 || m.PathStops[0] <= 0 ||
-		m.PathStops[0] > 1600 || m.PathStops[2] <= m.PathStops[1] || *m.Speed != 10 || m.Knots != nil || m.PathSpeeds != nil {
+	// Path to Ρέντης, beyond it up to 1.5 km in all (Ταύρος is farther), at the GPS speed; no knots.
+	if len(m.Path) < 2 || len(m.PathBeyond) < 2 || len(m.PathStops) != 1 || m.PathStops[0] <= 0 ||
+		m.PathStops[0] > 1500 || *m.Speed != 10 || m.Knots != nil || m.PathSpeeds != nil {
 		t.Fatalf("2539 motion %s", asJSON(m))
 	}
 	// No next station from the stream: the course picks the direction (west, towards Πειραιάς).

@@ -271,7 +271,8 @@ func ParseRunID(ns, id string, loc *time.Location) (native string, noon time.Tim
 	if err != nil || d.Format(time.DateOnly) != rest[i+1:] {
 		return "", time.Time{}, false
 	}
-	return rest[:i], d.Add(12 * time.Hour), true
+	// time.Date, not midnight + 12 h: on a DST change day that would be 11:00 or 13:00.
+	return rest[:i], time.Date(d.Year(), d.Month(), d.Day(), 12, 0, 0, 0, loc), true
 }
 
 func Ptr[T any](v T) *T { return &v }

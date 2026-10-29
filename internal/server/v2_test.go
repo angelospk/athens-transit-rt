@@ -323,3 +323,21 @@ func TestV1UnchangedByV2(t *testing.T) {
 		t.Fatalf("v1 board changed: %s", asJSON(sr))
 	}
 }
+
+// An incomplete /v2/vehicles snapshot is rebuilt after 5 s, not 30 s: a recovered Source shows.
+func TestV2IncompleteSnapshotIsShort(t *testing.T) {
+	a := newApp(t, monday1020)
+	a.mu.Lock()
+	a.w = nil // oasa warming up
+	a.mu.Unlock()
+	var v v2Vehicles
+	if _, ma := v2get(t, a, "/v2/vehicles", &v); ma != 5 || v.NextUpdateAt != monday1020.Unix()+5 {
+		t.Fatalf("%d %s", ma, asJSON(v))
+	}
+	later := monday1020.Add(6 * time.Second)
+	a.now = func() time.Time { return later }
+	v2get(t, a, "/v2/vehicles", &v)
+	if v.UpdatedAt != later.Unix() {
+		t.Fatalf("snapshot reused: %s", asJSON(v))
+	}
+}

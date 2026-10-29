@@ -500,7 +500,7 @@ func nearest(line *geo.Polyline, xy [2]float64, heading float64, hasHeading bool
 
 // place snaps a train onto its corridor in the direction where its next station lies ahead (or,
 // with no next station, the direction of its course) and sets next_stop and motion: path to the
-// next station, path_beyond to the third ahead, at the GPS speed.
+// next station, path_beyond up to the third ahead, at the GPS speed, as for buses (pathAhead).
 func (s *proastiakosAdapter) place(x *subIndex, c int, tr *rail.SuburbanTrain, v *model.Vehicle) {
 	xy := geo.XY(tr.Lat, tr.Lon)
 	heading, hasHeading := 0.0, tr.Course != nil
@@ -549,16 +549,10 @@ func (s *proastiakosAdapter) place(x *subIndex, c int, tr *rail.SuburbanTrain, v
 		return
 	}
 	v.NextStop = model.Ptr(pat.Stops[j])
-	last := min(j+stasyAhead-1, n-1)
-	m := &model.Motion{Path: latLons(track.Line.Slice(along, track.Along[j])), PathBeyond: [][2]float64{},
-		Speed: model.Ptr(math.Round(tr.SpeedKmh/3.6*10) / 10)}
-	if last > j {
-		m.PathBeyond = latLons(track.Line.Slice(track.Along[j], track.Along[last]))
-	}
-	for k := j; k <= last; k++ {
-		m.PathStops = append(m.PathStops, int(math.Round(max(track.Along[k]-along, 0))))
-	}
-	v.Motion = m
+	// GPS trains follow the bus rules: path and path_beyond capped at 1.5 km (contract §4).
+	speed := model.Ptr(math.Round(tr.SpeedKmh/3.6*10) / 10)
+	path, beyond, at := pathAhead(track.Line, along, speed, track.Along[j:])
+	v.Motion = &model.Motion{Path: path, PathBeyond: beyond, PathStops: at, Speed: speed}
 }
 
 func (s *proastiakosAdapter) LineVehicles(id string, now time.Time) (*LineVehicles, error) {
