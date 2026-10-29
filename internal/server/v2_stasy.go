@@ -44,11 +44,16 @@ type stasyIndex struct {
 	byID     map[string]int
 	patterns [][]stasyPattern // by route index, most trips first
 	tripPat  []int32          // trip -> pattern number within its route
+	unnamed  []string         // Stop ids the name table lacks (they keep the STASY name)
+	// joined are the calls of the trips that stop twice in a row at one Stop (at a point merged
+	// into it), as one call: see tripStops.
+	joined map[int32][]rail.STASYStopTime
 }
 
 type stasyStop struct {
 	m         model.Stop
 	platforms []int32
+	merged    []int32 // platforms of points merged into the Stop (aliases in the name table)
 }
 
 type stasyPattern struct {
@@ -72,7 +77,11 @@ func (s *stasyAdapter) Resolve(kind Kind, id string) string {
 		return stasyPrefix + strings.ToUpper(native)
 	case KindStop:
 		if i := strings.LastIndexByte(native, '-'); i > 0 {
-			return stasyKey(strings.ReplaceAll(native[:i], "-", " "), native[i+1:])
+			key := stasyKey(strings.ReplaceAll(native[:i], "-", " "), native[i+1:])
+			if to, ok := railgeo.STASYAlias(key); ok {
+				return to // a renamed Stop answers under its current id
+			}
+			return key
 		}
 	}
 	return id
@@ -87,6 +96,11 @@ func (s *stasyAdapter) index() (*stasyIndex, error) {
 	defer s.mu.Unlock()
 	if s.idx == nil || s.idx.f != f {
 		s.idx = buildSTASYIndex(f)
+		if len(s.idx.unnamed) > 0 {
+			// A new or renamed Stop: it shows STASY's capitals and no English name until
+			// scripts/stasy-stop-names.py adds it (and, for a rename, an alias).
+			s.a.log.Warn("stasy: stops not in the name table", "ids", s.idx.unnamed)
+		}
 	}
 	return s.idx, nil
 }
@@ -132,16 +146,31 @@ func buildSTASYIndex(f *rail.STASY) *stasyIndex {
 			mode = x.modes[r] // one mode per platform
 		}
 		id := stasyKey(f.Stops[p].Name, mode)
+		// An alias of an id still in the feed is a point merged into a Stop (ΣΥΝΔΕΣΗ
+		// ΠΡΟΑΣΤΙΑΚΟΥ into Δουκίσσης Πλακεντίας); a renamed Stop's old id is no longer in it.
+		to, merged := railgeo.STASYAlias(id)
+		if merged {
+			id = to
+		}
 		k, ok := x.byID[id]
 		if !ok {
 			k = len(x.stops)
 			x.byID[id] = k
-			x.stops = append(x.stops, stasyStop{m: model.Stop{ID: id, Name: f.Stops[p].Name, Modes: []string{mode},
-				Source: stasyNS}})
+			st := model.Stop{ID: id, Name: f.Stops[p].Name, Modes: []string{mode}, Source: stasyNS}
+			if n, ok := railgeo.STASYStopName(id); ok {
+				st.Name, st.NameEn = n.Name, n.NameEn
+			} else {
+				x.unnamed = append(x.unnamed, id)
+			}
+			x.stops = append(x.stops, stasyStop{m: st})
 		}
 		x.stopOf[p] = k
 		st := &x.stops[k]
-		st.platforms = append(st.platforms, int32(p))
+		if merged {
+			st.merged = append(st.merged, int32(p))
+		} else {
+			st.platforms = append(st.platforms, int32(p))
+		}
 		for r := range platLines[p] {
 			if l := x.lines[r].ID; !contains(st.m.Lines, l) {
 				st.m.Lines = append(st.m.Lines, l)
@@ -150,16 +179,55 @@ func buildSTASYIndex(f *rail.STASY) *stasyIndex {
 	}
 	for k := range x.stops {
 		st := &x.stops[k]
+		// At its own platforms: a merged point does not move the Stop (unless it is all there is).
+		plats := st.platforms
+		if len(plats) == 0 {
+			plats = st.merged
+		}
 		var lat, lon float64
-		for _, p := range st.platforms {
+		for _, p := range plats {
 			lat, lon = lat+f.Stops[p].Lat, lon+f.Stops[p].Lon
 		}
-		n := float64(len(st.platforms))
+		n := float64(len(plats))
 		st.m.Lat, st.m.Lon = round5(lat/n), round5(lon/n)
 		sortLines(st.m.Lines, func(l string) (string, string) { return x.lines[x.route(l)].Mode, l })
 	}
+	x.joinCalls()
 	x.buildPatterns()
 	return x
+}
+
+// joinCalls fills joined: a trip calling at a Stop and then at a point merged into it calls
+// there once, arriving at the first and leaving from the second.
+func (x *stasyIndex) joinCalls() {
+	for ti := range int32(x.f.NumTrips()) {
+		rows := x.f.TripStops(ti)
+		var out []rail.STASYStopTime
+		for k, r := range rows {
+			if k > 0 && x.stopOf[r.Stop] == x.stopOf[rows[k-1].Stop] {
+				if out == nil {
+					out = append(out, rows[:k]...)
+				}
+				out[len(out)-1].T = r.T
+			} else if out != nil {
+				out = append(out, r)
+			}
+		}
+		if out != nil {
+			if x.joined == nil {
+				x.joined = map[int32][]rail.STASYStopTime{}
+			}
+			x.joined[ti] = out
+		}
+	}
+}
+
+// tripStops are a trip's calls, one per Stop it passes: what Patterns, Vehicles and Runs count.
+func (x *stasyIndex) tripStops(ti int32) []rail.STASYStopTime {
+	if rows, ok := x.joined[ti]; ok {
+		return rows
+	}
+	return x.f.TripStops(ti)
 }
 
 func contains(list []string, v string) bool {
@@ -196,7 +264,7 @@ func (x *stasyIndex) buildPatterns() {
 	var order []string
 	for ti := range f.NumTrips() {
 		_, route, head := f.TripInfo(int32(ti))
-		rows := f.TripStops(int32(ti))
+		rows := x.tripStops(int32(ti))
 		if len(rows) < 2 {
 			x.tripPat[ti] = -1
 			continue
@@ -398,6 +466,8 @@ func (s *stasyAdapter) Arrivals(_ context.Context, stopID string, now time.Time)
 		return nil, err
 	}
 	f := x.f
+	stop := x.byID[st.m.ID]
+	plats := append(append([]int32(nil), st.platforms...), st.merged...)
 	until := now.Add(v2Horizon).Unix()
 	var out []model.Arrival
 	// Tomorrow too: before midnight the 2 h window can reach its first trips.
@@ -406,14 +476,18 @@ func (s *stasyAdapter) Arrivals(_ context.Context, stopID string, now time.Time)
 	days := append(two[:], stasyDay{tm, gtfs.ServiceDay(tm), 0})
 	for _, d := range days {
 		secs := int32(now.Sub(d.midnight) / time.Second)
-		for _, p := range st.platforms {
+		for _, p := range plats {
 			for _, row := range f.StopRows(p) {
-				at := d.midnight.Unix() + int64(row.Dep)
-				if row.Dep < d.minSecs || row.Dep < secs || at > until {
+				dep, ok := x.departure(row, p, stop)
+				if !ok {
+					continue // the other call of a joined pair
+				}
+				at := d.midnight.Unix() + int64(dep)
+				if dep < d.minSecs || dep < secs || at > until {
 					continue
 				}
-				rows := f.TripStops(row.Trip)
-				if last := rows[len(rows)-1]; last.Stop == p && last.T == row.Dep {
+				rows := x.tripStops(row.Trip)
+				if last := rows[len(rows)-1]; x.stopOf[last.Stop] == stop && last.T == dep {
 					continue
 				}
 				if runs, _ := f.ServiceOn(row.Trip, d.noon); !runs {
@@ -431,6 +505,22 @@ func (s *stasyAdapter) Arrivals(_ context.Context, stopID string, now time.Time)
 		}
 	}
 	return cutArrivals(out), nil
+}
+
+// departure is when the trip of row leaves the Stop from platform p: the row's own time, or
+// for a call joined with a merged point's (joinCalls) the joined call's, once: ok is false for
+// the call of the pair whose platform the joined call does not keep.
+func (x *stasyIndex) departure(row rail.STASYRow, p int32, stop int) (int32, bool) {
+	rows, ok := x.joined[row.Trip]
+	if !ok {
+		return row.Dep, true
+	}
+	for _, c := range rows {
+		if x.stopOf[c.Stop] == stop && c.A <= row.Dep && row.Dep <= c.T {
+			return c.T, c.Stop == p
+		}
+	}
+	return row.Dep, true
 }
 
 // cutArrivals sorts Arrivals soonest first and keeps 4 per Line + headsign, 30 in all.
@@ -473,7 +563,7 @@ func (x *stasyIndex) vehicles(now time.Time, onlyRoute int) []model.Vehicle {
 	for _, d := range stasyDays(now) {
 		secs := int32(now.Sub(d.midnight) / time.Second)
 		for ti := range int32(f.NumTrips()) {
-			rows := f.TripStops(ti)
+			rows := x.tripStops(ti)
 			if len(rows) < 2 || secs < rows[0].T || secs >= rows[len(rows)-1].A || x.tripPat[ti] < 0 {
 				continue
 			}
@@ -605,7 +695,7 @@ func (s *stasyAdapter) Run(id string, now time.Time) (*model.Run, error) {
 	_, route, head := f.TripInfo(ti)
 	p := &x.patterns[route][x.tripPat[ti]]
 	midnight := gtfs.ServiceDay(noon)
-	rows := f.TripStops(ti)
+	rows := x.tripStops(ti)
 	run := &model.Run{ID: id, Line: x.lines[route].ID, Headsign: head, Pattern: model.Ptr(p.m.ID), Status: model.Scheduled,
 		Stops: make([]model.RunStop, len(rows))}
 	if start, end := midnight.Unix()+int64(rows[0].T), midnight.Unix()+int64(rows[len(rows)-1].A); start <= now.Unix() && now.Unix() < end {

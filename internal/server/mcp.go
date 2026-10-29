@@ -388,6 +388,19 @@ func (a *App) arrivals(ctx context.Context, id string) (arrivalsEntry, error) {
 	return arrivalsEntry{c.at, c.list}, c.err
 }
 
+// refreshArrivals starts a background call for a stop's predictions unless they are fresh or
+// a call is already on its way; it does not wait for the answer.
+func (a *App) refreshArrivals(id string) {
+	a.arrMu.Lock()
+	e, cached := a.arrCache[id]
+	_, busy := a.arrCalls[id]
+	a.arrMu.Unlock()
+	if busy || cached && a.now().Sub(e.at) < stopArrivalsTTL {
+		return
+	}
+	go a.arrivals(context.Background(), id) //nolint:errcheck // errors are not cached; the next request tries again
+}
+
 // cachedArrivals returns the last good predictions for a stop if they are at most maxAge old,
 // whatever the TTL: the fallback when OASA or the request queue cannot answer now.
 func (a *App) cachedArrivals(id string, maxAge time.Duration) (arrivalsEntry, bool) {
