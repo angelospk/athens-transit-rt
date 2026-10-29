@@ -9,6 +9,15 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- **`/v2`: one model for every mode** (contract rev 8): buses, trolleys, metro, tram and the
+  suburban railway as Line, Stop, Pattern, Vehicle, Arrival and Run, with `<source>:<native>`
+  ids, permanent aliases and a `sources` freshness block in every body. Endpoints:
+  `/v2/lines`, `/v2/lines/{id}`, `/v2/lines/{id}/vehicles`, `/v2/stops`, `/v2/stops/{id}`,
+  `/v2/vehicles`, `/v2/vehicles/tiles/{z}/{x}/{y}`, `/v2/vehicles/rail`, `/v2/runs/{id}`. Bus
+  Arrivals add the timetable trips no bus has started; metro and tram trains are placed from the
+  timetable on their OSM track and glide between snapshots (`motion.knots`); suburban trains come
+  from the railway.gov.gr stream, snapped to their corridor. Rail geometry is now embedded in the
+  backend. `/v1` is unchanged. Choices made on the way: `docs/DECISIONS-phase2.md`.
 - `GET /v1/stops/{stop_id}` (contract rev 8): arrival times now come from each bus's position
   and the typical driving speed to the stop (else the timetable's running time) instead of the
   timetable time plus delay; unmatched buses placed on their shape are listed too, and while

@@ -1,7 +1,8 @@
 # Contract rev 8 (DRAFT): one model for every mode
 
-Status: **draft for Harold's approval, 2026-10-29.** Nothing here is implemented. When approved,
-the endpoint sections move into `CONTRACT.md` as revision 8 and into `openapi/openapi.yaml`.
+Status: **approved by Harold 2026-10-29 and implemented** (branch `feat/v2-unified`). The
+current text is in [CONTRACT.md](CONTRACT.md#unified-api-v2-rev-8) and
+`openapi/openapi.yaml`; this draft is kept as the record of what was approved.
 Terms: [GLOSSARY.md](GLOSSARY.md).
 
 ## 1. Goal and rules

@@ -26,7 +26,8 @@ Live: `/v1/lines/{line_id}`, `/v1/lines/{line_id}/schedule`, `/v1/vehicles`,
 `/v1/stats/days/{YYYY-MM-DD}`, `/v1/rail/stasy/departures`,
 `/v1/rail/stasy/vehicles`, `/v1/rail/stasy/trips/{id}`, `/v1/rail/suburban/stations`,
 `/v1/rail/suburban/stations/{id}/departures`, `/v1/rail/suburban/vehicles`,
-`/v1/rail/suburban/trains/{no}`, `/healthz`. Static
+`/v1/rail/suburban/trains/{no}`, `/healthz`; the unified model for every mode under `/v2`
+([below](#one-model-for-every-mode-v2)). Static
 data (line list, shapes, stops) is on GitHub Pages:
 `https://angelospk.github.io/athens-transit-rt/static/v1/lines.json` and
 `.../static/v1/lines/{line_id}.json`.
@@ -149,6 +150,49 @@ Full rules: [`CONTRACT.md`](CONTRACT.md#get-v1stopsstop_id-rev-8).
 
 ```bash
 curl -s https://transit.haroldpoi.dev/v1/stops/61000 | jq -r '.arrivals[] | [.line, .source, .eta_s/60|floor] | @tsv'
+```
+
+## One model for every mode (`/v2`)
+
+`/v2` serves buses, trolleys, metro (M1-M3), tram (T6, T7) and the suburban railway
+(Proastiakos) in one model: Line, Stop, Pattern, Vehicle, Arrival, Run. `/v1` stays as it is.
+Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
+[`GLOSSARY.md`](GLOSSARY.md); examples: [`fixtures/v2/`](fixtures/v2/).
+
+| Endpoint | What | Cached |
+|---|---|---|
+| `GET /v2/lines` | every Line of every mode | 1 h |
+| `GET /v2/lines/{id}` | one Line, its Patterns (stop order + shape) and Stops | 1 h |
+| `GET /v2/lines/{id}/vehicles` | the Line's vehicles now | until `next_update_at` |
+| `GET /v2/stops` | every Stop, compact rows `[id, name, lat, lon, modes, lines]` | 1 h |
+| `GET /v2/stops/{id}` | one Stop, its Lines and the next Arrivals (2 h, 4 per Line + headsign, 30 in all) | 15 s |
+| `GET /v2/vehicles`, `/v2/vehicles/tiles/{z}/{x}/{y}` | buses and trolleys (as `/v1/vehicles` and its tiles) | until `next_update_at` |
+| `GET /v2/vehicles/rail` | metro, tram and suburban trains | 5 s with suburban trains, else 15 s |
+| `GET /v2/runs/{id}` | one Run (a trip of one day) with every stop and its time | 15 s |
+
+- **Ids** are `<source>:<native>` and must be percent-encoded in a URL: `oasa:040`,
+  `stasy:M2`, `stasy:συνταγμα-metro`, `proastiakos:KIATO`,
+  `proastiakos:6928c3c150ab5bc72b39cee6`, `oasa:run:<trip_id>:<YYYY-MM-DD>`,
+  `proastiakos:run:<train no.>:<YYYY-MM-DD>`. An old id of a renamed Stop still answers, with
+  the current `id` in the body. Unknown ids: `404` `unknown_line` / `unknown_stop` /
+  `unknown_run`.
+- **`sources`** in every body says how fresh each Source is (`ok`, `warming_up`, `stale`,
+  `indicative`, `down`). A body with a Source neither `ok` nor `stale` is cached 5 s, with no
+  `ETag`; a complete one cached 1 h has a weak `ETag` and answers `304`.
+- **`position.kind`** is `gps` for buses and suburban trains, `estimate` for metro and tram (from
+  the timetable; `motion.knots` moves them between snapshots). Arrival **`source`** is `live`
+  when GPS or a reported delay set `at`, else `timetable`.
+- Suburban trains are only in `/v2/vehicles/rail`, so map traffic does not keep the
+  railway.gov.gr stream open. A suburban Stop or Line vehicles request opens it too; it closes
+  3 minutes after the last such request.
+
+```bash
+# Next departures at Σύνταγμα (metro), soonest first
+curl -s "https://transit.haroldpoi.dev/v2/stops/$(jq -rn '"stasy:συνταγμα-metro"|@uri')" \
+  | jq -r '.arrivals[] | [.line, .headsign, (.at|localtime|strftime("%H:%M")), .source] | @tsv'
+
+# Every train on the rail network now
+curl -s --compressed https://transit.haroldpoi.dev/v2/vehicles/rail | jq -r '.vehicles[] | [.line, .label // "-", .position.kind] | @tsv'
 ```
 
 ## OASA's predictions at a stop
