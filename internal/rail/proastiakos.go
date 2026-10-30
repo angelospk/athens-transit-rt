@@ -128,7 +128,9 @@ func (s *Suburban) loadStations(ctx context.Context) ([]Station, bool) {
 	if list, ok := s.cachedStations(); ok {
 		return list, true
 	}
-	if s.backoffStations() {
+	if s.backoffStations() || ctx.Err() != nil {
+		// An ended context (a refresh that waited past its limit) would fail the fetch and
+		// count as an upstream failure.
 		return s.staleStations()
 	}
 	idx, err := s.fetchStations(ctx)
@@ -249,7 +251,7 @@ func (s *Suburban) loadBoard(ctx context.Context, date string) (*scheduleBoard, 
 		// drop today's board.
 		return nil, false
 	}
-	if s.backoffBoard() {
+	if s.backoffBoard() || ctx.Err() != nil {
 		return s.staleBoard(date)
 	}
 	b, err := s.fetchBoard(ctx, date)

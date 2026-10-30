@@ -141,3 +141,23 @@ func TestSuburbanRefreshAfterMidnightKeepsToday(t *testing.T) {
 		t.Fatalf("board fetched %d times, want 2", n)
 	}
 }
+
+// A load whose context ended while it waited for another fetch does not fetch, and so does not
+// record an upstream failure that never happened.
+func TestSuburbanLoadAfterDeadlineFetchesNothing(t *testing.T) {
+	s, clk, f := newTestSuburban(t)
+	if _, ok := s.Departures(context.Background(), "ST-PIR", 10, clk.now()); !ok {
+		t.Fatal("no departures")
+	}
+	clk.t = clk.t.Add(stationsTTL + time.Minute) // board and stations both stale
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.loadBoard(ctx, boardDate(suburbanNow))
+	s.loadStations(ctx)
+	if s.BoardFailing() || !s.stationsFail.IsZero() {
+		t.Fatal("an ended context counted as an upstream failure")
+	}
+	if n := f.count("/api/public/schedule-board") + f.count("/api/public/corridor-stations"); n != 2 {
+		t.Fatalf("%d fetches, want 2 (the first load only)", n)
+	}
+}
