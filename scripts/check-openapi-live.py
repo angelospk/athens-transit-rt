@@ -94,6 +94,7 @@ CASES = [
     ("/v2/stops/{id}", "/v2/stops/zzz:1", 404),
     ("/v2/runs/{id}", "/v2/runs/{run}", 200),
     ("/v2/runs/{id}", "/v2/runs/stasy:run:nosuchtrip:2020-01-01", 404),
+    ("/v2/alerts", "/v2/alerts", 200),
     ("/v2/vehicles", "/v2/vehicles", 200),
     ("/v2/vehicles/tiles/{z}/{x}/{y}", "/v2/vehicles/tiles/13/4636/3160", 200),
     ("/v2/vehicles/tiles/{z}/{x}/{y}", "/v2/vehicles/tiles/13/1/1", 404),

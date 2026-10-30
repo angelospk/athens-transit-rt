@@ -19,6 +19,7 @@ import (
 	rt "github.com/MobilityData/gtfs-realtime-bindings/golang/gtfs"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/angelospk/athens-transit-rt/internal/alerts"
 	"github.com/angelospk/athens-transit-rt/internal/feed"
 	"github.com/angelospk/athens-transit-rt/internal/geo"
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
@@ -125,6 +126,9 @@ type App struct {
 	suburban *rail.Suburban
 	trains   *rail.TrainStream // live Proastiakos positions, read only while clients ask
 
+	alerts    *alerts.Poller // /v2/alerts, polled every 10 min
+	alertHTTP *http.Client   // the alert sources
+
 	starts  *runStarts // buses leaving their start: seen flags of the daily timetable
 	seenMu  sync.Mutex
 	seen    map[string]bool // trips the matcher has assigned a vehicle to, today
@@ -192,6 +196,8 @@ func New(cfg Config, log *slog.Logger) *App {
 	a.trains = &rail.TrainStream{BaseURL: cfg.SuburbanURL, HTTP: &http.Client{Transport: stream}, Log: log,
 		Now: func() time.Time { return a.now() }}
 	a.adapters = []Adapter{&oasaAdapter{a}, &stasyAdapter{a: a}, &proastiakosAdapter{a: a, board: a.suburban, trains: a.trains}}
+	a.alertHTTP = &http.Client{Timeout: alertTimeout}
+	a.alerts = a.newAlertsPoller()
 	return a
 }
 
@@ -618,6 +624,7 @@ func (a *App) Run(ctx context.Context) error {
 	go a.housekeeping(ctx)
 	go a.stasy.Run(ctx)
 	go a.trains.Run(ctx)
+	go a.alerts.Run(ctx)
 	a.log.Info("listening", "addr", a.cfg.Listen, "metrics", a.cfg.MetricsListen, "rps", a.pacer.BaseRPS())
 	select {
 	case <-ctx.Done():

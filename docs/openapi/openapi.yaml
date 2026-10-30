@@ -1728,6 +1728,49 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /v2/alerts:
+    get:
+      tags: [V2]
+      operationId: getV2Alerts
+      summary: Service disruptions (rev 13)
+      description: |
+        Service disruptions from two sources, polled in the background every 10 min: OASA
+        notices (`source: oasa`, buses and trolleys, with the Line ids and Stop codes the GTFS
+        knows and the dates of the notice) and strikes from athenstransport.com
+        (`source: athenstransport`, every mode). An Alert is listed for 7 days after
+        `published`, or until `until` when that is later; newest first. A source that fails
+        keeps its last Alerts. `from`/`until` are Athens dates (`YYYY-MM-DD`), `null` when the
+        notice names none: clients show an Alert from `from` to `until`, and 3 days after
+        `published` when it has no dates. Always link `url`.
+
+        `Cache-Control: public, max-age=300` after the first poll with no failure; before it
+        `max-age=5`, `alerts: []` and `updated_at: null`. No `ETag` and no `sources`.
+      responses:
+        "200":
+          description: The Alerts now, and when both sources were last polled without a failure.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertsResponse"
+              example:
+                alerts:
+                  - id: "oasa:14909"
+                    source: oasa
+                    title: Μερική προσωρινή τροποποίηση της λεωφορειακής γραμμής 112 στον Δήμο Αγ. Δημητρίου
+                    url: "https://www.oasa.gr/blog/%ce%bc%ce%b5%cf%81%ce%b9%ce%ba%ce%ae-381/"
+                    published: 1793336520
+                    from: "2026-10-31"
+                    until: "2026-11-01"
+                    modes: [bus]
+                    lines: ["oasa:112"]
+                    stops: ["oasa:040054"]
+                    urgent: false
+                updated_at: 1793336580
+        "429":
+          $ref: "#/components/responses/RateLimited"
 
 components:
   parameters:
@@ -3048,3 +3091,70 @@ components:
           description: State of that one Source.
           items:
             $ref: "#/components/schemas/SourceState"
+
+    Alert:
+      type: object
+      description: A service disruption of `/v2/alerts` (rev 13).
+      required: [id, source, title, url, published, from, until, modes, lines, stops, urgent]
+      properties:
+        id:
+          type: string
+          description: "`oasa:<post id>` or `athenstransport:<post id>`. Not stored by clients."
+        source:
+          type: string
+          enum: [oasa, athenstransport]
+        title:
+          type: string
+          description: The notice's or the post's title.
+        url:
+          type: string
+          description: The notice page or the news post. Clients always link it.
+        published:
+          type: integer
+          description: Unix seconds.
+        from:
+          type: [string, "null"]
+          description: |
+            First day the disruption applies, Athens `YYYY-MM-DD`; `null` when the notice names
+            none (clients then show it for 3 days after `published`).
+        until:
+          type: [string, "null"]
+          description: Last day it applies, Athens `YYYY-MM-DD`; `null` as `from`.
+        modes:
+          type: array
+          description: |
+            `bus` for an OASA notice, plus `trolley` when one of its Lines is a trolley line
+            (both when it names no Line). From the post's categories for athenstransport.com;
+            none of them means every mode.
+          items:
+            type: string
+            enum: [bus, trolley, metro, tram, suburban]
+        lines:
+          type: array
+          description: |
+            Line ids that follow «γραμμή»/«γραμμών» in the title, only those of the GTFS; `[]`
+            for a network-wide notice and for athenstransport.com.
+          items: {type: string}
+        stops:
+          type: array
+          description: Stop ids of the «ΚΣ <code>» codes in the notice, only those of the GTFS.
+          items: {type: string}
+        urgent:
+          type: boolean
+          description: "`true` for a strike."
+
+    AlertsResponse:
+      type: object
+      description: The body of `/v2/alerts`.
+      required: [alerts, updated_at]
+      properties:
+        alerts:
+          type: array
+          description: Newest `published` first.
+          items:
+            $ref: "#/components/schemas/Alert"
+        updated_at:
+          type: [integer, "null"]
+          description: |
+            Unix seconds of the last poll with no failure; `null` (and `alerts: []`) before the
+            first one. A Source that fails keeps its last Alerts.

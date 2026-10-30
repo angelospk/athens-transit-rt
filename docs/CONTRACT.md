@@ -14,9 +14,9 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 12 (2026-10-29): `direction` on `/v2` Vehicles; STASY Pattern directions follow
-branches (M3 airport)
-(rev 11: `/v2/stops/{id}` bus Arrivals include OASA's own predictions; rev 10: live responses send `Access-Control-Expose-Headers: Date`; rev 9: `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles; rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
+Revision: 13 (2026-10-30): `GET /v2/alerts`, service disruptions (OASA notices and strikes)
+(rev 12: `direction` on `/v2` Vehicles; STASY Pattern directions follow branches (M3 airport);
+rev 11: `/v2/stops/{id}` bus Arrivals include OASA's own predictions; rev 10: live responses send `Access-Control-Expose-Headers: Date`; rev 9: `at_terminus` on `/v1/lines/{line_id}` vehicles and `/v2` Vehicles; rev 8: `GET /v1/stops/{stop_id}` (a stop board); the unified `/v2` API
 ([below](#unified-api-v2-rev-8)); rev 7: `path_speeds` also follow today's traffic (same shape and units); rev 6: `path_speeds` on vehicles (typical speeds ahead); rev 5: `GET /v1/vehicles/tiles/{z}/{x}/{y}`; rev 4: `path_beyond` and `path_stops` on vehicles; rev 3: `GET /v1/vehicles`; `speed` and
 `path` on vehicles)
 
@@ -640,6 +640,7 @@ All: UTF-8 JSON, `Access-Control-Allow-Origin: *`, gzip, times in Unix seconds, 
 | `GET /v2/vehicles/rail` | as `/v2/vehicles`, metro + tram (~60 vehicles, one body) | until `next_update_at`, 5-30 | none |
 | `GET /v2/vehicles/suburban` | as `/v2/vehicles`, suburban trains (~10, one body) | until `next_update_at`, 5-30 | `proastiakos`: opens the stream |
 | `GET /v2/runs/{id}` | `{run: Run, sources}` | 15 | none |
+| `GET /v2/alerts` (rev 13) | `{alerts: [Alert], updated_at}` | 300 | none (polled in the background) |
 
 Shapes not shown above:
 
@@ -659,8 +660,35 @@ Shapes not shown above:
             "delay_s": null, "source": "timetable", "platform": null, "passed": false}]}
 ```
 
+```json
+// Alert (rev 13): a service disruption
+{"id": "oasa:14909", "source": "oasa",
+ "title": "Μερική προσωρινή τροποποίηση της λεωφορειακής γραμμής 112 στον Δήμο Αγ. Δημητρίου",
+ "url": "https://www.oasa.gr/blog/...", "published": 1793336520,
+ "from": "2026-10-31", "until": "2026-11-01",
+ "modes": ["bus"], "lines": ["oasa:112"], "stops": ["oasa:040054"], "urgent": false}
+```
+
 Rules:
 
+- `/v2/alerts` (rev 13): service disruptions from two sources, polled every 10 min.
+  - `source: "oasa"`: the OASA news feed (`oasa.gr/feed`), every item except tenders
+    (category «Διαγωνισμοί»). Buses and trolleys only. `lines`: the line codes that follow
+    «γραμμή/γραμμών» in the title, as `/v2` Line ids, only those the GTFS knows. `stops`: the
+    «ΚΣ <code>» stop codes in the text, as Stop ids, only known ones. `from`/`until`: the
+    earliest and latest date (Athens, `YYYY-MM-DD`) in the opening paragraph of the notice
+    (up to «ως εξής»); `null` when it names none. `modes`: `bus`, plus `trolley` when one of
+    the lines is a trolley line; both when `lines` is empty (a network-wide notice).
+    `urgent: false`. Each notice page is read once.
+  - `source: "athenstransport"`: strikes only (category «Απεργία») from the athenstransport.com
+    news site, which also covers metro, tram and trains. We show its title and link, never its
+    text. `modes` from its categories; none of them means every mode. `lines`, `stops` `[]`,
+    `from`/`until` `null`, `urgent: true`.
+  - An Alert is listed for 7 days after `published`, or until `until` when that is later.
+    Newest `published` first. A source that fails keeps its last Alerts. `updated_at`: the
+    last poll with no failure; `null` (and `alerts: []`, `max-age=5`) before the first one.
+  - Clients show an Alert from `from` to `until`; with no dates, for 3 days after `published`.
+    Always link `url`: the title alone does not say what changes.
 - `/v2/stops/{id}` arrivals: soonest first, at most 2 h ahead, at most 4 per Line + headsign, at
   most 30 in all. Bus arrivals: those of rev 7 (`/v1/stops/{id}`, `live`), plus the timetable
   Arrivals of Runs no matched bus has started yet (`timetable`, `vehicle: null`; Harold,
@@ -753,7 +781,8 @@ Rules:
   planned. Separate Stops; the Stop card lists nearby Stops of other modes (Harold, 2026-10-29).
 - Rail vehicles inside the shared tiles: rejected (keeps the suburban stream open for bus-only
   map traffic, ~80 KB/s upstream; Codex review 2026-10-29).
-- Server-side Alerts or push: Alerts stay client-side and poll `/v2/stops/{id}`.
+- Server-side arrival alerts or push: arrival alerts stay client-side and poll `/v2/stops/{id}`.
+  (Service disruptions are `/v2/alerts`, rev 13; a different thing.)
 - MCP tools keep their names; they may switch to the `/v2` model inside without a contract change.
 
 ## Fixtures
