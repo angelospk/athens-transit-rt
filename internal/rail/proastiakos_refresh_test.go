@@ -161,3 +161,48 @@ func TestSuburbanLoadAfterDeadlineFetchesNothing(t *testing.T) {
 		t.Fatalf("%d fetches, want 2 (the first load only)", n)
 	}
 }
+
+// A refresh that waits for the fetch slot past its time limit gives up then: it does not keep its
+// goroutine and its refreshing flag while another fetch (an MPass screen, a slow board) holds the slot.
+func TestSuburbanRefreshGivesUpWaitingForTheFetchSlot(t *testing.T) {
+	s, clk, f := newTestSuburban(t)
+	if _, ok := s.Departures(context.Background(), "ST-PIR", 10, clk.now()); !ok {
+		t.Fatal("no departures")
+	}
+	old := refreshTimeout
+	refreshTimeout = 50 * time.Millisecond
+	defer func() { refreshTimeout = old }()
+	clk.t = clk.t.Add(boardTTL + time.Minute)
+	if !s.lockFetch(context.Background()) { // another fetch holds the slot
+		t.Fatal("slot not free")
+	}
+	if _, ok := s.Departures(context.Background(), "ST-PIR", 10, clk.now()); !ok {
+		t.Fatal("stale board not served")
+	}
+	waited := make(chan struct{})
+	go func() { s.refreshes.Wait(); close(waited) }()
+	select {
+	case <-waited:
+	case <-time.After(2 * time.Second):
+		s.unlockFetch()
+		t.Fatal("the refresh kept waiting for the fetch slot past its time limit")
+	}
+	s.unlockFetch()
+	s.mu.Lock()
+	n := len(s.refreshing)
+	s.mu.Unlock()
+	if n != 0 || s.BoardFailing() {
+		t.Fatalf("after giving up: %d refreshing, failing %v", n, s.BoardFailing())
+	}
+	if c := f.count("/api/public/schedule-board"); c != 1 {
+		t.Fatalf("board fetched %d times, want 1 (the refresh gave up)", c)
+	}
+	// The next request past the TTL starts a new refresh, which now gets the slot.
+	if _, ok := s.Departures(context.Background(), "ST-PIR", 10, clk.now()); !ok {
+		t.Fatal("no departures")
+	}
+	s.refreshes.Wait()
+	if c := f.count("/api/public/schedule-board"); c != 2 {
+		t.Fatalf("board fetched %d times, want 2", c)
+	}
+}

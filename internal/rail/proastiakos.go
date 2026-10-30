@@ -28,9 +28,11 @@ const (
 	// upstreamRetry is how long a failed fetch is remembered while stale data is served. Without
 	// it every request would start a new fetch (the board is 743 KB) at a dead upstream.
 	upstreamRetry = time.Minute
-	// refreshTimeout bounds a background refresh, which no request deadline limits.
-	refreshTimeout = time.Minute
 )
+
+// refreshTimeout bounds a background refresh, which no request deadline limits, also while it
+// waits for the fetch slot (a var for tests).
+var refreshTimeout = time.Minute
 
 // Station is one Proastiakos station of the corridor-stations table.
 type Station struct {
@@ -65,7 +67,7 @@ type Suburban struct {
 	HTTP     *http.Client
 	Now      func() time.Time
 
-	fetchMu   sync.Mutex     // one upstream fetch at a time
+	fetchSlot chan struct{}  // one upstream fetch at a time; a waiter gives up when its context ends
 	refreshes sync.WaitGroup // background refreshes in flight (tests wait on it)
 
 	mu           sync.Mutex
@@ -123,8 +125,10 @@ func (s *Suburban) Stations(ctx context.Context) ([]Station, bool) {
 
 // loadStations fetches the station table unless another fetch has just stored it.
 func (s *Suburban) loadStations(ctx context.Context) ([]Station, bool) {
-	s.fetchMu.Lock()
-	defer s.fetchMu.Unlock()
+	if !s.lockFetch(ctx) {
+		return s.staleStations()
+	}
+	defer s.unlockFetch()
 	if list, ok := s.cachedStations(); ok {
 		return list, true
 	}
@@ -241,8 +245,10 @@ func (s *Suburban) board(ctx context.Context, date string) (*scheduleBoard, bool
 
 // loadBoard fetches the board of a date unless another fetch has just stored it.
 func (s *Suburban) loadBoard(ctx context.Context, date string) (*scheduleBoard, bool) {
-	s.fetchMu.Lock()
-	defer s.fetchMu.Unlock()
+	if !s.lockFetch(ctx) {
+		return s.staleBoard(date)
+	}
+	defer s.unlockFetch()
 	if b, ok := s.cachedBoard(date); ok {
 		return b, true
 	}
@@ -275,6 +281,28 @@ func (s *Suburban) loadBoard(ctx context.Context, date string) (*scheduleBoard, 
 	s.boards[date] = &boardEntry{at: s.now(), board: b}
 	s.mu.Unlock()
 	return b, true
+}
+
+// lockFetch takes the fetch slot, or gives up when ctx ends first (false).
+func (s *Suburban) lockFetch(ctx context.Context) bool {
+	select {
+	case s.slot() <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *Suburban) unlockFetch() { <-s.slot() }
+
+// slot is the fetch slot, made on first use (Suburban is built as a struct literal).
+func (s *Suburban) slot() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fetchSlot == nil {
+		s.fetchSlot = make(chan struct{}, 1)
+	}
+	return s.fetchSlot
 }
 
 // refresh runs load in the background unless a refresh of the same key is running. The request
@@ -577,8 +605,10 @@ func (s *Suburban) mpassDepartures(ctx context.Context, id string, no int, now t
 		return deps, name, true
 	}
 	// One screen download at a time: a burst of fallbacks must not fetch the same screen again.
-	s.fetchMu.Lock()
-	defer s.fetchMu.Unlock()
+	if !s.lockFetch(ctx) {
+		return nil, "", false
+	}
+	defer s.unlockFetch()
 	if deps, name, ok := s.cachedMPass(id, now, n); ok {
 		return deps, name, true
 	}
