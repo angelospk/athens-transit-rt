@@ -173,6 +173,7 @@ Full field rules: [`CONTRACT.md`](CONTRACT.md#unified-api-v2-rev-8); terms:
 | `GET /v2/vehicles/rail` | metro and tram trains | 15 s |
 | `GET /v2/vehicles/suburban` | suburban trains (opens the railway.gov.gr stream) | 5 s with trains, else 15 s |
 | `GET /v2/runs/{id}` | one Run (a trip of one day) with every stop and its time | 15 s |
+| `GET /v2/alerts` | service disruptions (rev 13): OASA notices and strikes | 5 min |
 
 - **Ids** are `<source>:<native>` and must be percent-encoded in a URL: `oasa:040`,
   `stasy:M2`, `stasy:συνταγμα-metro`, `proastiakos:KIATO`,
@@ -203,6 +204,25 @@ curl -s "https://transit.haroldpoi.dev/v2/stops/$(jq -rn '"stasy:συνταγμ�
 # Every metro and tram train now, then every suburban train
 curl -s --compressed https://transit.haroldpoi.dev/v2/vehicles/rail | jq -r '.vehicles[] | [.line, .headsign, .position.kind] | @tsv'
 curl -s --compressed https://transit.haroldpoi.dev/v2/vehicles/suburban | jq -r '.vehicles[] | [.line, .label, .position.kind] | @tsv'
+```
+
+### Service disruptions (`/v2/alerts`)
+
+`GET /v2/alerts` is the one feed that is not a map: it lists the service disruptions of the
+next days, polled in the background every 10 min from two sources. `source: oasa` is an OASA
+notice of its news feed, buses and trolleys only: `lines` and `stops` are the ones the GTFS
+knows (`oasa:<code>` ids), `from`/`until` the dates of the notice (`null` when it names none).
+`source: athenstransport` is a strike from athenstransport.com, which also covers metro, tram
+and trains: `modes` from its categories (every mode when it names none), `urgent: true`. An
+Alert is listed for 7 days after `published`, or until `until` when that is later. A source
+that fails keeps its last Alerts; `updated_at` is the last poll with no failure (`null` and an
+empty list before the first). Show an Alert from `from` to `until`, and 3 days after
+`published` when it has no dates; always link `url`.
+
+```bash
+# Every Alert now, newest first
+curl -s https://transit.haroldpoi.dev/v2/alerts \
+  | jq -r '.alerts[] | [.source, .from, .until, (.modes|join(",")), .title] | @tsv'
 ```
 
 ## OASA's predictions at a stop
