@@ -6,7 +6,8 @@ vehicles and travel speed per hour and per line, and how many scheduled trips ra
 (`trips`). Updated daily by the `stats` workflow.
 
 - `v1/latest.json`: the newest day
-- `v1/index.json`: all days
+- `v1/index.json`: all days from 2026-10-30 (earlier files in `v1/days` are kept but
+  not listed: their seen/missed trip counts are not reliable)
 - `v1/days/YYYY-MM-DD.json`: one day
 
 Speed (km/h) = `dist_m / time_s * 3.6`. Fields and method: `docs/API.md` on `main`.
