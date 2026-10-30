@@ -9,6 +9,10 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Suburban stops and runs no longer wait for the 743 KB schedule board: once today's board is
+  older than 10 min, requests get it at once while a background refresh downloads the new one
+  (same for the 24 h station table). Only a cold cache still fetches inside the request
+  ([#47](https://github.com/angelospk/athens-transit-rt/issues/47)).
 - `/v2` Vehicles carry `direction` (contract rev 12): the direction of the Pattern they run, so
   the web can draw each rail line as two tracks and put each train on its own. Metro and tram
   always have it; buses when matched or placed on a trip; suburban trains from their Run, else

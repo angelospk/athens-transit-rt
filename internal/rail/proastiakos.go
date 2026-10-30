@@ -28,6 +28,8 @@ const (
 	// upstreamRetry is how long a failed fetch is remembered while stale data is served. Without
 	// it every request would start a new fetch (the board is 743 KB) at a dead upstream.
 	upstreamRetry = time.Minute
+	// refreshTimeout bounds a background refresh, which no request deadline limits.
+	refreshTimeout = time.Minute
 )
 
 // Station is one Proastiakos station of the corridor-stations table.
@@ -63,7 +65,8 @@ type Suburban struct {
 	HTTP     *http.Client
 	Now      func() time.Time
 
-	fetchMu sync.Mutex // one upstream fetch at a time
+	fetchMu   sync.Mutex     // one upstream fetch at a time
+	refreshes sync.WaitGroup // background refreshes in flight (tests wait on it)
 
 	mu           sync.Mutex
 	stations     stationIndex
@@ -72,6 +75,7 @@ type Suburban struct {
 	boards       map[string]*boardEntry
 	boardFail    time.Time
 	mpass        map[string]*mpassEntry
+	refreshing   map[string]bool // background refreshes running, by "stations" or a board date
 }
 
 type stationIndex struct {
@@ -99,14 +103,26 @@ type mpassDep struct {
 	d  SuburbanDeparture
 }
 
-// Stations returns every station with its corridors (24 h cache).
+// Stations returns every station with its corridors (24 h cache). A list past its TTL is served
+// at once while a new one downloads in the background.
 func (s *Suburban) Stations(ctx context.Context) ([]Station, bool) {
 	if list, ok := s.cachedStations(); ok {
 		return list, true
 	}
-	if s.backoffStations() {
-		return s.staleStations()
+	if list, ok := s.staleStations(); ok {
+		if !s.backoffStations() {
+			s.refresh(ctx, "stations", func(ctx context.Context) { s.loadStations(ctx) })
+		}
+		return list, true
 	}
+	if s.backoffStations() {
+		return nil, false
+	}
+	return s.loadStations(ctx)
+}
+
+// loadStations fetches the station table unless another fetch has just stored it.
+func (s *Suburban) loadStations(ctx context.Context) ([]Station, bool) {
 	s.fetchMu.Lock()
 	defer s.fetchMu.Unlock()
 	if list, ok := s.cachedStations(); ok {
@@ -201,19 +217,37 @@ func (s *Suburban) lookupLocked(id string) (primary string, ids []string, name s
 	return primary, s.stations.members[primary], name
 }
 
-// board returns the schedule board of a date, cached for boardTTL. On failure the stale board of
-// that same date is served; a board of another day would be wrong times, so it is not.
+// board returns the schedule board of a date, cached for boardTTL. A board past its TTL is served
+// at once while a new one downloads in the background, so no request waits for the 743 KB
+// download once the day's board is loaded. On failure the stale board of that same date is
+// served; a board of another day would be wrong times, so it is not.
 func (s *Suburban) board(ctx context.Context, date string) (*scheduleBoard, bool) {
 	if b, ok := s.cachedBoard(date); ok {
 		return b, true
 	}
-	if s.backoffBoard() {
-		return s.staleBoard(date)
+	if b, ok := s.staleBoard(date); ok {
+		if !s.backoffBoard() {
+			s.refresh(ctx, date, func(ctx context.Context) { s.loadBoard(ctx, date) })
+		}
+		return b, true
 	}
+	if s.backoffBoard() {
+		return nil, false
+	}
+	return s.loadBoard(ctx, date)
+}
+
+// loadBoard fetches the board of a date unless another fetch has just stored it.
+func (s *Suburban) loadBoard(ctx context.Context, date string) (*scheduleBoard, bool) {
 	s.fetchMu.Lock()
 	defer s.fetchMu.Unlock()
 	if b, ok := s.cachedBoard(date); ok {
 		return b, true
+	}
+	if s.laterBoard(date) {
+		// A refresh of yesterday that waited behind today's first fetch: fetching it now would
+		// drop today's board.
+		return nil, false
 	}
 	if s.backoffBoard() {
 		return s.staleBoard(date)
@@ -241,6 +275,34 @@ func (s *Suburban) board(ctx context.Context, date string) (*scheduleBoard, bool
 	return b, true
 }
 
+// refresh runs load in the background unless a refresh of the same key is running. The request
+// that starts it may end first, so the fetch keeps the request's values but not its cancellation,
+// and gets its own time limit.
+func (s *Suburban) refresh(ctx context.Context, key string, load func(context.Context)) {
+	s.mu.Lock()
+	if s.refreshing[key] {
+		s.mu.Unlock()
+		return
+	}
+	if s.refreshing == nil {
+		s.refreshing = map[string]bool{}
+	}
+	s.refreshing[key] = true
+	s.mu.Unlock()
+	s.refreshes.Add(1)
+	go func() {
+		defer s.refreshes.Done()
+		defer func() {
+			s.mu.Lock()
+			delete(s.refreshing, key)
+			s.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+		defer cancel()
+		load(ctx)
+	}()
+}
+
 func (s *Suburban) cachedBoard(date string) (*scheduleBoard, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -249,6 +311,19 @@ func (s *Suburban) cachedBoard(date string) (*scheduleBoard, bool) {
 		return nil, false
 	}
 	return e.board, true
+}
+
+// laterBoard reports whether a board of a day after date is cached (dates are YYYY-MM-DD, so
+// they sort as strings).
+func (s *Suburban) laterBoard(date string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for d := range s.boards {
+		if d > date {
+			return true
+		}
+	}
+	return false
 }
 
 // backoffBoard reports whether the last board fetch failed less than upstreamRetry ago. Then no
