@@ -9,6 +9,10 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- Suburban stops and runs no longer wait for the 743 KB schedule board: once today's board is
+  older than 10 min, requests get it at once while a background refresh downloads the new one
+  (same for the 24 h station table). Only a cold cache still fetches inside the request
+  ([#47](https://github.com/angelospk/athens-transit-rt/issues/47)).
 - `GET /v2/alerts` (contract rev 13): service disruptions, polled in the background every 10 min
   from OASA's news feed (buses and trolleys; the Line ids and Stop codes the GTFS knows, and the
   dates of the notice) and from athenstransport.com's strike posts (every mode, `urgent`). An

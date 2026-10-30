@@ -49,6 +49,7 @@ func TestSuburbanBoardAccess(t *testing.T) {
 	if _, _, ok := s.Board(context.Background(), clk.t); !ok {
 		t.Fatal("stale board not served")
 	}
+	s.refreshes.Wait()
 	if !s.BoardFailing() {
 		t.Fatal("failure not reported")
 	}

@@ -21,6 +21,13 @@ type fakeRail struct {
 	mu   sync.Mutex
 	hits map[string]int
 	fail bool
+	gate chan struct{} // when set, the board and station answers wait until it closes
+}
+
+func (f *fakeRail) setGate(g chan struct{}) {
+	f.mu.Lock()
+	f.gate = g
+	f.mu.Unlock()
 }
 
 func (f *fakeRail) setFail(v bool) {
@@ -38,8 +45,11 @@ func (f *fakeRail) count(path string) int {
 func (f *fakeRail) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.hits[r.URL.Path]++
-	fail := f.fail
+	fail, gate := f.fail, f.gate
 	f.mu.Unlock()
+	if gate != nil && strings.HasPrefix(r.URL.Path, "/api/public/") {
+		<-gate
+	}
 	if fail {
 		http.Error(w, "boom", http.StatusInternalServerError)
 		return
@@ -183,6 +193,7 @@ func TestSuburbanBoardCache(t *testing.T) {
 	if _, ok := s.Departures(context.Background(), "ST-PIR", 10, clk.now()); !ok {
 		t.Fatal("no departures after the cache expired")
 	}
+	s.refreshes.Wait()
 	if n := f.count("/api/public/schedule-board"); n != 2 {
 		t.Fatalf("board fetched %d times, want 2", n)
 	}
@@ -203,6 +214,7 @@ func TestSuburbanServesStaleOnError(t *testing.T) {
 	if !ok || !reflect.DeepEqual(got, first) {
 		t.Fatalf("stale board not served: ok=%v %+v", ok, got)
 	}
+	s.refreshes.Wait()
 	// The failure is remembered: the next request does not start another 743 KB download.
 	hits := f.count("/api/public/schedule-board")
 	if _, ok := s.Departures(context.Background(), "ST-REN", 10, clk.now()); !ok {
