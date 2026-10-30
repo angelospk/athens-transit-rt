@@ -9,6 +9,11 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
+- `GET /v2/alerts` (contract rev 13): service disruptions, polled in the background every 10 min
+  from OASA's news feed (buses and trolleys; the Line ids and Stop codes the GTFS knows, and the
+  dates of the notice) and from athenstransport.com's strike posts (every mode, `urgent`). An
+  Alert is listed for 7 days, or until the notice's last day; a source that fails keeps its last
+  Alerts ([#43](https://github.com/angelospk/athens-transit-rt/issues/43)).
 - `/v2` Vehicles carry `direction` (contract rev 12): the direction of the Pattern they run, so
   the web can draw each rail line as two tracks and put each train on its own. Metro and tram
   always have it; buses when matched or placed on a trip; suburban trains from their Run, else
