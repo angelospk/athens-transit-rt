@@ -24,11 +24,11 @@ const (
 // handleV2Alerts serves the Alerts now. Before the first good poll: an empty list, a null
 // updated_at and max-age=5.
 func (a *App) handleV2Alerts(w http.ResponseWriter, r *http.Request) {
-	items, updated := a.alerts.Items(), a.alerts.Updated()
-	body := map[string]any{"alerts": items, "updated_at": nil}
+	items, updated := a.alerts.Snapshot()
+	body := map[string]any{"alerts": []alerts.Item{}, "updated_at": nil}
 	maxAge := v2IncompleteAge
 	if updated != 0 {
-		body["updated_at"], maxAge = updated, alertsMaxAge
+		body["alerts"], body["updated_at"], maxAge = items, updated, alertsMaxAge
 	}
 	writeJSON(w, http.StatusOK, maxAge, body)
 }

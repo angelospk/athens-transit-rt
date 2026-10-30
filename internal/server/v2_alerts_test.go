@@ -118,3 +118,25 @@ func TestV2Alerts(t *testing.T) {
 		t.Fatalf("%d Alerts after a failed source", n)
 	}
 }
+
+// A first poll with a failed source is not complete: the body stays empty until one is.
+func TestV2AlertsFirstPollPartial(t *testing.T) {
+	a := newApp(t, time.Date(2026, 10, 30, 20, 0, 0, 0, gtfs.Athens))
+	a.alerts.Get = func(_ context.Context, url string) ([]byte, error) {
+		if url == alerts.Feed {
+			return []byte(alertFeed), nil
+		}
+		return nil, errors.New("404")
+	}
+	if err := a.alerts.Poll(context.Background()); err == nil {
+		t.Fatal("a failed source must be reported")
+	}
+	res, body := get(t, a, "/v2/alerts")
+	var got v2Alerts
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("%v %s", err, body)
+	}
+	if maxAge(t, res) != 5 || len(got.Alerts) != 0 || got.UpdatedAt != nil {
+		t.Fatalf("after a partial first poll: %d %s", maxAge(t, res), body)
+	}
+}

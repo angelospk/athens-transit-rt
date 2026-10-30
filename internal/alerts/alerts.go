@@ -24,8 +24,8 @@ import (
 const (
 	// Feed is OASA's news feed (WordPress RSS): every notice but the tenders is an Alert.
 	Feed = "https://www.oasa.gr/feed/"
-	// AthensTransportWP is athenstransport.com's news API: the posts with their categories.
-	AthensTransportWP = "https://www.athenstransport.com/wp-json/wp/v2/posts?per_page=30&_fields=id,date_gmt,link,title,categories"
+	// AthensTransportWP is athenstransport.com's news API: its strike posts (category 231).
+	AthensTransportWP = "https://www.athenstransport.com/wp-json/wp/v2/posts?categories=231&per_page=30&_fields=id,date_gmt,link,title,categories"
 
 	pollEvery  = 10 * time.Minute // the contract's poll interval
 	keepFor    = 7 * 24 * time.Hour
@@ -104,7 +104,7 @@ func ParseFeed(body []byte) ([]FeedItem, error) {
 var (
 	parenRe   = regexp.MustCompile(`\([^)]*\)`)
 	articleRe = regexp.MustCompile(`(?is)<article\b[^>]*>(.*?)</article>`)
-	dropRe    = regexp.MustCompile(`(?is)<(script|style)\b[^>]*>.*?</(script|style)>`)
+	dropRe    = regexp.MustCompile(`(?is)<(script|style|header)\b[^>]*>.*?</(script|style|header)>`)
 	tagRe     = regexp.MustCompile(`(?s)<[^>]*>`)
 	spaceRe   = regexp.MustCompile(`\s+`)
 	numericRe = regexp.MustCompile(`\b(\d{1,2})[./](\d{1,2})[./](\d{4}|\d{2})\b`)
@@ -128,7 +128,7 @@ var latinToGreek = strings.NewReplacer("A", "Α", "B", "Β", "E", "Ε", "Z", "Ζ
 func LineCodes(title string) []string {
 	var out []string
 	seen := map[string]bool{}
-	words := strings.Fields(parenRe.ReplaceAllString(title, " "))
+	words := strings.Fields(strings.ReplaceAll(parenRe.ReplaceAllString(title, " "), ",", ", "))
 	for i := 0; i < len(words); i++ {
 		if !strings.HasPrefix(strings.ToLower(words[i]), "γραμμ") {
 			continue
@@ -179,7 +179,8 @@ func lineCode(w string) (string, bool) {
 }
 
 // ArticleText is the text of the page's <article> element (of the whole page when it has none):
-// scripts and styles dropped, tags stripped, entities unescaped, whitespace collapsed.
+// scripts, styles and the post header (author, dates) dropped, tags stripped, entities
+// unescaped, whitespace (also &nbsp;) collapsed.
 func ArticleText(page []byte) string {
 	s := string(page)
 	if m := articleRe.FindStringSubmatch(s); m != nil {
@@ -187,7 +188,7 @@ func ArticleText(page []byte) string {
 	}
 	s = dropRe.ReplaceAllString(s, " ")
 	s = tagRe.ReplaceAllString(s, " ")
-	s = html.UnescapeString(s)
+	s = strings.ReplaceAll(html.UnescapeString(s), "\u00a0", " ")
 	return strings.TrimSpace(spaceRe.ReplaceAllString(s, " "))
 }
 
@@ -403,21 +404,32 @@ func (p *Poller) Updated() int64 {
 
 // Items are both sources' Alerts, newest first: published within 7 days, or still valid by until.
 func (p *Poller) Items() []Item {
+	items, _ := p.Snapshot()
+	return items
+}
+
+// Snapshot is Items and Updated of the same poll.
+func (p *Poller) Snapshot() ([]Item, int64) {
 	now := p.now()
 	p.mu.Lock()
 	all := make([]Item, 0, len(p.oasa)+len(p.wp))
 	all = append(all, p.oasa...)
 	all = append(all, p.wp...)
+	updated := p.updated
 	p.mu.Unlock()
 	out := []Item{}
-	today := now.In(athens).Format(time.DateOnly)
 	for _, it := range all {
-		if now.Sub(time.Unix(it.Published, 0)) <= keepFor || (it.Until != nil && *it.Until >= today) {
+		if live(it, now) {
 			out = append(out, it)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Published > out[j].Published })
-	return out
+	return out, updated
+}
+
+// live reports whether an Alert is still listed at now (as Snapshot filters).
+func live(it Item, now time.Time) bool {
+	return now.Sub(time.Unix(it.Published, 0)) <= keepFor || (it.Until != nil && *it.Until >= now.In(athens).Format(time.DateOnly))
 }
 
 // Poll refreshes both sources. A source that fails keeps its previous Alerts and its error is
@@ -485,6 +497,16 @@ func (p *Poller) Poll(ctx context.Context) error {
 
 	p.mu.Lock()
 	if oasaOK {
+		// The feed shows only the last 10 notices: one that left it stays until it expires.
+		inFeed := map[string]bool{}
+		for _, it := range oasa {
+			inFeed[it.ID] = true
+		}
+		for _, it := range p.oasa {
+			if !inFeed[it.ID] && live(it, now) {
+				oasa = append(oasa, it)
+			}
+		}
 		p.oasa = oasa
 	}
 	if wpOK {

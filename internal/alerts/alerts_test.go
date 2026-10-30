@@ -29,6 +29,7 @@ func TestLineCodes(t *testing.T) {
 		"Λειτουργία των ΜΜΜ λόγω των εορταστικών εκδηλώσεων για την Εθνική Επέτειο της 28ης Οκτωβρίου":                                nil,
 		"Τροποποίηση της γραμμής Α1 και της γραμμής Χ95":                                                                              {"Α1", "Χ95"},
 		"Τροποποίηση της γραμμής A1 (Latin A) και B12":                                                                                {"Α1", "Β12"},
+		"Τροποποίηση των γραμμών 305,319 και 326":                                                                                     {"305", "319", "326"},
 		"Τροποποίηση των γραμμών 040, 040 και 049":                                                                                    {"040", "049"},
 	}
 	for title, want := range cases {
@@ -63,6 +64,14 @@ func TestDatesAndStops(t *testing.T) {
 		if got := StopCodes(text); !reflect.DeepEqual(got, c.stops) {
 			t.Errorf("%s: StopCodes = %q, want %q", c.file, got, c.stops)
 		}
+	}
+	// The page header (author, published and updated dates) is not part of the notice.
+	if text := ArticleText(read(t, "post-112.html")); strings.Contains(text, "On 30 Οκτωβρίου") {
+		t.Errorf("ArticleText kept the header: %.200q", text)
+	}
+	// A non-breaking space (&nbsp;) between day and month is a space.
+	if from, _, ok := Dates(ArticleText([]byte("<article><p>Με στόχο την Τετάρτη 28&nbsp;Οκτωβρίου&nbsp;2026 ως εξής</p></article>"))); !ok || from != "2026-10-28" {
+		t.Errorf("nbsp date = %q %v", from, ok)
 	}
 	if _, _, ok := Dates("Ενημερώνουμε το επιβατικό κοινό ότι λόγω των εκδηλώσεων της 28ης Οκτωβρίου, ως εξής"); ok {
 		t.Error("a day without month and year must not be a date")
@@ -199,7 +208,7 @@ func TestPoller(t *testing.T) {
 		KnownLine: knownLine, KnownStop: knownStop,
 		Now: func() time.Time { return now },
 	}
-	if p.Updated() != 0 || len(p.Items()) != 0 {
+	if items, updated := p.Snapshot(); updated != 0 || len(items) != 0 {
 		t.Fatal("not empty before the first poll")
 	}
 	if err := p.Poll(context.Background()); err != nil {
@@ -238,6 +247,19 @@ func TestPoller(t *testing.T) {
 	if len(items) != 1 || !reflect.DeepEqual(items[0].Lines, []string{"oasa:046"}) {
 		t.Errorf("after 9 days: %+v", items)
 	}
+
+	// A notice that left the feed (it shows only the last 10) stays until it expires.
+	now = time.Date(2026, 10, 30, 20, 30, 0, 0, time.UTC)
+	short := strings.Replace(string(feed), "<item>", "<!--", 1)
+	short = strings.Replace(short, "</item>", "-->", 1)
+	pages[Feed] = []byte(short)
+	if err := p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Items(); len(got) != 10 || got[0].ID != "oasa:14914" {
+		t.Errorf("after the feed rolled over: %d items, first %+v", len(got), got[0])
+	}
+	pages[Feed] = feed
 
 	// One source failing keeps the other's items and the old ones.
 	now = time.Date(2026, 10, 30, 21, 0, 0, 0, time.UTC)
