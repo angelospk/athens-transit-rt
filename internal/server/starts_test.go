@@ -408,3 +408,17 @@ func TestRunStartDepartedNextRunSameShape(t *testing.T) {
 		t.Fatal("at the start: the old run's start")
 	}
 }
+
+// Two buses that left at one time cannot be told apart: neither start is said.
+func TestOnlyStart(t *testing.T) {
+	starts := []time.Time{at("10:40"), at("10:46"), at("10:46"), at("10:50")}
+	if k := onlyStart(starts, at("10:40")); k != 0 {
+		t.Fatalf("one: %d", k)
+	}
+	if k := onlyStart(starts, at("10:46")); k != -1 {
+		t.Fatalf("two at one time: %d", k)
+	}
+	if k := onlyStart(starts, at("11:00")); k != -1 {
+		t.Fatalf("none: %d", k)
+	}
+}

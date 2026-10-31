@@ -60,7 +60,7 @@ func (a *App) dailyShifts(f *gtfs.Feed, line string, results []match.Result, now
 		if !ok || key != (startKey{line, t.Shape}) || !one || di < 0 {
 			continue
 		}
-		k := slices.IndexFunc(dirs[di].starts, left.Equal)
+		k := onlyStart(dirs[di].starts, left)
 		if k < 0 {
 			continue
 		}
@@ -78,6 +78,16 @@ func (a *App) dailyShifts(f *gtfs.Feed, line string, results []match.Result, now
 		out[i] = shift
 	}
 	return out
+}
+
+// onlyStart is the index of the start at t, -1 when there is none or more than one (two buses
+// that left at one time: which run each made is not known).
+func onlyStart(starts []time.Time, t time.Time) int {
+	k := slices.IndexFunc(starts, t.Equal)
+	if k < 0 || slices.IndexFunc(starts[k+1:], t.Equal) >= 0 {
+		return -1
+	}
+	return k
 }
 
 // shiftOf is the daily shift of result i of a line's data (dailyShifts), 0 when none.
