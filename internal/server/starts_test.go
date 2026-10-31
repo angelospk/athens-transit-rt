@@ -388,3 +388,23 @@ func TestRunStartDeparted(t *testing.T) {
 		t.Fatal("unknown vehicle")
 	}
 }
+
+// Back at the start of the same shape (a loop, or the next run of one direction), the old run's
+// start is gone: the bus has not left on its new run yet. So at the end of a loop, its start.
+func TestRunStartDepartedNextRunSameShape(t *testing.T) {
+	rs := newRunStarts()
+	rs.observe(feedA, "v1", "040", 3, 50, 9000, at("10:00"))
+	rs.observe(feedA, "v1", "040", 3, 900, 9000, at("10:03"))
+	rs.observe(feedA, "v1", "040", 3, 8900, 9000, at("10:50")) // the end of the loop: its start
+	if _, _, ok := rs.departed(feedA, "v1", at("10:51")); ok {
+		t.Fatal("at the loop's end: the old run's start")
+	}
+	rs.observe(feedA, "v1", "040", 3, 900, 9000, at("10:55"))
+	if _, left, ok := rs.departed(feedA, "v1", at("10:56")); !ok || !left.Equal(at("10:50")) {
+		t.Fatalf("new run %v %v", left, ok)
+	}
+	rs.observe(feedA, "v1", "040", 3, 40, 9000, at("12:00")) // at the start again
+	if _, _, ok := rs.departed(feedA, "v1", at("12:01")); ok {
+		t.Fatal("at the start: the old run's start")
+	}
+}

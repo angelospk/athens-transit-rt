@@ -9,7 +9,7 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 ## Unreleased
 
 ### Live API
-- Bus delays against OASA's daily schedule while the GTFS is expired: a bus seen leaving on a
+- Bus delays against OASA's daily schedule while the GTFS is expired (contract rev 14): a bus seen leaving on a
   daily run is late or early against that run, not against the old GTFS trip (`/v1/lines`, stop
   boards, `/v2` Vehicles and Runs). Buses not seen leaving, or whose run is unclear, keep the GTFS
   delay; GTFS-RT and the history keep it too ([#55](https://github.com/angelospk/athens-transit-rt/issues/55)).

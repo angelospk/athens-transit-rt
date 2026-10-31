@@ -104,7 +104,7 @@ func (rs *runStarts) observe(feed *gtfs.Feed, vehicle, line string, shape int32,
 	}
 	switch {
 	case s <= startNearM:
-		st.near, st.nearEnd = t, false
+		st.near, st.nearEnd, st.left = t, false, time.Time{} // at a start: the last run is over
 	case s >= startAwayM && !st.near.IsZero() && (!st.nearEnd || s <= length/2):
 		// From the end, only a bus at the line's start again left: one turning back has the end behind.
 		if t.Sub(st.near) <= startMaxGap {
@@ -113,7 +113,7 @@ func (rs *runStarts) observe(feed *gtfs.Feed, vehicle, line string, shape int32,
 		}
 		st.near = time.Time{}
 	case length >= 2*startAwayM && s >= length-startNearM:
-		st.near, st.nearEnd = t, true
+		st.near, st.nearEnd, st.left = t, true, time.Time{}
 	case s >= startAwayM:
 		st.near = time.Time{} // turned back from the end
 	}
