@@ -114,14 +114,20 @@ func (a *App) dailyOfLine(ctx context.Context, line string, today time.Time) (te
 // dailyCached is today's daily schedule of a line only when the cache already has it (the
 // prefetch fetches it): a request never asks OASA for it, and a line without one has no rows.
 func (a *App) dailyCached(line string, today time.Time) (telematics.DailySchedule, bool) {
+	e, ok := a.dailyEntryOf(line, today)
+	return e.d, ok
+}
+
+// dailyEntryOf is today's cache entry of a line, when it has a schedule (full or partial).
+func (a *App) dailyEntryOf(line string, today time.Time) (dailyEntry, bool) {
 	day := today.Format(time.DateOnly)
 	a.dailyMu.Lock()
 	defer a.dailyMu.Unlock()
 	e, ok := a.dailyCache[line]
 	if !ok || e.day != day || !e.ok {
-		return telematics.DailySchedule{}, false
+		return dailyEntry{}, false
 	}
-	return e.d, true
+	return e, true
 }
 
 // anyDailyCached tells whether today's daily schedule of some line is cached.

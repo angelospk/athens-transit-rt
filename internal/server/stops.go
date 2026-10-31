@@ -191,9 +191,10 @@ func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
 
 // boardVehicle is one vehicle of a line's last poll, with its place.
 type boardVehicle struct {
-	line string
-	r    *match.Result
-	pos  boardPos
+	line  string
+	r     *match.Result
+	pos   boardPos
+	shift int64 // its run's shift to OASA's daily schedule (dailyShifts)
 }
 
 // stopBoard lists the buses on their way to the stop (each once, by its newest fix) and, while
@@ -254,7 +255,7 @@ func (a *App) stopRows(w *world, stop int32, lines []string, now time.Time, hori
 			if i >= len(d.board) {
 				continue
 			}
-			buses = append(buses, boardVehicle{l, r, d.board[i]})
+			buses = append(buses, boardVehicle{l, r, d.board[i], d.shiftOf(i)})
 		}
 	}
 	a.mu.RUnlock()
@@ -341,8 +342,8 @@ func liveArrival(f *gtfs.Feed, tab *segspeed.Table, stop int32, b boardVehicle, 
 	start, timetable := r.Time, (*gtfs.Trip)(nil)
 	if r.Matched() {
 		row.TripID, row.day = ptr(t.ID), r.Day
-		row.Scheduled = ptr(r.Day.Unix() + int64(f.StopTime(t, j).Arr))
-		row.DelayS = r.Delay
+		row.Scheduled = ptr(r.Day.Unix() + int64(f.StopTime(t, j).Arr) + b.shift)
+		row.DelayS = r.Delay - int(b.shift)
 		timetable = t
 		if p.waiting {
 			dep := r.Day.Add(time.Duration(f.Start(t)) * time.Second)

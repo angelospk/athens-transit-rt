@@ -2,6 +2,7 @@ package server
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +38,7 @@ type startState struct {
 	nearEnd bool      // ...put at the shape's end: a loop, whose end is its start
 	from    float64   // s of the first fix after a late route switch; zero when not in that mode
 	toEnd   float64   // metres to the shape's end at the newest fix
+	left    time.Time // when the run on key left, once counted; zero before
 }
 
 // A nil runStarts watches nothing.
@@ -95,21 +97,23 @@ func (rs *runStarts) observe(feed *gtfs.Feed, vehicle, line string, shape int32,
 		}
 		if !st.near.IsZero() && t.Sub(st.near) <= startMaxGap {
 			rs.got[k] = append(rs.got[k], st.near)
+			st.left = st.near
 		}
 		st.near, st.from = time.Time{}, 0
 		return
 	}
 	switch {
 	case s <= startNearM:
-		st.near, st.nearEnd = t, false
+		st.near, st.nearEnd, st.left = t, false, time.Time{} // at a start: the last run is over
 	case s >= startAwayM && !st.near.IsZero() && (!st.nearEnd || s <= length/2):
 		// From the end, only a bus at the line's start again left: one turning back has the end behind.
 		if t.Sub(st.near) <= startMaxGap {
 			rs.got[k] = append(rs.got[k], st.near)
+			st.left = st.near
 		}
 		st.near = time.Time{}
 	case length >= 2*startAwayM && s >= length-startNearM:
-		st.near, st.nearEnd = t, true
+		st.near, st.nearEnd = t, true // the run's end, or a loop's next start: the caller tells (departed)
 	case s >= startAwayM:
 		st.near = time.Time{} // turned back from the end
 	}
@@ -144,23 +148,41 @@ func (rs *runStarts) of(feed *gtfs.Feed, line string, shape int32, now time.Time
 	return got, rs.since
 }
 
-// markSeen sets the seen flags of the runs of one direction on day (Athens midnight), in time
-// order, from the starts of its buses (sorted): a run takes the first unused start from seenEarly
-// before to seenLate after its time. A run without one is missed once seenLate has passed, and
-// unknown before that or when it may have left before since (not watched).
-func markSeen(deps []ScheduleDeparture, day time.Time, starts []time.Time, since, now time.Time) {
+// departed returns the start of the vehicle's last run (of feed, today): its line and shape, when
+// it left, and whether the bus is now at the shape's end (there a loop's next run begins, so the
+// start is of the current run only while the bus is matched near its trip's end). Not known
+// before it left, once back at the start, after it changed shape, or on another day.
+func (rs *runStarts) departed(feed *gtfs.Feed, vehicle string, now time.Time) (key startKey, left time.Time, atEnd, ok bool) {
+	if rs == nil {
+		return
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	st := rs.veh[vehicle]
+	if rs.feed != feed || rs.day != now.In(gtfs.Athens).Format(time.DateOnly) || st == nil || st.left.IsZero() {
+		return
+	}
+	return st.key, st.left, st.nearEnd && !st.near.IsZero(), true
+}
+
+// pairStarts pairs the runs of one direction on day (Athens midnight) with the starts of its
+// buses (sorted): in time order, a run due by now takes the first unused start from seenEarly
+// before to seenLate after its time. It returns the time of each run (zero without "HH:MM") and
+// the start it took (-1: none).
+func pairStarts(deps []ScheduleDeparture, day time.Time, starts []time.Time, now time.Time) ([]time.Time, []int) {
+	times, took := make([]time.Time, len(deps)), make([]int, len(deps))
 	used := make([]bool, len(starts))
 	for i := range deps {
-		deps[i].Seen = nil
+		took[i] = -1
 		m, ok := minutesOf(deps[i].T)
 		if !ok {
 			continue
 		}
 		t := time.Date(day.Year(), day.Month(), day.Day(), 0, m, 0, 0, day.Location()) // wall clock: DST days too
+		times[i] = t
 		if t.After(now) {
 			continue
 		}
-		seen := false
 		for k, s := range starts {
 			if used[k] || s.Before(t.Add(-seenEarly)) {
 				continue
@@ -168,13 +190,47 @@ func markSeen(deps []ScheduleDeparture, day time.Time, starts []time.Time, since
 			if s.After(t.Add(seenLate)) {
 				break
 			}
-			used[k], seen = true, true
+			used[k], took[i] = true, k
 			break
 		}
+	}
+	return times, took
+}
+
+// markSeen sets the seen flags of the runs of one direction on day (Athens midnight) from the
+// starts of its buses (sorted, paired by pairStarts). A run without one is missed once seenLate
+// has passed, and unknown before that or when it may have left before since (not watched).
+func markSeen(deps []ScheduleDeparture, day time.Time, starts []time.Time, since, now time.Time) {
+	times, took := pairStarts(deps, day, starts, now)
+	for i := range deps {
+		deps[i].Seen = nil
+		t := times[i]
+		if t.IsZero() || t.After(now) {
+			continue
+		}
+		seen := took[i] >= 0
 		if seen || (!t.Add(-seenEarly).Before(since) && !now.Before(t.Add(seenLate))) {
 			deps[i].Seen = &seen
 		}
 	}
+}
+
+// plannedOf returns the time of the run that start k was paired with (pairStarts), when no run
+// without a bus that could have taken it (pairStarts' window) is nearer to it: with buses minutes
+// apart a late bus could be either run.
+func plannedOf(times []time.Time, took []int, starts []time.Time, k int) (time.Time, bool) {
+	at := starts[k]
+	run := slices.Index(took, k)
+	if run < 0 {
+		return time.Time{}, false
+	}
+	d := times[run].Sub(at).Abs()
+	for i, t := range times {
+		if took[i] < 0 && !t.IsZero() && !at.Before(t.Add(-seenEarly)) && !at.After(t.Add(seenLate)) && t.Sub(at).Abs() < d {
+			return time.Time{}, false
+		}
+	}
+	return times[run], true
 }
 
 // minutesOf reads "HH:MM" (hours past 24 for runs after midnight).

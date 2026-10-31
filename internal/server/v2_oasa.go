@@ -470,12 +470,13 @@ func (o *oasaAdapter) Run(id string, now time.Time) (*model.Run, error) {
 	}
 	line := f.Line(t)
 	var bus *match.Result
+	busShift := int64(0)
 	a.mu.RLock()
 	if d := a.lines[line]; d != nil && d.feed == f {
 		for i := range d.results {
 			r := d.results[i]
 			if r.Matched() && r.Trip == ti && r.Day.Equal(day) && now.Sub(r.Time) < staleFix && (bus == nil || r.Time.After(bus.Time)) {
-				bus = &r
+				bus, busShift = &r, d.shiftOf(i)
 			}
 		}
 	}
@@ -492,7 +493,8 @@ func (o *oasaAdapter) Run(id string, now time.Time) (*model.Run, error) {
 	// stop board: the times shift to it, and the delay against the old trip does not apply.
 	shift, delay := int64(0), int64(0)
 	if bus != nil {
-		delay = int64(bus.Delay)
+		// A bus that left on a daily run: the times move to it (dailyShifts).
+		shift, delay = busShift, int64(bus.Delay)-busShift
 		if bus.Waiting && expired(f, now) {
 			if d, ok := a.dailyCached(line, gtfs.Midnight(now)); ok {
 				pending := map[string][]dailyRun{line: dailyPending(f, line, d, now)}

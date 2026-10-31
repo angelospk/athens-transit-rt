@@ -78,6 +78,7 @@ type lineData struct {
 	results  []match.Result
 	vehicles []Vehicle
 	board    []boardPos // per result, for the stop boards
+	daily    []int64    // per result, its run's shift to OASA's daily schedule (dailyShifts); nil: none
 }
 
 type App struct {
@@ -362,6 +363,13 @@ func (a *App) onLine(p sched.LinePoll) {
 			a.hist.Add(historyRow(w, p.Line, &results[i], ver))
 		}
 	}
+	// After vehicleView: it records the departures the shifts need.
+	daily := a.dailyShifts(w.feed, p.Line, results, p.Done)
+	for i, s := range daily {
+		if s != 0 {
+			vehicles[i].DelayS = ptr(results[i].Delay - int(s))
+		}
+	}
 	a.matchMu.Unlock()
 
 	a.mu.Lock()
@@ -369,7 +377,7 @@ func (a *App) onLine(p sched.LinePoll) {
 	if p.Failed == p.Routes {
 		return // keep the previous data; nothing new is known
 	}
-	a.lines[p.Line] = &lineData{updated: p.Done, feed: w.feed, results: results, vehicles: vehicles, board: board}
+	a.lines[p.Line] = &lineData{updated: p.Done, feed: w.feed, results: results, vehicles: vehicles, board: board, daily: daily}
 	a.lastPublish, a.lastOK = p.Done, p.Done
 }
 
