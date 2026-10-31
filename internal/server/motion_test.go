@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"math"
+	"os"
 	"slices"
 	"testing"
 	"time"
@@ -158,6 +160,72 @@ func TestPickPass(t *testing.T) {
 	// Both passes plausible (long gap): ambiguous.
 	if _, ok := m.pick("v", l, cands, t0.Add(10*time.Minute)); ok {
 		t.Fatal("two plausible passes: picked one")
+	}
+}
+
+func TestPickPassAhead(t *testing.T) {
+	// Out and back on one street. 500 m along, then westbound 30 s later at 600: the heading fits
+	// only the way back (9401), out of reach in 30 s; the way out is the bus.
+	l := geo.NewPolyline([][2]float64{{0, 0}, {5000, 0}, {5000, 1}, {0, 1}})
+	m := newMotion(nil)
+	m.observe("v", l, 500, t0)
+	west := l.Candidates(600, 0, 150, 270, true)
+	if s, ok := m.pick("v", l, west, t0.Add(30*time.Second)); !ok || math.Abs(s-600) > 1 {
+		t.Fatalf("pass out of reach picked: %v %v", s, ok)
+	}
+	// A pass behind still counts: at a loop's end a new run starts at its beginning.
+	sq := geo.NewPolyline([][2]float64{{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}, {0, 0}})
+	m.observe("w", sq, 3990, t0)
+	cands := sq.Candidates(100, 0, 150, 80, true)
+	if s, ok := m.pick("w", sq, cands, t0.Add(30*time.Second)); !ok || math.Abs(s-100) > 1 {
+		t.Fatalf("new run: %v %v (cands %v)", s, ok, cands)
+	}
+	// At the terminus the heading still decides: a track put at the start by a bad heading moves
+	// to the end when the next heading fits the end.
+	m.observe("x", sq, 50, t0)
+	cands = sq.Candidates(20, 60, 150, 190, true)
+	if s, ok := m.pick("x", sq, cands, t0.Add(30*time.Second)); !ok || math.Abs(s-3940) > 1 {
+		t.Fatalf("terminus: %v %v (cands %v)", s, ok, cands)
+	}
+}
+
+// TestPickLoop309B replays bus 93859 on line 309Β (shape 5863, a loop out and back on the same
+// streets) on 2026-10-31. At the corner of the 15:28:47 fix the heading opposed its pass and fit
+// the way back, 39 km on: the board lost the bus for two minutes.
+func TestPickLoop309B(t *testing.T) {
+	raw, err := os.ReadFile("testdata/shape-309B-5863.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ll [][2]float64
+	if err := json.Unmarshal(raw, &ll); err != nil {
+		t.Fatal(err)
+	}
+	xy := make([][2]float64, len(ll))
+	for i, p := range ll {
+		xy[i] = geo.XY(p[0], p[1])
+	}
+	line := geo.NewPolyline(xy)
+	m := newMotion(nil)
+	fixes := []struct {
+		lat, lon, bearing float64
+		t                 int64
+	}{
+		{37.906998, 23.885005, 237, 1793460433},
+		{37.90535, 23.87973, 250, 1793460527},
+		{37.900678, 23.881111, 196, 1793460623},
+		{37.894216, 23.880885, 191, 1793460746},
+	}
+	prev := -1.0
+	for _, f := range fixes {
+		pos := geo.XY(f.lat, f.lon)
+		cands := line.Candidates(pos[0], pos[1], motionMaxOffM, f.bearing, true)
+		s, ok := m.pick("93859", line, cands, time.Unix(f.t, 0))
+		if !ok || s < prev || s > 5000 {
+			t.Fatalf("fix %d: s %.0f ok %v, after %.0f (cands %v)", f.t, s, ok, prev, cands)
+		}
+		m.observe("93859", line, s, time.Unix(f.t, 0))
+		prev = s
 	}
 }
 
