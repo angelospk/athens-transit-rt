@@ -134,6 +134,24 @@ func median(v []float64) float64 {
 // pick chooses which pass of the line a vehicle is on: the only one that fits its heading, or
 // the only one reachable from its last fix. ok is false when that stays ambiguous.
 func (m *motion) pick(id string, line *geo.Polyline, cands []geo.Cand, at time.Time) (float64, bool) {
+	// A pass farther ahead than the bus can have driven since its last fix is out while another
+	// is near: at a corner the heading can oppose the bus's pass and fit a later pass of a loop,
+	// kilometres on (309Β, 2026-10-31). A pass behind stays: a new run starts at the line's start.
+	if tr := m.tracks[id]; tr != nil && tr.line == line && len(tr.fixes) > 0 {
+		last := tr.fixes[len(tr.fixes)-1]
+		if t := at.Unix(); t >= last.t {
+			reach := last.s + motionMaxSpeed*float64(t-last.t) + motionSlackM
+			near := make([]geo.Cand, 0, len(cands))
+			for _, c := range cands {
+				if c.Along <= reach {
+					near = append(near, c)
+				}
+			}
+			if len(near) > 0 {
+				cands = near
+			}
+		}
+	}
 	right := make([]geo.Cand, 0, len(cands))
 	for _, c := range cands {
 		if !c.Wrong {
