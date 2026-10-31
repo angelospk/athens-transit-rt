@@ -355,6 +355,7 @@ func TestPlannedOf(t *testing.T) {
 		{"the second of two buses", []string{"10:40", "10:45"}, []time.Time{at("10:46"), at("10:47")}, at("10:50"), 1, "10:45"},
 		{"left early, its run not due yet", []string{"10:30", "10:45"}, []time.Time{at("10:43")}, at("10:44"), 0, "-"},
 		{"left early, its run now due", []string{"10:45"}, []time.Time{at("10:43")}, at("10:46"), 0, "10:45"},
+		{"late, the next run nearer but out of reach", []string{"10:00", "10:30"}, []time.Time{at("10:19")}, at("10:40"), 0, "10:00"},
 		{"no run in reach", []string{"10:00"}, []time.Time{at("10:46")}, at("10:50"), 0, "-"},
 		{"past midnight", []string{"24:10"}, []time.Time{day.Add(24*time.Hour + 12*time.Minute)}, day.Add(25 * time.Hour), 0, "00:10"},
 	}

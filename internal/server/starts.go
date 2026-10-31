@@ -216,7 +216,8 @@ func markSeen(deps []ScheduleDeparture, day time.Time, starts []time.Time, since
 }
 
 // plannedOf returns the time of the run that start k was paired with (pairStarts), when no run
-// without a bus is nearer to it: with buses minutes apart a late bus could be either run.
+// without a bus that could have taken it (pairStarts' window) is nearer to it: with buses minutes
+// apart a late bus could be either run.
 func plannedOf(times []time.Time, took []int, starts []time.Time, k int) (time.Time, bool) {
 	at := starts[k]
 	run := slices.Index(took, k)
@@ -225,7 +226,7 @@ func plannedOf(times []time.Time, took []int, starts []time.Time, k int) (time.T
 	}
 	d := times[run].Sub(at).Abs()
 	for i, t := range times {
-		if took[i] < 0 && !t.IsZero() && t.Sub(at).Abs() < d {
+		if took[i] < 0 && !t.IsZero() && !at.Before(t.Add(-seenEarly)) && !at.After(t.Add(seenLate)) && t.Sub(at).Abs() < d {
 			return time.Time{}, false
 		}
 	}
