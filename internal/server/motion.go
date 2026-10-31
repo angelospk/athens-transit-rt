@@ -137,7 +137,8 @@ func (m *motion) pick(id string, line *geo.Polyline, cands []geo.Cand, at time.T
 	// A pass farther ahead than the bus can have driven since its last fix is out while another
 	// is near: at a corner the heading can oppose the bus's pass and fit a later pass of a loop,
 	// kilometres on (309Β, 2026-10-31). A pass behind stays: a new run starts at the line's start.
-	if tr := m.tracks[id]; tr != nil && tr.line == line && len(tr.fixes) > 0 {
+	// At a loop's terminus start and end are one place: the heading decides there.
+	if tr := m.tracks[id]; tr != nil && tr.line == line && len(tr.fixes) > 0 && !atTerminus(cands, line.Length()) {
 		last := tr.fixes[len(tr.fixes)-1]
 		if t := at.Unix(); t >= last.t {
 			reach := last.s + motionMaxSpeed*float64(t-last.t) + motionSlackM

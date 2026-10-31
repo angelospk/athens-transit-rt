@@ -164,13 +164,13 @@ func TestPickPass(t *testing.T) {
 }
 
 func TestPickPassAhead(t *testing.T) {
-	// Out and back on one street. 200 m along, then westbound 30 s later at 300: the heading fits
-	// only the way back (1700), out of reach in 30 s; the way out is the bus.
-	l := geo.NewPolyline([][2]float64{{0, 0}, {1000, 0}, {1000, 1}, {0, 1}})
+	// Out and back on one street. 500 m along, then westbound 30 s later at 600: the heading fits
+	// only the way back (9401), out of reach in 30 s; the way out is the bus.
+	l := geo.NewPolyline([][2]float64{{0, 0}, {5000, 0}, {5000, 1}, {0, 1}})
 	m := newMotion(nil)
-	m.observe("v", l, 200, t0)
-	west := l.Candidates(300, 0, 150, 270, true)
-	if s, ok := m.pick("v", l, west, t0.Add(30*time.Second)); !ok || math.Abs(s-300) > 1 {
+	m.observe("v", l, 500, t0)
+	west := l.Candidates(600, 0, 150, 270, true)
+	if s, ok := m.pick("v", l, west, t0.Add(30*time.Second)); !ok || math.Abs(s-600) > 1 {
 		t.Fatalf("pass out of reach picked: %v %v", s, ok)
 	}
 	// A pass behind still counts: at a loop's end a new run starts at its beginning.
@@ -179,6 +179,13 @@ func TestPickPassAhead(t *testing.T) {
 	cands := sq.Candidates(100, 0, 150, 80, true)
 	if s, ok := m.pick("w", sq, cands, t0.Add(30*time.Second)); !ok || math.Abs(s-100) > 1 {
 		t.Fatalf("new run: %v %v (cands %v)", s, ok, cands)
+	}
+	// At the terminus the heading still decides: a track put at the start by a bad heading moves
+	// to the end when the next heading fits the end.
+	m.observe("x", sq, 50, t0)
+	cands = sq.Candidates(20, 60, 150, 190, true)
+	if s, ok := m.pick("x", sq, cands, t0.Add(30*time.Second)); !ok || math.Abs(s-3940) > 1 {
+		t.Fatalf("terminus: %v %v (cands %v)", s, ok, cands)
 	}
 }
 
