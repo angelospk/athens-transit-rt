@@ -78,6 +78,11 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
   its trip (within 100 m of it, before the scheduled departure); its `delay_s` is then a
   departure delay, not a running delay. `false` otherwise. Older responses lack the key:
   treat a missing key as `false`.
+- `delay_s` against an expired GTFS: when the bus was seen leaving its first stop on a run of
+  OASA's daily schedule that is clear (no run without a bus nearer to its departure), it is the
+  delay against that run: the trip's times move to the run's departure. Otherwise it is against
+  the matched GTFS trip. The same holds for stop boards (`delay_s`, `scheduled`) and `/v2`
+  Vehicles and Runs. GTFS-RT keeps the delay against the GTFS trip.
 - `variant` keys into `static/v1/lines/{line_id}.json` → `variants` (for shape + stops).
   It may be `null` if no static variant matches.
 - `speed` (rev 3): smoothed speed along the route in m/s, one decimal, 0..20. It is the

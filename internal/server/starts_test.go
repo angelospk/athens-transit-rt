@@ -328,3 +328,63 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// The run a bus left on: paired as the seen flags are, and only when no run without a bus is
+// nearer to its start (with buses minutes apart a late bus could be either).
+func TestPlannedOf(t *testing.T) {
+	day := at("00:00")
+	planned := func(d []ScheduleDeparture, starts []time.Time, now time.Time, k int) string {
+		times, took := pairStarts(d, day, starts, now)
+		o, ok := plannedOf(times, took, starts, k)
+		if !ok {
+			return "-"
+		}
+		return o.Format("15:04")
+	}
+	cases := []struct {
+		name   string
+		deps   []string
+		starts []time.Time
+		now    time.Time
+		k      int
+		want   string
+	}{
+		{"one run", []string{"10:45"}, []time.Time{at("10:46")}, at("10:50"), 0, "10:45"},
+		{"late, the next run nearer and free", []string{"10:40", "10:45"}, []time.Time{at("10:46")}, at("10:50"), 0, "-"},
+		{"late, the next run has its own bus", []string{"10:40", "10:45"}, []time.Time{at("10:46"), at("10:47")}, at("10:50"), 0, "10:40"},
+		{"the second of two buses", []string{"10:40", "10:45"}, []time.Time{at("10:46"), at("10:47")}, at("10:50"), 1, "10:45"},
+		{"left early, its run not due yet", []string{"10:30", "10:45"}, []time.Time{at("10:43")}, at("10:44"), 0, "-"},
+		{"left early, its run now due", []string{"10:45"}, []time.Time{at("10:43")}, at("10:46"), 0, "10:45"},
+		{"no run in reach", []string{"10:00"}, []time.Time{at("10:46")}, at("10:50"), 0, "-"},
+		{"past midnight", []string{"24:10"}, []time.Time{day.Add(24*time.Hour + 12*time.Minute)}, day.Add(25 * time.Hour), 0, "00:10"},
+	}
+	for _, c := range cases {
+		if got := planned(deps(c.deps...), c.starts, c.now, c.k); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
+// departed is the start of the vehicle's current run: it goes with a change of shape.
+func TestRunStartDeparted(t *testing.T) {
+	rs := newRunStarts()
+	rs.observe(feedA, "v1", "040", 3, 50, 9000, at("10:00"))
+	if _, _, ok := rs.departed(feedA, "v1", at("10:01")); ok {
+		t.Fatal("departed before leaving")
+	}
+	rs.observe(feedA, "v1", "040", 3, 900, 9000, at("10:03"))
+	k, left, ok := rs.departed(feedA, "v1", at("10:04"))
+	if !ok || k != (startKey{"040", 3}) || !left.Equal(at("10:00")) {
+		t.Fatalf("%v %v %v", k, left, ok)
+	}
+	if _, _, ok := rs.departed(feedB, "v1", at("10:04")); ok {
+		t.Fatal("another feed")
+	}
+	rs.observe(feedA, "v1", "040", 4, 30, 9000, at("11:00")) // back: the other direction, not left yet
+	if _, _, ok := rs.departed(feedA, "v1", at("11:01")); ok {
+		t.Fatal("still the old run's start")
+	}
+	if _, _, ok := rs.departed(feedA, "v2", at("11:01")); ok {
+		t.Fatal("unknown vehicle")
+	}
+}
