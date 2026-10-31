@@ -369,42 +369,46 @@ func TestPlannedOf(t *testing.T) {
 func TestRunStartDeparted(t *testing.T) {
 	rs := newRunStarts()
 	rs.observe(feedA, "v1", "040", 3, 50, 9000, at("10:00"))
-	if _, _, ok := rs.departed(feedA, "v1", at("10:01")); ok {
+	if _, _, _, ok := rs.departed(feedA, "v1", at("10:01")); ok {
 		t.Fatal("departed before leaving")
 	}
 	rs.observe(feedA, "v1", "040", 3, 900, 9000, at("10:03"))
-	k, left, ok := rs.departed(feedA, "v1", at("10:04"))
-	if !ok || k != (startKey{"040", 3}) || !left.Equal(at("10:00")) {
-		t.Fatalf("%v %v %v", k, left, ok)
+	k, left, atEnd, ok := rs.departed(feedA, "v1", at("10:04"))
+	if !ok || k != (startKey{"040", 3}) || !left.Equal(at("10:00")) || atEnd {
+		t.Fatalf("%v %v %v %v", k, left, atEnd, ok)
 	}
-	if _, _, ok := rs.departed(feedB, "v1", at("10:04")); ok {
+	if _, _, _, ok := rs.departed(feedB, "v1", at("10:04")); ok {
 		t.Fatal("another feed")
 	}
+	rs.observe(feedA, "v1", "040", 3, 8800, 9000, at("10:45")) // near the end: still this run's start
+	if _, left, atEnd, ok := rs.departed(feedA, "v1", at("10:46")); !ok || !atEnd || !left.Equal(at("10:00")) {
+		t.Fatalf("near the end: %v %v %v", left, atEnd, ok)
+	}
 	rs.observe(feedA, "v1", "040", 4, 30, 9000, at("11:00")) // back: the other direction, not left yet
-	if _, _, ok := rs.departed(feedA, "v1", at("11:01")); ok {
+	if _, _, _, ok := rs.departed(feedA, "v1", at("11:01")); ok {
 		t.Fatal("still the old run's start")
 	}
-	if _, _, ok := rs.departed(feedA, "v2", at("11:01")); ok {
+	if _, _, _, ok := rs.departed(feedA, "v2", at("11:01")); ok {
 		t.Fatal("unknown vehicle")
 	}
 }
 
-// Back at the start of the same shape (a loop, or the next run of one direction), the old run's
-// start is gone: the bus has not left on its new run yet. So at the end of a loop, its start.
+// Back at the start of the same shape (the next run of one direction), the old run's start is
+// gone: the bus has not left on its new run yet. At the end (a loop's start) the caller decides.
 func TestRunStartDepartedNextRunSameShape(t *testing.T) {
 	rs := newRunStarts()
 	rs.observe(feedA, "v1", "040", 3, 50, 9000, at("10:00"))
 	rs.observe(feedA, "v1", "040", 3, 900, 9000, at("10:03"))
 	rs.observe(feedA, "v1", "040", 3, 8900, 9000, at("10:50")) // the end of the loop: its start
-	if _, _, ok := rs.departed(feedA, "v1", at("10:51")); ok {
-		t.Fatal("at the loop's end: the old run's start")
+	if _, _, atEnd, ok := rs.departed(feedA, "v1", at("10:51")); !ok || !atEnd {
+		t.Fatal("at the loop's end: the caller must be told")
 	}
 	rs.observe(feedA, "v1", "040", 3, 900, 9000, at("10:55"))
-	if _, left, ok := rs.departed(feedA, "v1", at("10:56")); !ok || !left.Equal(at("10:50")) {
-		t.Fatalf("new run %v %v", left, ok)
+	if _, left, atEnd, ok := rs.departed(feedA, "v1", at("10:56")); !ok || atEnd || !left.Equal(at("10:50")) {
+		t.Fatalf("new run %v %v %v", left, atEnd, ok)
 	}
 	rs.observe(feedA, "v1", "040", 3, 40, 9000, at("12:00")) // at the start again
-	if _, _, ok := rs.departed(feedA, "v1", at("12:01")); ok {
+	if _, _, _, ok := rs.departed(feedA, "v1", at("12:01")); ok {
 		t.Fatal("at the start: the old run's start")
 	}
 }

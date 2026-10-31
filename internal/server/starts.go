@@ -113,7 +113,7 @@ func (rs *runStarts) observe(feed *gtfs.Feed, vehicle, line string, shape int32,
 		}
 		st.near = time.Time{}
 	case length >= 2*startAwayM && s >= length-startNearM:
-		st.near, st.nearEnd, st.left = t, true, time.Time{}
+		st.near, st.nearEnd = t, true // the run's end, or a loop's next start: the caller tells (departed)
 	case s >= startAwayM:
 		st.near = time.Time{} // turned back from the end
 	}
@@ -148,19 +148,21 @@ func (rs *runStarts) of(feed *gtfs.Feed, line string, shape int32, now time.Time
 	return got, rs.since
 }
 
-// departed returns the start of the vehicle's current run (of feed, today): its line and shape
-// and when it left. Not known before it left, after it changed shape, or on another day.
-func (rs *runStarts) departed(feed *gtfs.Feed, vehicle string, now time.Time) (startKey, time.Time, bool) {
+// departed returns the start of the vehicle's last run (of feed, today): its line and shape, when
+// it left, and whether the bus is now at the shape's end (there a loop's next run begins, so the
+// start is of the current run only while the bus is matched near its trip's end). Not known
+// before it left, once back at the start, after it changed shape, or on another day.
+func (rs *runStarts) departed(feed *gtfs.Feed, vehicle string, now time.Time) (key startKey, left time.Time, atEnd, ok bool) {
 	if rs == nil {
-		return startKey{}, time.Time{}, false
+		return
 	}
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	st := rs.veh[vehicle]
 	if rs.feed != feed || rs.day != now.In(gtfs.Athens).Format(time.DateOnly) || st == nil || st.left.IsZero() {
-		return startKey{}, time.Time{}, false
+		return
 	}
-	return st.key, st.left, true
+	return st.key, st.left, st.nearEnd && !st.near.IsZero(), true
 }
 
 // pairStarts pairs the runs of one direction on day (Athens midnight) with the starts of its

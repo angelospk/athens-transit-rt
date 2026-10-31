@@ -55,10 +55,10 @@ func (a *App) dailyShifts(f *gtfs.Feed, line string, results []match.Result, now
 			continue
 		}
 		t := f.Trip(r.Trip)
-		key, left, ok := a.starts.departed(f, r.VehicleID, now)
+		key, left, atEnd, ok := a.starts.departed(f, r.VehicleID, now)
 		di, one := dirOf[t.Shape]
-		if !ok || key != (startKey{line, t.Shape}) || !one || di < 0 {
-			continue
+		if !ok || key != (startKey{line, t.Shape}) || !one || di < 0 || atEnd && 2*r.NextIndex < f.NumStops(t) {
+			continue // at the end, matched to a trip barely begun: a loop's next run, not the one that left
 		}
 		k := onlyStart(dirs[di].starts, left)
 		if k < 0 {
