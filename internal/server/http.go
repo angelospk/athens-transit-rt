@@ -59,6 +59,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/rail/suburban/vehicles", a.handleSuburbanVehicles)
 	mux.HandleFunc("GET /v1/rail/suburban/trains/{no}", a.handleSuburbanTrain)
 	mux.HandleFunc("GET /v1/stats", a.handleStatsIndex)
+	mux.HandleFunc("GET /static/v1/lines.json", a.handleStaticLines)
+	mux.HandleFunc("GET /static/v1/lines/{file}", a.handleStaticLine)
 	mux.HandleFunc("GET /v1/stats/days/{date}", a.handleStatsDay)
 	a.routeV2(mux)
 	mux.Handle("/mcp", a.mcpHandler())
