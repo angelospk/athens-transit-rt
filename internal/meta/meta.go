@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -61,6 +62,7 @@ type Store struct {
 	missTries  int                  // missing-LineCode retries since the last full refresh
 	missAt     time.Time            // last missing-LineCode retry
 	stopsAsked map[string]time.Time // route code -> do not ask again before
+	allStops   bool                 // FetchAllStops: fill every route's stop list after each refresh
 	onChange   func()
 }
 
@@ -207,6 +209,35 @@ func (s *Store) Stops(routeCode string) ([]string, bool) {
 	return nil, false
 }
 
+// FetchAllStops queues the stop list of every known route that has none, now and after each
+// completed refresh. Thessaloniki needs it: a stop gets its arrival code only from a route's
+// stop list, and without this only routes with a running bus are asked (rt#86).
+func (s *Store) FetchAllStops() {
+	s.mu.Lock()
+	s.allStops = true
+	s.mu.Unlock()
+	s.fetchMissingStops()
+}
+
+// fetchMissingStops asks, through Stops, for each route without a stop list. Stops skips the
+// routes already in flight or asked recently with an empty answer.
+func (s *Store) fetchMissingStops() {
+	s.mu.Lock()
+	var codes []string
+	for _, routes := range s.data.Routes {
+		for _, r := range routes {
+			if len(s.data.Stops[r.RouteCode]) == 0 {
+				codes = append(codes, r.RouteCode)
+			}
+		}
+	}
+	s.mu.Unlock()
+	sort.Strings(codes)
+	for _, rc := range slices.Compact(codes) {
+		s.Stops(rc)
+	}
+}
+
 // Due reports whether a refresh should start: the daily full one, or a retry of LineCodes
 // that have no routes yet.
 func (s *Store) Due() bool {
@@ -341,10 +372,13 @@ func (s *Store) fetchRoutes(lineCode string, bootstrap bool, attempt int) func(c
 			s.refreshing = false
 			s.saveLocked()
 		}
-		cb := s.onChange
+		cb, all := s.onChange, s.allStops
 		s.mu.Unlock()
 		if (bootstrap || done) && cb != nil {
 			cb()
+		}
+		if done && all {
+			s.fetchMissingStops()
 		}
 		return err
 	}

@@ -219,6 +219,9 @@ func New(cfg Config, log *slog.Logger) *App {
 	a.sched = sched.New(cfg.Sched, a.pacer, a.client, a.onLine)
 	a.meta = meta.Open(filepath.Join(cfg.StateDir, "telematics-meta.json"), a.client, a.sched.Submit,
 		func() { a.refreshLines() })
+	if c.ID == "thessaloniki" {
+		a.meta.FetchAllStops() // every stop needs its OASTH arrival code (rt#86)
+	}
 	base := cfg.ReleaseURL
 	if base == "" {
 		base = release.DefaultBaseURL

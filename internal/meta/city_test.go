@@ -76,3 +76,72 @@ func TestLineAliasRenamesTelematicsLines(t *testing.T) {
 		t.Fatalf("LineIDs = %v", s.LineIDs())
 	}
 }
+
+// countingAPI is oasthAPI that counts webGetStops calls per route.
+type countingAPI struct {
+	oasthAPI
+	stops map[string]int
+}
+
+func (c *countingAPI) Stops(ctx context.Context, rc string) ([]telematics.RouteStop, error) {
+	c.stops[rc]++
+	return c.oasthAPI.Stops(ctx, rc)
+}
+
+// Thessaloniki (rt#86): every route's stop list is fetched once per refresh, not only the routes a
+// bus runs on, so every stop gets an arrival code.
+func TestFetchAllStopsAfterRefresh(t *testing.T) {
+	api, q := &countingAPI{stops: map[string]int{}}, &queue{}
+	s := Open(filepath.Join(t.TempDir(), "meta.json"), api, q.submit, nil)
+	s.FetchAllStops()
+	s.Refresh()
+	q.drain()
+	for _, rc := range []string{"r1", "r2"} {
+		if st := s.Snapshot().Stops[rc]; len(st) != 3 {
+			t.Fatalf("stops of %s = %v, want them fetched without a bus", rc, st)
+		}
+		if api.stops[rc] != 1 {
+			t.Fatalf("webGetStops(%s) called %d times, want 1", rc, api.stops[rc])
+		}
+	}
+	if got, ok := s.ArrivalCode("11048"); !ok || got != "4483" {
+		t.Fatalf("arrival code %q %v", got, ok)
+	}
+}
+
+// A restart with fresh persisted routes (no refresh due) still fills the routes that have no
+// stop list, and asks nothing for those that have one.
+func TestFetchAllStopsOnReloadAsksOnlyMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.json")
+	q := &queue{}
+	s := Open(path, oasthAPI{}, q.submit, nil)
+	s.Refresh()
+	q.drain()
+	s.Stops("r1") // a bus ran on r1 only
+	q.drain()
+
+	api, q2 := &countingAPI{stops: map[string]int{}}, &queue{}
+	s2 := Open(path, api, q2.submit, nil)
+	if s2.Due() {
+		t.Fatal("fresh meta should not be due")
+	}
+	s2.FetchAllStops()
+	q2.drain()
+	if api.stops["r1"] != 0 || api.stops["r2"] != 1 {
+		t.Fatalf("calls %v, want only r2", api.stops)
+	}
+	if _, ok := s2.Snapshot().Stops["r2"]; !ok {
+		t.Fatal("r2 stops not stored")
+	}
+}
+
+// Athens keeps the old behaviour: without FetchAllStops a refresh asks no stop lists.
+func TestNoStopsFetchedByDefault(t *testing.T) {
+	api, q := &countingAPI{stops: map[string]int{}}, &queue{}
+	s := Open(filepath.Join(t.TempDir(), "meta.json"), api, q.submit, nil)
+	s.Refresh()
+	q.drain()
+	if len(api.stops) != 0 {
+		t.Fatalf("stop lists asked: %v", api.stops)
+	}
+}
