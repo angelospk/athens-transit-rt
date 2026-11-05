@@ -109,3 +109,16 @@ func read(t *testing.T, path string, v any) {
 		t.Fatal(err)
 	}
 }
+
+func TestTextColorReadsOnRouteColor(t *testing.T) {
+	for _, c := range []struct{ bg, fg, want string }{
+		{"000080", "000080", "#ffffff"}, // OSETH: text colour = route colour
+		{"FFFF00", "ffff00", "#000000"},
+		{"000080", "FFFFFF", "#ffffff"}, // a real text colour stays
+		{"000080", "", "#ffffff"},
+	} {
+		if got := textColor(c.bg, c.fg); got != c.want {
+			t.Errorf("textColor(%q, %q) = %q, want %q", c.bg, c.fg, got, c.want)
+		}
+	}
+}

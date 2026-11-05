@@ -103,7 +103,23 @@ func LineInfo(f *gtfs.Feed, tel []telematics.Line, id string) Line {
 		kind = "trolley"
 	}
 	return Line{ID: id, Name: r.LongName, NameEn: englishName(tel, id, r.LongName),
-		Color: color(r.Color, "#1a73e8"), TextColor: color(r.TextColor, "#ffffff"), Kind: kind}
+		Color: color(r.Color, "#1a73e8"), TextColor: textColor(r.Color, r.TextColor), Kind: kind}
+}
+
+// textColor is the feed's route_text_color, unless it is the route colour itself (the OSETH feed
+// gives both as 000080): then white or black, whichever reads on the route colour.
+func textColor(bg, fg string) string {
+	if fg == "" || !strings.EqualFold(fg, bg) {
+		return color(fg, "#ffffff")
+	}
+	var r, g, b int
+	if _, err := fmt.Sscanf(strings.ToLower(bg), "%02x%02x%02x", &r, &g, &b); err != nil {
+		return "#ffffff"
+	}
+	if 299*r+587*g+114*b > 150_000 { // YIQ brightness above ~150 of 255
+		return "#000000"
+	}
+	return "#ffffff"
 }
 
 // LineFileOf is a line's lines/{id}.json.
