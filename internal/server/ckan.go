@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
@@ -14,10 +15,15 @@ import (
 	"github.com/angelospk/athens-transit-rt/internal/upstreamgtfs"
 )
 
-const (
-	ckanZipName  = "gtfs-ckan.zip"  // the feed of the slice in use
-	ckanJSONName = "gtfs-ckan.json" // the slice it came from
-)
+// ckanJSONName holds the slice in use. Its feed is gtfs-ckan-<slice id>.zip, so writing this
+// file is the commit: a crash before it leaves the old slice and its zip in use.
+const ckanJSONName = "gtfs-ckan.json"
+
+var unsafeID = regexp.MustCompile(`[^A-Za-z0-9-]`)
+
+func ckanZipPath(dir string, s upstreamgtfs.Slice) string {
+	return filepath.Join(dir, "gtfs-ckan-"+unsafeID.ReplaceAllString(s.ID, "_")+".zip")
+}
 
 // ckanURL is the CKAN package_show URL of the city's GTFS.
 func (a *App) ckanURL() string {
@@ -41,26 +47,35 @@ func (a *App) checkCKAN(ctx context.Context) error {
 	if !ok {
 		return errors.New("ckan: no GTFS slice has started yet")
 	}
-	zipPath := filepath.Join(a.cfg.StateDir, ckanZipName)
 	jsonPath := filepath.Join(a.cfg.StateDir, ckanJSONName)
 	if old, err := readCKANSlice(jsonPath); err == nil && old.ID == slice.ID && a.world() != nil {
 		return nil
 	}
-	// The new zip replaces the kept one only after it loads, so a bad file never does.
-	newPath := zipPath + ".new"
-	defer os.Remove(newPath)
-	if _, err := upstreamgtfs.Download(ctx, client, slice.URL, newPath); err != nil {
+	if err := os.MkdirAll(a.cfg.StateDir, 0o755); err != nil {
 		return err
 	}
-	f, err := gtfs.LoadZip(newPath, gtfs.LoadOptions{})
+	zipPath := ckanZipPath(a.cfg.StateDir, slice)
+	// Download validates the zip and renames it into place only then.
+	if _, err := upstreamgtfs.Download(ctx, client, slice.URL, zipPath); err != nil {
+		return err
+	}
+	f, err := gtfs.LoadZip(zipPath, gtfs.LoadOptions{})
+	if err == nil && len(f.Trips) == 0 {
+		err = errors.New("ckan: GTFS slice has no trips")
+	}
 	if err != nil {
-		return err
-	}
-	if err := os.Rename(newPath, zipPath); err != nil {
+		os.Remove(zipPath)
 		return err
 	}
 	if err := writeCKANSlice(jsonPath, slice); err != nil {
 		return err
+	}
+	// The other slices' zips are not needed any more.
+	old, _ := filepath.Glob(filepath.Join(a.cfg.StateDir, "gtfs-ckan-*.zip"))
+	for _, p := range old {
+		if p != zipPath {
+			os.Remove(p)
+		}
 	}
 	a.SetFeed(f, &release.Manifest{GTFSVersion: slice.From, GTFSExpires: slice.To})
 	a.log.Info("GTFS slice loaded", "id", slice.ID, "from", slice.From, "to", slice.To)
@@ -73,8 +88,8 @@ func (a *App) loadCKANLocal() bool {
 	if err != nil {
 		return false
 	}
-	f, err := gtfs.LoadZip(filepath.Join(a.cfg.StateDir, ckanZipName), gtfs.LoadOptions{})
-	if err != nil {
+	f, err := gtfs.LoadZip(ckanZipPath(a.cfg.StateDir, s), gtfs.LoadOptions{})
+	if err != nil || len(f.Trips) == 0 {
 		return false
 	}
 	a.SetFeed(f, &release.Manifest{GTFSVersion: s.From, GTFSExpires: s.To})

@@ -111,8 +111,54 @@ func TestThessalonikiGTFSFromCKAN(t *testing.T) {
 	if m := b.world().manifest; m == nil || m.GTFSVersion != "2026-11-05" {
 		t.Fatalf("kept file not loaded: %+v", m)
 	}
-	if _, err := os.Stat(filepath.Join(state, "gtfs-ckan.zip")); err != nil {
+	// Only the zip of the slice in use is kept.
+	if zips, _ := filepath.Glob(filepath.Join(state, "gtfs-ckan-*.zip")); len(zips) != 1 ||
+		filepath.Base(zips[0]) != "gtfs-ckan-bbb.zip" {
+		t.Fatalf("zips %v", zips)
+	}
+}
+
+// A crash after the new zip is on disk but before the slice file names it: a restart still
+// loads the old slice with its own dates.
+func TestCKANCrashBeforeCommitKeepsOldSlice(t *testing.T) {
+	good, _ := os.ReadFile(gtfstest.Zip(t, gtfstest.StraightLine{Stops: 3, Trips: 2, First: 36000, Headway: 10, Leg: 5}.Files()))
+	c := newCKANServer(t, good)
+	state := filepath.Join(t.TempDir(), "not-yet") // the state dir does not exist yet
+	ctx := context.Background()
+	if err := thessApp(t, state, c.srv.URL+"/pkg").loadInitial(ctx); err != nil {
 		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(state, "gtfs-ckan-bbb.zip"), good, 0o644) // the half-done next slice
+	b := thessApp(t, state, "http://127.0.0.1:1/pkg")
+	if err := b.loadInitial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m := b.world().manifest; m == nil || m.GTFSVersion != "2026-10-27" {
+		t.Fatalf("manifest %+v, want the committed slice", m)
+	}
+}
+
+// A zip with the required files but no trips is not a feed: it never replaces the kept one.
+func TestCKANRejectsFeedWithoutTrips(t *testing.T) {
+	files := gtfstest.StraightLine{Stops: 3, Trips: 2, First: 36000, Headway: 10, Leg: 5}.Files()
+	good, _ := os.ReadFile(gtfstest.Zip(t, files))
+	files["trips.txt"] = "route_id,service_id,trip_id,shape_id,direction_id\n"
+	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+	empty, _ := os.ReadFile(gtfstest.Zip(t, files))
+	c := newCKANServer(t, good)
+	a := thessApp(t, t.TempDir(), c.srv.URL+"/pkg")
+	ctx := context.Background()
+	if err := a.loadInitial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w := a.world()
+	c.slice.Store("bbb|05/11/2026-30/11/2026")
+	c.zip.Store(empty)
+	if err := a.checkCKAN(ctx); err == nil {
+		t.Fatal("feed without trips accepted")
+	}
+	if a.world() != w {
+		t.Fatal("feed replaced")
 	}
 }
 
