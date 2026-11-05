@@ -28,6 +28,7 @@ import (
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/meta"
 	"github.com/angelospk/athens-transit-rt/internal/municipal"
+	"github.com/angelospk/athens-transit-rt/internal/oseth"
 	"github.com/angelospk/athens-transit-rt/internal/rail"
 	"github.com/angelospk/athens-transit-rt/internal/release"
 	"github.com/angelospk/athens-transit-rt/internal/sched"
@@ -52,6 +53,7 @@ type Config struct {
 	GTFSZip       string        // load this zip instead of the release snapshot (local use)
 	GTFSCKANURL   string        // CKAN package_show URL of the city's GTFS ("" = the city's default)
 	TelematicsURL string        // "" = the city's telematics API
+	OSETHRPS      float64       // OSETH requests per second for Thessaloniki (0 = off; Athens ignores it)
 	City          string        // "athens" or "thessaloniki" ("" = athens)
 	OASTHSalt     string        // secret of the OASTH API token (Thessaloniki); never logged
 	STASYURL      string        // STASY timetable catalogue ("" = rail.DefaultSTASYCatalog)
@@ -143,6 +145,13 @@ type App struct {
 	suburban *rail.Suburban
 	trains   *rail.TrainStream // live Proastiakos positions, read only while clients ask
 
+	// Second live source of Thessaloniki (OSETH), on its own budget; nil elsewhere or when off.
+	oseth      *oseth.Client
+	osethMu    sync.Mutex
+	osethLines map[string]*osethLine // line -> its latest OSETH state
+	osethLast  map[string]time.Time  // line -> start of its last OSETH poll
+	osethRR    int                   // index of the last line picked, for the round-robin
+
 	planner    *planner     // /v2/plan: the Timetable of the service day and the plan slots
 	prefetched atomic.Value // string: the date whose daily schedules the prefetch has fetched
 
@@ -217,7 +226,14 @@ func New(cfg Config, log *slog.Logger) *App {
 		a.daily, a.dailyBg = none, none
 	}
 	a.stopArrivals = a.stopArrivalsQueued
-	a.sched = sched.New(cfg.Sched, a.pacer, a.client, a.onLine)
+	onLine := a.onLine
+	if c.OSETHURL != "" && cfg.OSETHRPS > 0 {
+		a.oseth = oseth.New(c.OSETHURL, cfg.OSETHRPS)
+		a.osethLines = map[string]*osethLine{}
+		a.osethLast = map[string]time.Time{}
+		onLine = a.onLineWithOSETH
+	}
+	a.sched = sched.New(cfg.Sched, a.pacer, a.client, onLine)
 	a.meta = meta.Open(filepath.Join(cfg.StateDir, "telematics-meta.json"), a.client, a.sched.Submit,
 		func() { a.refreshLines() })
 	base := cfg.ReleaseURL
@@ -728,6 +744,10 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	go a.sched.Run(ctx)
 	go a.housekeeping(ctx)
+	if a.oseth != nil {
+		a.log.Info("OSETH live source on", "rps", a.oseth.Pacer.BaseRPS(), "url", a.oseth.BaseURL)
+		go a.osethRun(ctx)
+	}
 	if a.rail() {
 		go a.stasy.Run(ctx)
 		go a.trains.Run(ctx)
@@ -866,7 +886,12 @@ func (a *App) logStats() {
 	a.mu.RUnlock()
 	sort.Strings(unmatched)
 	reqs := a.client.Requests()
+	osethReqs, osethErrs := int64(0), int64(0)
+	if a.oseth != nil {
+		osethReqs, osethErrs = a.oseth.Requests(), a.oseth.Errors()
+	}
 	a.log.Info("stats", "requests", reqs, "requests_last_min", reqs-a.lastRequests, "errors", a.client.Errors(),
+		"oseth_requests", osethReqs, "oseth_errors", osethErrs,
 		"watched", st.LinesByTier[sched.Watched], "dense", st.LinesByTier[sched.Dense], "other", st.LinesByTier[sched.Other],
 		"stretch_other", fmt.Sprintf("%.2f", st.Stretch[sched.Other]), "rps_now", fmt.Sprintf("%.2f", a.pacer.RPS()),
 		"vehicles", vehicles, "matched", matched, "unmatched_lines", strings.Join(unmatched, ","), "road_cells", a.roads.Cells())

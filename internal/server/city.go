@@ -21,7 +21,9 @@ type City struct {
 	// the OASA alerts poller and the municipal bus layer.
 	Rail          bool
 	TelematicsURL string // the telematics API base URL
-	GTFSCKANURL   string // CKAN package_show URL of the city's GTFS ("" = no CKAN feed)
+	// OSETHURL is the city's second live source (the OSETH website API), "" when there is none.
+	OSETHURL    string
+	GTFSCKANURL string // CKAN package_show URL of the city's GTFS ("" = no CKAN feed)
 	// GTFSStopIDs: the GTFS stop_id is the telematics StopID, not its StopCode (OASTH).
 	GTFSStopIDs bool
 }
@@ -35,6 +37,7 @@ func CityByID(id string) (City, error) {
 	case "thessaloniki":
 		return City{ID: "thessaloniki", Lat0: 40.63, TileBox: TileBox{40.3, 22.6, 41.0, 23.4},
 			TelematicsURL: "https://telematics.oasth.gr/api/", GTFSStopIDs: true,
+			OSETHURL: "https://oseth.com.gr/el/telematics-api",
 			// OSETH slices, one zip per period; the server picks the one that covers today.
 			GTFSCKANURL: "https://data.gov.gr/api/3/action/package_show?id=42c9a7da-c86c-48b1-914c-f340e8bef00d"}, nil
 	}

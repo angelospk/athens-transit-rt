@@ -111,9 +111,9 @@ func TestMergeOSETHOnlyNeedsMovementAndARoute(t *testing.T) {
 		"2629": sight("2629", 40.600, 22.950, t0.Add(-30*time.Second)),
 	}
 	cur := map[string]Sighting{
-		"1109": sight("1109", 40.602, 22.950, t0),            // moved ~220 m: real
-		"2629": sight("2629", 40.600, 22.950, t0),            // frozen: a ghost
-		"7777": sight("7777", 40.610, 22.950, t0),            // first sighting: not yet trusted
+		"1109": sight("1109", 40.602, 22.950, t0), // moved ~220 m: real
+		"2629": sight("2629", 40.600, 22.950, t0), // frozen: a ghost
+		"7777": sight("7777", 40.610, 22.950, t0), // first sighting: not yet trusted
 	}
 	other := sight("5555", 40.610, 22.950, t0)
 	other.ShapeID = "S9" // no route for this shape

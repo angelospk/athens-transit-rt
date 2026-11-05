@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/match"
+	"github.com/angelospk/athens-transit-rt/internal/oseth"
 	"github.com/angelospk/athens-transit-rt/internal/sched"
 	"github.com/angelospk/athens-transit-rt/internal/server"
 	"github.com/angelospk/athens-transit-rt/internal/telematics"
@@ -28,6 +29,7 @@ func serve(args []string) error {
 	gtfsZip := fs.String("gtfs", "", "load this GTFS zip instead of the release snapshot (local use)")
 	gtfsCKAN := fs.String("gtfs-ckan", "", "CKAN package_show URL of the GTFS (default: the city's dataset; Thessaloniki only)")
 	telURL := fs.String("telematics-url", "", "OASA telematics API base URL")
+	osethRPS := fs.Float64("oseth-rps", 1, fmt.Sprintf("OSETH (Thessaloniki) requests per second, own budget (max %d, 0 = off)", oseth.MaxRPS))
 	stasyURL := fs.String("stasy-url", "", "STASY (metro, tram) timetable catalogue (default: the Growthfund CKAN dataset)")
 	suburbanURL := fs.String("suburban-url", "", "railway.gov.gr base URL for Proastiakos boards")
 	mpassURL := fs.String("mpass-url", "", "ose.mpass.ltd API base URL (Proastiakos board fallback)")
@@ -64,6 +66,9 @@ func serve(args []string) error {
 	if *rps > telematics.MaxRPS {
 		return fmt.Errorf("--rps %.1f is above the maximum of %d", *rps, telematics.MaxRPS)
 	}
+	if *osethRPS < 0 || *osethRPS > oseth.MaxRPS {
+		return fmt.Errorf("--oseth-rps %.1f is outside 0..%d", *osethRPS, oseth.MaxRPS)
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	var histBytes int64
 	if *hist {
@@ -74,7 +79,7 @@ func serve(args []string) error {
 	}
 	server.UseCityGlobals(city)
 	app := server.New(server.Config{Listen: *listen, MetricsListen: *metricsListen, StateDir: *state, RPS: *rps, Matcher: kind,
-		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, GTFSCKANURL: *gtfsCKAN, TelematicsURL: *telURL, City: city.ID, OASTHSalt: salt, Proxy: *proxy, ReleaseCheck: *check, HistoryMaxBytes: histBytes,
+		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, GTFSCKANURL: *gtfsCKAN, TelematicsURL: *telURL, OSETHRPS: *osethRPS, City: city.ID, OASTHSalt: salt, Proxy: *proxy, ReleaseCheck: *check, HistoryMaxBytes: histBytes,
 		STASYURL: *stasyURL, SuburbanURL: *suburbanURL, MPassURL: *mpassURL,
 		Sched: sched.DefaultConfig(), HistoryKeep: time.Duration(*histDays) * 24 * time.Hour}, log)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
