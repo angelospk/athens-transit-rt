@@ -801,6 +801,9 @@ func (a *App) housekeeping(ctx context.Context) {
 			if a.meta.Due() {
 				a.meta.Refresh()
 			}
+			if a.city.ID == "thessaloniki" {
+				a.meta.FetchAllStops() // routes whose stop list failed or is still missing
+			}
 			a.warnExpiry(false)
 			a.forget()
 			a.roads.Prune(a.now().Unix())

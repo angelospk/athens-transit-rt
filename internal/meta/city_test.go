@@ -2,8 +2,10 @@ package meta
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/angelospk/athens-transit-rt/internal/telematics"
 )
@@ -143,5 +145,81 @@ func TestNoStopsFetchedByDefault(t *testing.T) {
 	q.drain()
 	if len(api.stops) != 0 {
 		t.Fatalf("stop lists asked: %v", api.stops)
+	}
+}
+
+// flakyAPI answers webGetStops from a table that tests change; a missing route errors.
+type flakyAPI struct {
+	oasthAPI
+	stops map[string][]telematics.RouteStop
+	calls map[string]int
+}
+
+func (f *flakyAPI) Stops(_ context.Context, rc string) ([]telematics.RouteStop, error) {
+	f.calls[rc]++
+	st, ok := f.stops[rc]
+	if !ok {
+		return nil, errors.New("HTTP 500")
+	}
+	return st, nil
+}
+
+// A full refresh asks every route again, so a route whose stops changed gets the new ones.
+func TestFetchAllStopsRefreshesKnownRoutes(t *testing.T) {
+	api := &flakyAPI{stops: map[string][]telematics.RouteStop{
+		"r1": {{StopCode: "1", ArrivalCode: "a1"}}, "r2": {{StopCode: "2", ArrivalCode: "a2"}}}, calls: map[string]int{}}
+	q := &queue{}
+	now := time.Unix(1_800_000_000, 0)
+	s := Open(filepath.Join(t.TempDir(), "meta.json"), api, q.submit, nil)
+	s.now = func() time.Time { return now }
+	s.FetchAllStops()
+	s.Refresh()
+	q.drain()
+	api.stops["r1"] = []telematics.RouteStop{{StopCode: "1", ArrivalCode: "a1"}, {StopCode: "3", ArrivalCode: "a3"}}
+	now = now.Add(RefreshEvery)
+	if !s.Due() {
+		t.Fatal("refresh not due after a day")
+	}
+	s.Refresh()
+	q.drain()
+	if api.calls["r1"] != 2 || api.calls["r2"] != 2 {
+		t.Fatalf("calls %v, want every route twice", api.calls)
+	}
+	if got, ok := s.ArrivalCode("3"); !ok || got != "a3" {
+		t.Fatalf("new stop of r1: %q %v", got, ok)
+	}
+}
+
+// A stop list that failed is asked again after IncompleteRetry, without waiting a day; an
+// empty one after EmptyStopsRetry. FetchAllStops is called every minute (the server does).
+func TestFetchAllStopsRetriesFailures(t *testing.T) {
+	api := &flakyAPI{stops: map[string][]telematics.RouteStop{"r2": {}}, calls: map[string]int{}}
+	q := &queue{}
+	now := time.Unix(1_800_000_000, 0)
+	s := Open(filepath.Join(t.TempDir(), "meta.json"), api, q.submit, nil)
+	s.now = func() time.Time { return now }
+	s.FetchAllStops()
+	s.Refresh()
+	q.drain() // r1 errors, r2 is empty
+	s.FetchAllStops()
+	q.drain()
+	if api.calls["r1"] != 1 || api.calls["r2"] != 1 {
+		t.Fatalf("asked again at once: %v", api.calls)
+	}
+	api.stops["r1"] = []telematics.RouteStop{{StopCode: "1", ArrivalCode: "a1"}}
+	now = now.Add(IncompleteRetry)
+	s.FetchAllStops()
+	q.drain()
+	if api.calls["r1"] != 2 || api.calls["r2"] != 1 {
+		t.Fatalf("after %v: %v", IncompleteRetry, api.calls)
+	}
+	if got, ok := s.ArrivalCode("1"); !ok || got != "a1" {
+		t.Fatalf("r1 after retry: %q %v", got, ok)
+	}
+	now = now.Add(EmptyStopsRetry)
+	s.FetchAllStops()
+	q.drain()
+	if api.calls["r1"] != 2 || api.calls["r2"] != 2 {
+		t.Fatalf("after %v: %v", EmptyStopsRetry, api.calls)
 	}
 }

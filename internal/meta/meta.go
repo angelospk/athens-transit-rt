@@ -180,61 +180,73 @@ func (s *Store) Stops(routeCode string) ([]string, bool) {
 	if st := s.data.Stops[routeCode]; len(st) > 0 {
 		return st, true
 	}
-	if !s.now().Before(s.stopsAsked[routeCode]) {
-		s.stopsAsked[routeCode] = time.Unix(1<<40, 0) // in flight
-		s.submit(func(ctx context.Context) error {
-			stops, err := s.api.Stops(ctx, routeCode)
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			if err != nil {
-				delete(s.stopsAsked, routeCode) // retry on a later call
-				return err
-			}
-			if len(stops) == 0 {
-				s.stopsAsked[routeCode] = s.now().Add(EmptyStopsRetry)
-				return nil
-			}
-			codes := make([]string, len(stops))
-			for i, st := range stops {
-				codes[i] = st.StopCode
-				if st.ArrivalCode != "" {
-					s.data.ArrivalCodes[st.StopCode] = st.ArrivalCode
-				}
-			}
-			s.data.Stops[routeCode] = codes
-			s.saveLocked()
-			return nil
-		})
-	}
+	s.askStopsLocked(routeCode)
 	return nil, false
 }
 
-// FetchAllStops queues the stop list of every known route that has none, now and after each
-// completed refresh. Thessaloniki needs it: a stop gets its arrival code only from a route's
-// stop list, and without this only routes with a running bus are asked (rt#86).
-func (s *Store) FetchAllStops() {
-	s.mu.Lock()
-	s.allStops = true
-	s.mu.Unlock()
-	s.fetchMissingStops()
+// askStopsLocked queues a webGetStops for the route, unless one is in flight or a recent
+// answer was empty (or, with FetchAllStops, failed). A failed or empty answer keeps the old list.
+func (s *Store) askStopsLocked(routeCode string) {
+	if s.now().Before(s.stopsAsked[routeCode]) {
+		return
+	}
+	s.stopsAsked[routeCode] = time.Unix(1<<40, 0) // in flight
+	s.submit(func(ctx context.Context) error {
+		stops, err := s.api.Stops(ctx, routeCode)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if err != nil {
+			if s.allStops {
+				s.stopsAsked[routeCode] = s.now().Add(IncompleteRetry) // the minute scan retries it
+			} else {
+				delete(s.stopsAsked, routeCode) // retry on a later call
+			}
+			return err
+		}
+		if len(stops) == 0 {
+			s.stopsAsked[routeCode] = s.now().Add(EmptyStopsRetry)
+			return nil
+		}
+		delete(s.stopsAsked, routeCode)
+		codes := make([]string, len(stops))
+		for i, st := range stops {
+			codes[i] = st.StopCode
+			if st.ArrivalCode != "" {
+				s.data.ArrivalCodes[st.StopCode] = st.ArrivalCode
+			}
+		}
+		s.data.Stops[routeCode] = codes
+		s.saveLocked()
+		return nil
+	})
 }
 
-// fetchMissingStops asks, through Stops, for each route without a stop list. Stops skips the
-// routes already in flight or asked recently with an empty answer.
-func (s *Store) fetchMissingStops() {
+// FetchAllStops turns on Thessaloniki's stop lists (rt#86): a stop gets its arrival code only
+// from a route's stop list, and otherwise only routes with a running bus are asked. Each call
+// asks the routes that have no list yet (call it every minute: failures and empty answers
+// wait for their retry time); each completed full refresh asks every route again.
+func (s *Store) FetchAllStops() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allStops = true
+	if !s.fullDueLocked() || len(s.data.Routes) == 0 {
+		s.askRoutesLocked(false) // a due refresh asks them all when it completes
+	}
+}
+
+// askRoutesLocked asks the stop list of every known route, or only of those without one.
+func (s *Store) askRoutesLocked(known bool) {
 	var codes []string
 	for _, routes := range s.data.Routes {
 		for _, r := range routes {
-			if len(s.data.Stops[r.RouteCode]) == 0 {
+			if known || len(s.data.Stops[r.RouteCode]) == 0 {
 				codes = append(codes, r.RouteCode)
 			}
 		}
 	}
-	s.mu.Unlock()
 	sort.Strings(codes)
 	for _, rc := range slices.Compact(codes) {
-		s.Stops(rc)
+		s.askStopsLocked(rc)
 	}
 }
 
@@ -372,13 +384,13 @@ func (s *Store) fetchRoutes(lineCode string, bootstrap bool, attempt int) func(c
 			s.refreshing = false
 			s.saveLocked()
 		}
-		cb, all := s.onChange, s.allStops
+		if done && s.allStops {
+			s.askRoutesLocked(!s.partial)
+		}
+		cb := s.onChange
 		s.mu.Unlock()
 		if (bootstrap || done) && cb != nil {
 			cb()
-		}
-		if done && all {
-			s.fetchMissingStops()
 		}
 		return err
 	}
