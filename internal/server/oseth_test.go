@@ -141,3 +141,21 @@ func TestOSETHPickWatchedOldestFirst(t *testing.T) {
 		t.Fatalf("after the interval: %q %v, want A", line, ok)
 	}
 }
+
+func TestOSETHFreshFilters(t *testing.T) {
+	now := monday1020
+	s := map[string]oseth.Sighting{
+		"1": {Vehicle: oseth.Vehicle{ID: "1"}, At: now.Add(-10 * time.Second)},
+		"2": {Vehicle: oseth.Vehicle{ID: "2"}, At: now.Add(-osethFresh - time.Second)}, // a slow poll's first answer
+	}
+	if got := freshSightings(s, now); len(got) != 1 || got["1"].ID != "1" {
+		t.Fatalf("freshSightings = %+v", got)
+	}
+	obs := []match.Obs{
+		{Vehicle: telematics.Vehicle{VehNo: "a", Time: now.Add(-time.Minute)}},
+		{Vehicle: telematics.Vehicle{VehNo: "b", Time: now.Add(-6 * time.Minute)}}, // expired: never republished
+	}
+	if got := freshObs(obs, now, 5*time.Minute); len(got) != 1 || got[0].VehNo != "a" {
+		t.Fatalf("freshObs = %+v", got)
+	}
+}

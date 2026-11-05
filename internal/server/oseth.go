@@ -38,6 +38,11 @@ func (a *App) onLineWithOSETH(p sched.LinePoll) {
 		a.onLine(p)
 		return
 	}
+	// One publication at a time: the OSETH path merges into the newest OASTH observations, and
+	// neither path publishes a snapshot older than the other's.
+	a.osethPub.Lock()
+	defer a.osethPub.Unlock()
+	now := a.now()
 	a.osethMu.Lock()
 	l := a.osethLines[p.Line]
 	if l == nil {
@@ -45,15 +50,42 @@ func (a *App) onLineWithOSETH(p sched.LinePoll) {
 		a.osethLines[p.Line] = l
 	}
 	l.oasth = slices.Clone(p.Obs)
-	cur, prev, at := l.cur, l.prev, l.at
+	var cur map[string]oseth.Sighting
+	if now.Sub(l.at) <= osethFresh {
+		cur = freshSightings(l.cur, now)
+	}
+	prev := l.prev
 	a.osethMu.Unlock()
 	// Merged here too, so the OSETH-only buses do not vanish at each OASTH poll.
-	if cur != nil && a.now().Sub(at) <= osethFresh {
+	if len(cur) > 0 {
 		if w := a.world(); w != nil {
 			p.Obs = oseth.Merge(p.Obs, cur, prev, a.osethRouteFor(w, p.Line), osethMinMove)
 		}
 	}
 	a.onLine(p)
+}
+
+// freshSightings keeps the sightings fetched in the last osethFresh: a slow poll of many shapes
+// must not publish its first answers as new.
+func freshSightings(m map[string]oseth.Sighting, now time.Time) map[string]oseth.Sighting {
+	out := make(map[string]oseth.Sighting, len(m))
+	for id, s := range m {
+		if now.Sub(s.At) <= osethFresh {
+			out[id] = s
+		}
+	}
+	return out
+}
+
+// freshObs drops the cached OASTH observations the scheduler would no longer accept.
+func freshObs(obs []match.Obs, now time.Time, staleAfter time.Duration) []match.Obs {
+	out := make([]match.Obs, 0, len(obs))
+	for _, o := range obs {
+		if now.Sub(o.Time) <= staleAfter {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // osethRun polls the watched lines for OSETH sightings until ctx ends.
@@ -138,6 +170,8 @@ func (a *App) osethPollLine(ctx context.Context, line string) {
 	if failed == len(pairs) {
 		return // the source is down: keep the previous state
 	}
+	a.osethPub.Lock()
+	defer a.osethPub.Unlock()
 	done := a.now()
 	a.osethMu.Lock()
 	l := a.osethLines[line]
@@ -145,13 +179,14 @@ func (a *App) osethPollLine(ctx context.Context, line string) {
 		l = &osethLine{}
 		a.osethLines[line] = l
 	}
-	prev, oasth := l.cur, l.oasth
+	prev := l.cur
 	if done.Sub(l.at) > osethPrevMax {
 		prev = nil // a bus parked since then would look like it moved
 	}
 	l.prev, l.cur, l.at = prev, cur, done
+	oasth := freshObs(l.oasth, done, a.cfg.Sched.StaleAfter)
 	a.osethMu.Unlock()
-	obs := oseth.Merge(oasth, cur, prev, a.osethRouteFor(w, line), osethMinMove)
+	obs := oseth.Merge(oasth, freshSightings(cur, done), prev, a.osethRouteFor(w, line), osethMinMove)
 	a.onLine(sched.LinePoll{Line: line, Obs: obs, Started: done, Done: done, Routes: 1})
 }
 

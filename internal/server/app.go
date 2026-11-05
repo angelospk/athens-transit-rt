@@ -147,7 +147,8 @@ type App struct {
 
 	// Second live source of Thessaloniki (OSETH), on its own budget; nil elsewhere or when off.
 	oseth      *oseth.Client
-	osethMu    sync.Mutex
+	osethMu    sync.Mutex            // guards the OSETH state below
+	osethPub   sync.Mutex            // one OSETH-aware publication at a time
 	osethLines map[string]*osethLine // line -> its latest OSETH state
 	osethLast  map[string]time.Time  // line -> start of its last OSETH poll
 	osethRR    int                   // index of the last line picked, for the round-robin
