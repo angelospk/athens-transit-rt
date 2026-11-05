@@ -128,7 +128,9 @@ func TestCKANCrashBeforeCommitKeepsOldSlice(t *testing.T) {
 	if err := thessApp(t, state, c.srv.URL+"/pkg").loadInitial(ctx); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(state, "gtfs-ckan-bbb.zip"), good, 0o644) // the half-done next slice
+	if err := os.WriteFile(filepath.Join(state, "gtfs-ckan-bbb.zip"), good, 0o644); err != nil { // the half-done next slice
+		t.Fatal(err)
+	}
 	b := thessApp(t, state, "http://127.0.0.1:1/pkg")
 	if err := b.loadInitial(ctx); err != nil {
 		t.Fatal(err)
