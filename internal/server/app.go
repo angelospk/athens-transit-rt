@@ -50,6 +50,7 @@ type Config struct {
 	Matcher       match.Kind
 	ReleaseURL    string        // snapshot release base URL ("" = release.DefaultBaseURL)
 	GTFSZip       string        // load this zip instead of the release snapshot (local use)
+	GTFSCKANURL   string        // CKAN package_show URL of the city's GTFS ("" = the city's default)
 	TelematicsURL string        // "" = the city's telematics API
 	City          string        // "athens" or "thessaloniki" ("" = athens)
 	OASTHSalt     string        // secret of the OASTH API token (Thessaloniki); never logged
@@ -759,6 +760,22 @@ func (a *App) loadInitial(ctx context.Context) error {
 		a.SetFeed(f, nil)
 		return nil
 	}
+	if a.ckanMode() {
+		a.loadCKANLocal()
+		for a.world() == nil {
+			err := a.checkCKAN(ctx)
+			if a.world() != nil {
+				break
+			}
+			a.log.Warn("waiting for a GTFS slice", "err", err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Minute):
+			}
+		}
+		return nil
+	}
 	if f, m, err := a.fetch.LoadLocal(); err != nil {
 		a.log.Warn("local snapshot unusable", "err", err)
 	} else if f != nil {
@@ -804,6 +821,12 @@ func (a *App) housekeeping(ctx context.Context) {
 			a.logStats()
 		case <-release.C:
 			if a.cfg.GTFSZip != "" {
+				continue
+			}
+			if a.ckanMode() {
+				if err := a.checkCKAN(ctx); err != nil {
+					a.log.Warn("GTFS slice check failed", "err", err)
+				}
 				continue
 			}
 			f, m, err := a.fetch.Check(ctx)

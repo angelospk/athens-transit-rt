@@ -26,6 +26,7 @@ func serve(args []string) error {
 	matcher := fs.String("matcher", "memory", "trip matcher: memory, hungarian or greedy")
 	releaseURL := fs.String("release-url", "", "snapshot release base URL (default: this repo's gtfs-snapshot release)")
 	gtfsZip := fs.String("gtfs", "", "load this GTFS zip instead of the release snapshot (local use)")
+	gtfsCKAN := fs.String("gtfs-ckan", "", "CKAN package_show URL of the GTFS (default: the city's dataset; Thessaloniki only)")
 	telURL := fs.String("telematics-url", "", "OASA telematics API base URL")
 	stasyURL := fs.String("stasy-url", "", "STASY (metro, tram) timetable catalogue (default: the Growthfund CKAN dataset)")
 	suburbanURL := fs.String("suburban-url", "", "railway.gov.gr base URL for Proastiakos boards")
@@ -47,9 +48,6 @@ func serve(args []string) error {
 		// The API token's salt is a secret, so it comes from the environment, not a flag.
 		if salt = os.Getenv("OASTH_TOKEN_SALT"); salt == "" {
 			return fmt.Errorf("thessaloniki needs OASTH_TOKEN_SALT")
-		}
-		if *gtfsZip == "" {
-			return fmt.Errorf("thessaloniki has no snapshot release yet: pass --gtfs <OSETH GTFS zip>")
 		}
 	}
 
@@ -76,7 +74,7 @@ func serve(args []string) error {
 	}
 	server.UseCityGlobals(city)
 	app := server.New(server.Config{Listen: *listen, MetricsListen: *metricsListen, StateDir: *state, RPS: *rps, Matcher: kind,
-		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, TelematicsURL: *telURL, City: city.ID, OASTHSalt: salt, Proxy: *proxy, ReleaseCheck: *check, HistoryMaxBytes: histBytes,
+		ReleaseURL: *releaseURL, GTFSZip: *gtfsZip, GTFSCKANURL: *gtfsCKAN, TelematicsURL: *telURL, City: city.ID, OASTHSalt: salt, Proxy: *proxy, ReleaseCheck: *check, HistoryMaxBytes: histBytes,
 		STASYURL: *stasyURL, SuburbanURL: *suburbanURL, MPassURL: *mpassURL,
 		Sched: sched.DefaultConfig(), HistoryKeep: time.Duration(*histDays) * 24 * time.Hour}, log)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
