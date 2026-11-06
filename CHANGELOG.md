@@ -82,6 +82,12 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   and `latest.json` of the `stats` branch the same way; the earlier day files stay there
   ([#32](https://github.com/angelospk/athens-transit-rt/issues/32)).
 
+### Rail
+- An expired STASY timetable no longer borrows a holiday: the stand-in day is a typical day of
+  the same weekday (trip count within 5% of that weekday's median), not simply the feed's last
+  week. Wednesdays after 31/10/2026 read the 28/10 holiday timetable (1172 trips against 1661)
+  ([#97](https://github.com/angelospk/athens-transit-rt/issues/97)).
+
 ## v0.2.0 (2026-10-30)
 
 ### Live API
