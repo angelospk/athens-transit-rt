@@ -220,7 +220,7 @@ func TestStopArrivalsAroundMidnight(t *testing.T) {
 	c := athensClock(time.Now().Unix())
 	r := m.Routes["10"]
 	r.Trips = []Trip{{ID: "t1", Day: (c.Day + 1) % 7, Times: []int{600, 720, 840, 960, NoTime}}} // 00:10 tomorrow at A
-	now := c.Midnight + 86400 - 600                                                                 // 23:50 today
+	now := c.Midnight + 86400 - 600                                                              // 23:50 today
 	a := stopArrivals(m, "B", nil, now)
 	if len(a) != 1 || a[0].At-now != 600+720 {
 		t.Fatalf("tomorrow: %+v", a)
