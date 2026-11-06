@@ -77,6 +77,9 @@ type STASY struct {
 	services   []stasyService
 	serviceIdx map[string]int32
 	start, end int32 // yyyymmdd of the timetable's validity, 0 when unknown
+	// typical lists, per weekday (time.Weekday), the dates of the feed whose trip count is
+	// typical for that weekday, ascending: an expired feed borrows one of them, never a holiday.
+	typical [7][]int32
 }
 
 type stasyTrip struct {
@@ -203,13 +206,20 @@ func (s *STASY) color(route int32) string {
 var stasyColors = map[string]string{"M1": "#00a651", "M2": "#e30613", "M3": "#0072bc",
 	"T6": "#f39200", "T7": "#f39200"}
 
-// timetableDate returns the date whose timetable to read: the day itself, or the same weekday
-// whole weeks inside the feed when the day is outside its validity (STASY lets the feed expire
-// before publishing the next). indicative reports the substitution.
+// timetableDate returns the date whose timetable to read: the day itself, or a typical day of the
+// same weekday inside the feed when the day is outside its validity (STASY lets the feed expire
+// before publishing the next): the latest one after the feed, the earliest one before it.
+// indicative reports the substitution.
 func (s *STASY) timetableDate(day time.Time) (int32, bool) {
 	date := yyyymmdd(day)
 	if s.start == 0 || s.end == 0 || (s.start <= date && date <= s.end) {
 		return date, false
+	}
+	if days := s.typical[day.In(gtfs.Athens).Weekday()]; len(days) > 0 {
+		if date > s.end {
+			return days[len(days)-1], true
+		}
+		return days[0], true
 	}
 	d := day
 	for yyyymmdd(d) > s.end {
@@ -418,7 +428,55 @@ func ParseSTASY(dir string) (*STASY, error) {
 			s.extend(v.start, v.end)
 		}
 	}
+	s.typical = s.typicalDates()
 	return s, nil
+}
+
+// typicalDates finds, per weekday, the dates of the feed that run a usual timetable: their trip
+// count is within 5% of the median count of that weekday. A holiday (28/10/2026: 1172 trips
+// against 1661 on the other Wednesdays) or a day with extra trains falls outside.
+func (s *STASY) typicalDates() (out [7][]int32) {
+	if s.start == 0 || s.end == 0 {
+		return out
+	}
+	perService := make([]int, len(s.services))
+	for _, tr := range s.trips {
+		perService[tr.Service]++
+	}
+	type dayCount struct {
+		date int32
+		n    int
+	}
+	var byWeekday [7][]dayCount
+	d := time.Date(int(s.start/10000), time.Month(s.start/100%100), int(s.start%100), 12, 0, 0, 0, gtfs.Athens)
+	for ; yyyymmdd(d) <= s.end; d = d.AddDate(0, 0, 1) {
+		date, n := yyyymmdd(d), 0
+		for svc := range s.services {
+			if s.active(int32(svc), date) {
+				n += perService[svc]
+			}
+		}
+		if n > 0 {
+			byWeekday[d.Weekday()] = append(byWeekday[d.Weekday()], dayCount{date, n})
+		}
+	}
+	for wd, days := range byWeekday {
+		if len(days) == 0 {
+			continue
+		}
+		counts := make([]int, len(days))
+		for i, dc := range days {
+			counts[i] = dc.n
+		}
+		sort.Ints(counts)
+		median := counts[len(counts)/2]
+		for _, dc := range days {
+			if diff := dc.n - median; diff*20 <= median && -diff*20 <= median {
+				out[wd] = append(out[wd], dc.date)
+			}
+		}
+	}
+	return out
 }
 
 func (s *STASY) extend(start, end int32) {

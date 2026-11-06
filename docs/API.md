@@ -343,8 +343,8 @@ STASY GTFS (metro M1-M3, tram T6/T7) at start and checks it once a day.
 - `in_s` is the seconds from now to the departure.
 - `headsign` is the feed's `trip_headsign`, or the last stop of the trip when the feed leaves it
   empty (it leaves most of them empty).
-- `indicative: true` when the STASY timetable has expired and the same weekday inside it was
-  used instead: show those times as indicative.
+- `indicative: true` when the STASY timetable has expired and a typical day of the same weekday
+  inside it was used instead (never a holiday of the feed): show those times as indicative.
 - `503 {"error":"warming_up"}` until the first load finishes, `404 {"error":"unknown_stop"}`,
   `400 {"error":"missing_stop"}`. Cached 30 s.
 
