@@ -142,9 +142,9 @@ func buildModel(raw *RawCity) *Model {
 			if len(seq) < 2 {
 				continue
 			}
-			// No shape: the straight line through the stops.
+			// No shape (or one point): the straight line through the stops.
 			shape := shapes[r.Code]
-			if len(shape) == 0 {
+			if len(shape) < 2 {
 				shape = make([]LL, 0, len(seq))
 				for _, c := range seq {
 					s := stops[c]

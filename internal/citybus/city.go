@@ -18,6 +18,9 @@ import (
 // maxInflight: stop boards waiting for an answer at once, per city.
 const maxInflight = 3
 
+// hotEvery: a watched line's board takes at most one read in this many.
+const hotEvery = 4
+
 // Conf is one citybus.gr site.
 type Conf struct {
 	ID     string `json:"id"`     // the path prefix and the id namespace: /heraklion/..., heraklion:1235
@@ -71,8 +74,10 @@ type City struct {
 	Conf Conf
 	up   fetcher
 	dir  string
-	log  *slog.Logger
-	now  func() time.Time
+	// boards: stop boards waiting for an answer, from every path (rotation, checks, users).
+	boards chan struct{}
+	log    *slog.Logger
+	now    func() time.Time
 
 	loadMu sync.Mutex // one static load at a time
 
@@ -86,6 +91,8 @@ type City struct {
 	skipped     map[string]bool     // lines with no live bus for Days
 	watched     map[string]int64    // line -> watched until (unix s)
 	hotAsked    map[string]int64    // stop -> last read for a watched line (unix s)
+	userAsked   map[string]int64    // stop -> last user read of its board, failed or not (unix s)
+	svc         context.Context     // the service: user reads run on it, not on the request
 	lastCycle   cycleStats
 	healthSaved int64
 	checkRound  int
@@ -97,7 +104,8 @@ func newCity(conf Conf, up fetcher, stateDir string, log *slog.Logger) (*City, e
 		return nil, err
 	}
 	c := &City{Conf: conf, up: up, dir: dir, log: log.With("city", conf.ID), now: time.Now,
-		checkProbes: map[string][]string{}, skipped: map[string]bool{}, watched: map[string]int64{}, hotAsked: map[string]int64{}}
+		checkProbes: map[string][]string{}, skipped: map[string]bool{}, watched: map[string]int64{}, hotAsked: map[string]int64{}, userAsked: map[string]int64{},
+		svc: context.Background(), boards: make(chan struct{}, maxInflight)}
 	c.health = loadHealth(filepath.Join(dir, "health.json"), c.unix())
 	return c, nil
 }
@@ -326,7 +334,13 @@ type liveAnswer struct {
 
 // board reads one stop board from citybus.gr into the live state.
 func (c *City) board(ctx context.Context, stop string, pri Priority) (Board, error) {
+	select {
+	case c.boards <- struct{}{}:
+	case <-ctx.Done():
+		return Board{}, ctx.Err()
+	}
 	res, err := getJSON[liveAnswer](ctx, c, c.base()+"/stops/live/"+url.PathEscape(stop), pri)
+	<-c.boards
 	if err != nil {
 		return Board{}, err
 	}
@@ -365,6 +379,9 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 // maxInflight boards wait for an answer at once: the city's pacer sets the pace, so a slow answer
 // does not stretch the cycle.
 func (c *City) rotate(ctx context.Context) {
+	c.mu.Lock()
+	c.svc = ctx
+	c.mu.Unlock()
 	// The first load may fail (citybus.gr down): try again, 1 min apart, until it works.
 	for ctx.Err() == nil {
 		if err := c.loadStatic(ctx, false, priWatched); err == nil {
@@ -384,6 +401,7 @@ func (c *City) rotate(ctx context.Context) {
 		reloading atomic.Bool
 		retryAt   atomic.Int64 // unix s: no daily reload before this (after a failed one)
 		i         int
+		sinceHot  = hotEvery // reads since the last watched one
 		cyMu      sync.Mutex
 		cycle     = &cycleStats{Started: float64(c.now().UnixMilli()) / 1000}
 	)
@@ -436,7 +454,12 @@ func (c *City) rotate(ctx context.Context) {
 				}
 			}()
 		}
-		hot := c.watchedProbe(now)
+		// Watched lines take at most one read in hotEvery, so the rotation (and with it every other
+		// line) never starves however many lines users watch.
+		hot := ""
+		if sinceHot >= hotEvery-1 {
+			hot = c.watchedProbe(now)
+		}
 		c.mu.Lock()
 		probes := c.probes
 		nChecks := len(c.checkProbes)
@@ -469,8 +492,10 @@ func (c *City) rotate(ctx context.Context) {
 			break
 		}
 		if hot != "" {
+			sinceHot = 0
 			read(hot, priWatched, false)
 		} else {
+			sinceHot++
 			read(probes[i%len(probes)], priBackground, true)
 			i = (i + 1) % len(probes)
 			// A full cycle ran: look again at which lines are live, and check each timetable-only
@@ -563,8 +588,10 @@ func (c *City) watchedProbe(now int64) string {
 func (c *City) watchLocked(line string) { c.watched[line] = c.unix() + 600 }
 
 // freshBoard: a stop board from the cache when under 15 s old, else one request at user
-// priority; after 8 s the cached one (or none).
-func (c *City) freshBoard(ctx context.Context, code string) *Board {
+// priority; after 8 s the cached one (or none). A stop is asked at most once per 15 s, failed or
+// not. The request runs on the service context (bounded to 20 s), not on the user's request: other
+// callers may share its answer.
+func (c *City) freshBoard(code string) *Board {
 	c.mu.Lock()
 	var cached *Board
 	if c.live != nil {
@@ -572,14 +599,19 @@ func (c *City) freshBoard(ctx context.Context, code string) *Board {
 			cached = &b
 		}
 	}
-	c.mu.Unlock()
-	if cached != nil && c.unix()-cached.At < 15 {
+	now := c.unix()
+	if (cached != nil && now-cached.At < 15) || now-c.userAsked[code] < 15 {
+		c.mu.Unlock()
 		return cached
 	}
+	c.userAsked[code] = now
+	svc := c.svc
+	c.mu.Unlock()
 	ch := make(chan *Board, 1)
 	go func() {
-		// Not cut short by the user's request: other callers may share this answer.
-		b, err := c.board(context.WithoutCancel(ctx), code, priUser)
+		ctx, cancel := context.WithTimeout(svc, 20*time.Second)
+		defer cancel()
+		b, err := c.board(ctx, code, priUser)
 		if err != nil {
 			ch <- nil
 			return

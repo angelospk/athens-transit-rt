@@ -1,7 +1,6 @@
 package citybus
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -274,14 +273,17 @@ func (c *City) hasStop(code string) bool {
 	return c.model.Stops[code] != nil
 }
 
-func (c *City) v1StopBoard(ctx context.Context, code string) obj {
+func (c *City) v1StopBoard(code string) obj {
 	if !c.hasStop(code) {
 		return nil
 	}
-	b := c.freshBoard(ctx, code)
+	b := c.freshBoard(code)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s, now := c.model.Stops[code], c.unix()
+	if s == nil { // a daily reload took the stop out while the board was read
+		return nil
+	}
 	arr := []obj{}
 	for _, a := range stopArrivals(c.model, code, b, now) {
 		src := "schedule"
@@ -300,14 +302,17 @@ func (c *City) v1StopBoard(ctx context.Context, code string) obj {
 		"updated_at": now, "arrivals": arr}
 }
 
-func (c *City) v2StopBoard(ctx context.Context, id string) obj {
+func (c *City) v2StopBoard(id string) obj {
 	code := c.unNs(id)
 	if !c.hasStop(code) {
 		return nil
 	}
-	b := c.freshBoard(ctx, code)
+	b := c.freshBoard(code)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.model.Stops[code] == nil { // a daily reload took the stop out while the board was read
+		return nil
+	}
 	now := c.unix()
 	date := athensClock(now).Date
 	lines := []obj{}

@@ -142,15 +142,20 @@ type call struct {
 	err  error
 }
 
-func (f *flight) do(key string, fn func() ([]byte, error)) ([]byte, error) {
+// A waiter that gives up returns its ctx error; the call itself runs on with the first caller's ctx.
+func (f *flight) do(ctx context.Context, key string, fn func() ([]byte, error)) ([]byte, error) {
 	f.mu.Lock()
 	if f.m == nil {
 		f.m = map[string]*call{}
 	}
 	if c, ok := f.m[key]; ok {
 		f.mu.Unlock()
-		<-c.done
-		return c.body, c.err
+		select {
+		case <-c.done:
+			return c.body, c.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	c := &call{done: make(chan struct{})}
 	f.m[key] = c
@@ -237,7 +242,7 @@ func (c *client) getToken(ctx context.Context) (string, error) {
 		return t, nil
 	}
 	c.tokMu.Unlock()
-	b, err := c.tokLoad.do("token", func() ([]byte, error) {
+	b, err := c.tokLoad.do(ctx, "token", func() ([]byte, error) {
 		// Another caller may have read it while this one waited.
 		c.tokMu.Lock()
 		if c.token != "" && time.Now().Before(c.tokUntil) {
@@ -298,7 +303,7 @@ func (c *client) do(ctx context.Context, u, token string) ([]byte, int, error) {
 }
 
 func (c *client) get(ctx context.Context, path string, pri Priority) ([]byte, error) {
-	b, err := c.paths.do(path, func() ([]byte, error) { return c.fetch(ctx, path, pri, false) })
+	b, err := c.paths.do(ctx, path, func() ([]byte, error) { return c.fetch(ctx, path, pri, false) })
 	if errors.Is(err, errNotFound) {
 		return nil, nil
 	}

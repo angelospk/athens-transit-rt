@@ -648,3 +648,125 @@ func TestHTTPRunAndSchedule(t *testing.T) {
 		t.Fatalf("schedule %v", d0)
 	}
 }
+
+// ---- review round 1 (Codex) ----
+
+func TestBoardsInFlightAreLimitedAcrossAllPaths(t *testing.T) {
+	var inflight, most atomic.Int32
+	f := &fake{answers: answersOf(linesRaw("1", "2"))}
+	f.hook = func(path string) (any, bool, error) {
+		if !strings.Contains(path, "/stops/live/") {
+			return nil, false, nil
+		}
+		n := inflight.Add(1)
+		for {
+			m := most.Load()
+			if n <= m || most.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+		inflight.Add(-1)
+		return nil, true, nil
+	}
+	c := testCity(t, f, t.TempDir())
+	if err := c.loadStatic(context.Background(), true, priWatched); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() { defer wg.Done(); c.board(context.Background(), fmt.Sprintf("1%c", 'A'+i%5), priUser) }()
+	}
+	wg.Wait()
+	if most.Load() != maxInflight {
+		t.Fatalf("max in flight %d", most.Load())
+	}
+}
+
+func TestUserBoardAskedOncePer15sEvenWhenItFails(t *testing.T) {
+	var calls atomic.Int32
+	f := &fake{answers: answersOf(lineRaw())}
+	f.hook = func(path string) (any, bool, error) {
+		if strings.Contains(path, "/stops/live/") {
+			calls.Add(1)
+			return nil, true, fmt.Errorf("HTTP 500")
+		}
+		return nil, false, nil
+	}
+	c := testCity(t, f, t.TempDir())
+	if err := c.loadStatic(context.Background(), true, priWatched); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if b := c.freshBoard("B"); b != nil {
+			t.Fatalf("board %v", b)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls %d", calls.Load())
+	}
+	if c.v1StopBoard("B") == nil {
+		t.Fatal("a failed board still gives the timetable")
+	}
+}
+
+func TestWatchedLinesNeverStarveTheRotation(t *testing.T) {
+	var mu sync.Mutex
+	var asked []string
+	codes := []string{"1", "2", "3", "4", "5", "6", "7", "8"}
+	f := &fake{answers: answersOf(linesRaw(codes...))}
+	live := regexp.MustCompile(`stops/live/(.+)$`)
+	f.hook = func(path string) (any, bool, error) {
+		if m := live.FindStringSubmatch(path); m != nil {
+			mu.Lock()
+			asked = append(asked, m[1])
+			mu.Unlock()
+			time.Sleep(3 * time.Millisecond)
+			return nil, true, nil
+		}
+		return nil, false, nil
+	}
+	c := testCity(t, f, t.TempDir())
+	if err := c.loadStatic(context.Background(), true, priWatched); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	for _, l := range codes {
+		c.watchLocked(l)
+	}
+	c.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { c.rotate(ctx); close(done) }()
+	time.Sleep(60 * time.Millisecond)
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if len(asked) < 12 {
+		t.Fatalf("asked %v", asked)
+	}
+	hot := 0
+	for _, s := range asked[:12] {
+		if strings.HasSuffix(s, "D") { // the watched end stop; probes are the C stops
+			hot++
+		}
+	}
+	if hot == 0 || hot > 4 { // at most one in hotEvery (4)
+		t.Fatalf("%d watched reads in 12: %v", hot, asked[:12])
+	}
+}
+
+func TestFlightWaiterCanGiveUp(t *testing.T) {
+	var f flight
+	release := make(chan struct{})
+	go f.do(context.Background(), "k", func() ([]byte, error) { <-release; return nil, nil })
+	time.Sleep(5 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := f.do(ctx, "k", func() ([]byte, error) { return nil, nil }); err == nil {
+		t.Fatal("the waiter must return when its ctx ends")
+	}
+	close(release)
+}

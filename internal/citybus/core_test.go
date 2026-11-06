@@ -443,3 +443,12 @@ func TestGapFor(t *testing.T) {
 		}
 	}
 }
+
+func TestOnePointShapeFallsBackToStops(t *testing.T) {
+	raw := lineRaw()
+	raw.Points["1"][0].RoutePoints = raw.Points["1"][0].RoutePoints[:1]
+	r := buildModel(raw).Routes["10"]
+	if len(r.Shape) != 5 || r.StopM[4] <= 0 {
+		t.Fatalf("shape %v stopM %v", r.Shape, r.StopM)
+	}
+}

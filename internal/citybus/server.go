@@ -188,7 +188,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, "internal", http.StatusInternalServerError)
 		}
 	}()
-	s.cities[m[1]].route(r.Context(), w, m[2])
+	s.cities[m[1]].route(w, m[2])
 }
 
 var (
@@ -211,7 +211,7 @@ func dec(s string) string {
 	return s
 }
 
-func (c *City) route(ctx context.Context, w http.ResponseWriter, path string) {
+func (c *City) route(w http.ResponseWriter, path string) {
 	switch path {
 	case "/v1/status":
 		writeJSON(w, c.status(), http.StatusOK, 10)
@@ -250,7 +250,7 @@ func (c *City) route(ctx context.Context, w http.ResponseWriter, path string) {
 	case match(reV2Line):
 		ok(w, c.v2LineDetail(dec(m[1])), "unknown_line", 3600)
 	case match(reV2Stop):
-		ok(w, c.v2StopBoard(ctx, dec(m[1])), "unknown_stop", 15)
+		ok(w, c.v2StopBoard(dec(m[1])), "unknown_stop", 15)
 	case match(reV2Run):
 		ok(w, c.v2Run(dec(m[1])), "unknown_run", 15)
 	case path == "/v2/alerts":
@@ -260,7 +260,7 @@ func (c *City) route(ctx context.Context, w http.ResponseWriter, path string) {
 	case match(reV1Line):
 		ok(w, c.v1Line(dec(m[1])), "unknown_line", 5)
 	case match(reV1Stop):
-		ok(w, c.v1StopBoard(ctx, dec(m[1])), "unknown_stop", 15)
+		ok(w, c.v1StopBoard(dec(m[1])), "unknown_stop", 15)
 	case match(reV1Tile):
 		z, _ := strconv.Atoi(m[1])
 		x, _ := strconv.Atoi(m[2])
