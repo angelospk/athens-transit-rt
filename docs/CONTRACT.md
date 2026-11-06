@@ -1003,8 +1003,8 @@ Rules:
   - `oasa`: the GTFS trips while the GTFS is current; on an expired GTFS, the runs of OASA's
     daily schedule as the prefetch cached them. A line with no cached daily schedule has no
     rides until it is cached.
-  - `stasy`: the STASY timetable (the same weekday stands in when it has expired:
-    `indicative`).
+  - `stasy`: the STASY timetable (a typical day of the same weekday stands in when it has
+    expired, never a holiday of the feed: `indicative`).
   - `proastiakos`: the schedule boards `/v2` already holds. No board: no suburban rides.
   - `sources` lists all three with the §4 states. `oasa` is `warming_up` when its GTFS is
     expired and no daily schedule of the service day is cached yet.

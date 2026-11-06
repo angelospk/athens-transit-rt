@@ -321,3 +321,43 @@ func TestSTASYOriginHeadsign(t *testing.T) {
 		}
 	}
 }
+
+// An expired feed reuses a typical day of the same weekday, not a holiday that falls in the
+// feed's last week (rt: Wed 2026-11-04 read the 28/10 holiday timetable, 1172 trips vs 1661).
+func TestSTASYExpiredFeedSkipsHolidays(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range stasyFixture(t) {
+		switch name {
+		case "calendar_dates.txt":
+			// wd runs two more Wednesdays; 28/10 becomes the holiday service "hol" (1 trip).
+			body = "service_id,date,exception_type\nwd,20261014,1\nwd,20261021,1\nhol,20261028,1\n" +
+				"wd,20261029,1\nwe,20261031,1\n"
+		case "trips.txt":
+			body += "R2,hol,H-1,ΕΛΛΗΝΙΚΟ,0\n"
+		case "stop_times.txt":
+			body += "H-1,11:00:00,11:00:00,P1,1\n"
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, err := ParseSTASY(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		day  time.Time
+		want int32
+		ind  bool
+	}{
+		{stasyWed, 20261021, true}, // not the 28/10 holiday
+		{time.Date(2026, 11, 7, 10, 0, 0, 0, gtfs.Athens), 20261031, true},   // one Saturday: that one
+		{time.Date(2026, 10, 28, 10, 0, 0, 0, gtfs.Athens), 20261028, false}, // inside the feed: as written
+		{time.Date(2026, 10, 7, 10, 0, 0, 0, gtfs.Athens), 20261014, true},   // before the feed starts: the earliest
+	} {
+		got, ind := f.timetableDate(tc.day)
+		if got != tc.want || ind != tc.ind {
+			t.Errorf("%s: timetableDate = %d, %v; want %d, %v", tc.day.Format("2006-01-02"), got, ind, tc.want, tc.ind)
+		}
+	}
+}

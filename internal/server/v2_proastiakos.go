@@ -347,6 +347,116 @@ func subDelay(sc *rail.SuburbanSchedule, st *rail.SuburbanBoardStop, tr *rail.Su
 	return nil, false
 }
 
+// subMaxLate is the longest delay read from the GPS: a live train further behind a run of its
+// number is taken as on another run (a train number repeats every day).
+const subMaxLate = 3 * time.Hour
+
+// gpsLate places a live train on its run: the index in sc.Stops of its next station (as place
+// finds it on the track, so a stale stream station behind the train is not used), and the delay
+// in minutes it has at least there, the minutes since that station's scheduled time (the stream's
+// delay can stay 0 while a train runs an hour behind, #93). -1 and 0 when the train is nil, its
+// next station is unknown or not on the run, or it is over subMaxLate behind.
+func (s *proastiakosAdapter) gpsLate(x *subIndex, c int, sc *rail.SuburbanSchedule, tr *rail.SuburbanTrain, now time.Time) (int, int) {
+	if tr == nil {
+		return -1, 0
+	}
+	var v model.Vehicle
+	s.place(x, c, tr, &v, s.schedDir(x, c, sc))
+	if v.NextStop == nil {
+		return -1, 0
+	}
+	id := *v.NextStop
+	for j := range sc.Stops {
+		st := &sc.Stops[j]
+		if k, ok := s.stopOf(x, st.StationID); !ok || x.stops[k].ID != id {
+			continue
+		}
+		sched := st.Arr
+		if sched.IsZero() {
+			sched = st.Dep
+		}
+		lag := now.Sub(sched)
+		if sched.IsZero() || lag > subMaxLate {
+			return -1, 0
+		}
+		if lag <= 0 {
+			return j, 0
+		}
+		return j, int((lag + time.Minute - 1) / time.Minute)
+	}
+	return -1, 0
+}
+
+// atLeast raises a delay to the GPS bound (gpsLate), which is a live observation.
+func atLeast(delay *int, isLive bool, late int) (*int, bool) {
+	if late > 0 && (delay == nil || *delay < late) {
+		return &late, true
+	}
+	return delay, isLive
+}
+
+// subWindowGap is how far now is from a run's scheduled times (0 within them).
+func subWindowGap(sc *rail.SuburbanSchedule, now time.Time) time.Duration {
+	var first, last time.Time
+	for _, st := range sc.Stops {
+		for _, t := range []time.Time{st.Arr, st.Dep} {
+			if t.IsZero() {
+				continue
+			}
+			if first.IsZero() || t.Before(first) {
+				first = t
+			}
+			if t.After(last) {
+				last = t
+			}
+		}
+	}
+	switch {
+	case first.IsZero():
+		return time.Duration(math.MaxInt64)
+	case now.Before(first):
+		return first.Sub(now)
+	case now.After(last):
+		return now.Sub(last)
+	}
+	return 0
+}
+
+// runDays maps a train number to the board day of its run nearest now, while two board days are
+// open (00:00 to 03:00): a run that leaves after midnight is on the board of the day to come, one
+// of the evening before on its own (#93). nil the rest of the day; see runDay.
+func (s *proastiakosAdapter) runDays(now time.Time) map[string]time.Time {
+	days := subDays(now)
+	if len(days) < 2 {
+		return nil
+	}
+	out, gap := map[string]time.Time{}, map[string]time.Duration{}
+	for _, day := range days {
+		list, _, ok := s.board.CachedBoard(day)
+		if !ok {
+			continue
+		}
+		for i := range list {
+			sc := &list[i]
+			if sc.Status == "cancelled" {
+				continue
+			}
+			if g, seen := gap[sc.Train]; !seen || subWindowGap(sc, now) < g { // a tie keeps the board day
+				gap[sc.Train], out[sc.Train] = subWindowGap(sc, now), day
+			}
+		}
+	}
+	return out
+}
+
+// runDay is the board day of the run a live train is on (runDays), else the board day.
+func runDay(days map[string]time.Time, no string, now time.Time) time.Time {
+	if d, ok := days[no]; ok {
+		return d
+	}
+	return rail.SuburbanDay(now)
+}
+
 // subRunID is the id of a train's run of a day (any time of it; the board is per day). The board
 // day of a time is rail.SuburbanDay.
 func subRunID(no string, day time.Time) string {
@@ -374,13 +484,21 @@ func (s *proastiakosAdapter) Arrivals(ctx context.Context, stopID string, now ti
 		return v
 	}
 	until := now.Add(v2Horizon)
-	var out []model.Arrival
+	type board struct {
+		day   time.Time
+		list  []rail.SuburbanSchedule
+		fresh bool
+	}
+	var boards []board
 	for _, day := range subDays(now) {
-		list, at, ok := s.board.Board(ctx, day)
-		if !ok {
-			continue
+		if list, at, ok := s.board.Board(ctx, day); ok {
+			boards = append(boards, board{day, list, now.Sub(at) <= subBoardFresh})
 		}
-		out = s.dayArrivals(x, list, day, now.Sub(at) <= subBoardFresh, live, isHere, stopID, now, until, out)
+	}
+	days := s.runDays(now)
+	var out []model.Arrival
+	for _, b := range boards {
+		out = s.dayArrivals(x, b.list, b.day, b.fresh, live, days, isHere, stopID, now, until, out)
 	}
 	return cutArrivals(out), nil
 }
@@ -396,12 +514,11 @@ func subDays(now time.Time) []time.Time {
 }
 
 // dayArrivals adds to out the arrivals at a Stop of one board day's runs (Arrivals). Live delays
-// are of that day's runs only: a train number repeats every day.
+// are of the run each live train is on only (runDay): a train number repeats every day. A live
+// train is not due at a stop before its next station.
 func (s *proastiakosAdapter) dayArrivals(x *subIndex, list []rail.SuburbanSchedule, day time.Time, fresh bool,
-	live map[string]*rail.SuburbanTrain, isHere func(string) bool, stopID string, now, until time.Time, out []model.Arrival) []model.Arrival {
-	if !day.Equal(rail.SuburbanDay(now)) {
-		live = nil
-	}
+	live map[string]*rail.SuburbanTrain, days map[string]time.Time, isHere func(string) bool, stopID string, now, until time.Time,
+	out []model.Arrival) []model.Arrival {
 	for i := range list {
 		sc := &list[i]
 		if sc.Status == "cancelled" {
@@ -411,6 +528,11 @@ func (s *proastiakosAdapter) dayArrivals(x *subIndex, list []rail.SuburbanSchedu
 		if c < 0 {
 			continue
 		}
+		tr := live[sc.Train]
+		if tr != nil && !day.Equal(runDay(days, sc.Train, now)) {
+			tr = nil
+		}
+		next, late := s.gpsLate(x, c, sc, tr, now)
 		for j := range sc.Stops {
 			st := &sc.Stops[j]
 			if !isHere(st.StationID) {
@@ -423,8 +545,13 @@ func (s *proastiakosAdapter) dayArrivals(x *subIndex, list []rail.SuburbanSchedu
 			if st.Role == "destination" || st.Status == "cancelled" || sched.IsZero() {
 				break
 			}
-			tr := live[sc.Train]
+			if j < next {
+				break
+			}
 			delay, isLive := subDelay(sc, st, tr, fresh)
+			if next >= 0 {
+				delay, isLive = atLeast(delay, isLive, late)
+			}
 			t := sched
 			var delayS *int
 			if delay != nil {
@@ -464,14 +591,25 @@ func (s *proastiakosAdapter) vehicles(now time.Time, only int) []model.Vehicle {
 	if live == nil {
 		return out
 	}
-	runs := map[string][2]int{} // train: its board corridor and direction (-1 unknown)
-	if list, _, ok := s.board.CachedBoard(now); ok {
+	type subRun struct {
+		c, dir int // board corridor and direction (-1 unknown)
+		day    time.Time
+		sc     *rail.SuburbanSchedule
+	}
+	runs := map[string]subRun{}
+	days := s.runDays(now)
+	for _, day := range subDays(now) {
+		list, _, ok := s.board.CachedBoard(day)
+		if !ok {
+			continue
+		}
 		for i := range list {
-			if _, seen := runs[list[i].Train]; seen || list[i].Status == "cancelled" {
+			no := list[i].Train
+			if _, seen := runs[no]; seen || list[i].Status == "cancelled" || !day.Equal(runDay(days, no, now)) {
 				continue // the first entry, as Run
 			}
 			if c := s.lineOfSchedule(x, &list[i]); c >= 0 {
-				runs[list[i].Train] = [2]int{c, s.schedDir(x, c, &list[i])}
+				runs[no] = subRun{c, s.schedDir(x, c, &list[i]), day, &list[i]}
 			}
 		}
 	}
@@ -498,9 +636,12 @@ func (s *proastiakosAdapter) vehicles(now time.Time, only int) []model.Vehicle {
 		}
 		runDir := -1
 		if r, ok := runs[tr.Train]; ok {
-			v.Run = model.Ptr(subRunID(tr.Train, rail.SuburbanDay(now)))
-			if r[0] == c {
-				runDir = r[1]
+			v.Run = model.Ptr(subRunID(tr.Train, r.day))
+			if r.c == c {
+				runDir = r.dir
+				if _, late := s.gpsLate(x, c, r.sc, tr, now); late > 0 && (v.DelayS == nil || *v.DelayS < late*60) {
+					v.DelayS = model.Ptr(late * 60)
+				}
 			}
 		}
 		s.place(x, c, tr, &v, runDir)
@@ -621,7 +762,8 @@ func (s *proastiakosAdapter) LineVehicles(id string, now time.Time) (*LineVehicl
 }
 
 // Run is a train's run of today from the board: its departure at each stop (the arrival at the
-// last) plus its delay, passed once that time is past. It does not open the stream; the Vehicle
+// last) plus its delay, passed once that time is past; with a live train, passed before its next
+// station and at least as late as the GPS shows (gpsLate). It does not open the stream; the Vehicle
 // is set while the open stream has the train.
 func (s *proastiakosAdapter) Run(id string, now time.Time) (*model.Run, error) {
 	x := s.index()
@@ -654,10 +796,16 @@ func (s *proastiakosAdapter) Run(id string, now time.Time) (*model.Run, error) {
 		return nil, errUnknown
 	}
 	var tr *rail.SuburbanTrain
-	if noon.Equal(rail.SuburbanDay(now)) { // a train number repeats every day: the live one is of the board day
+	for _, d := range subDays(now) { // runDays reads both open boards
+		if !d.Equal(noon) {
+			s.board.Board(context.Background(), d)
+		}
+	}
+	if noon.Equal(runDay(s.runDays(now), no, now)) { // a train number repeats every day: the live one is on one run
 		tr = liveTrains(s.trains.Peek(), now)[no]
 	}
 	fresh := now.Sub(at) <= subBoardFresh
+	next, late := s.gpsLate(x, c, sc, tr, now) // the GPS says where the train is, whatever the clock says (#93)
 	run := &model.Run{ID: id, Line: x.lines[c].ID, Headsign: sc.Destination, Stops: []model.RunStop{}}
 	for j := range sc.Stops {
 		st := &sc.Stops[j]
@@ -673,6 +821,9 @@ func (s *proastiakosAdapter) Run(id string, now time.Time) (*model.Run, error) {
 			continue
 		}
 		delay, isLive := subDelay(sc, st, tr, fresh)
+		if next >= 0 && j >= next {
+			delay, isLive = atLeast(delay, isLive, late)
+		}
 		t, rs := sched, model.RunStop{Stop: x.stops[k].ID, ScheduledAt: model.Ptr(sched.Unix()), Source: model.SourceTable,
 			Platform: st.Platform}
 		if delay != nil {
@@ -683,12 +834,18 @@ func (s *proastiakosAdapter) Run(id string, now time.Time) (*model.Run, error) {
 			rs.Source = model.SourceLive
 		}
 		rs.At, rs.Passed = t.Unix(), !t.After(now)
+		if next >= 0 {
+			rs.Passed = j < next
+		}
 		run.Stops = append(run.Stops, rs)
 	}
 	if dir := s.schedDir(x, c, sc); dir >= 0 {
 		run.Pattern = model.Ptr(x.patterns[c][dir].ID)
 	}
 	delay, isLive := subDelay(sc, nil, tr, fresh)
+	if next >= 0 {
+		delay, isLive = atLeast(delay, isLive, late)
+	}
 	var delayS *int
 	if delay != nil {
 		delayS = model.Ptr(*delay * 60)
