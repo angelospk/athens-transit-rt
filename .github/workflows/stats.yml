@@ -30,6 +30,10 @@ jobs:
       # Earlier days stay in v1/days but are not listed: their seen/missed counts are not
       # reliable. Keep equal to stats.FirstDay (internal/stats/stats.go).
       FIRST_DAY: "2026-10-30"
+      # Thessaloniki (OASTH): its own instance, days under v1/thessaloniki/. The instance started
+      # on 2026-11-06 at 23:22 Athens, so 2026-11-06 is a partial day.
+      API_THESSALONIKI: ${{ vars.STATS_API_THESSALONIKI || 'https://transit-thess.haroldpoi.dev' }}
+      FIRST_DAY_THESSALONIKI: "2026-11-07"
     steps:
       - name: Check out the stats branch (or start it)
         run: |
@@ -42,39 +46,50 @@ jobs:
           else
             git checkout -q --orphan stats
           fi
-      - name: Download new days
+      - name: Download new days and write index and latest
         working-directory: pub
         run: |
           set -euo pipefail
-          mkdir -p v1/days
-          curl -fsS --retry 3 --max-time 30 "$API/v1/stats" -o ../index.json
-          jq -e '.version == 1 and (.days | type == "array")' ../index.json >/dev/null
-          for d in $(jq -r '.days[]' ../index.json); do
-            [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad day $d"; exit 1; }
-            [[ "$d" < "$FIRST_DAY" ]] && continue
-            [ -f "v1/days/$d.json" ] && [ "$REFRESH" != true ] && continue
-            # One bad day must not block the others; it is tried again tomorrow.
-            if ! curl -fsS --retry 3 --max-time 30 "$API/v1/stats/days/$d" -o "../$d.json" ||
-               ! jq -e --arg d "$d" '.version == 1 and .date == $d and (.hours | length) == 24' "../$d.json" >/dev/null; then
-              echo "::warning::day $d skipped"; rm -f "../$d.json"; continue
+          # publish <api> <dir> <first day>: copy the server's new days to <dir>/days and write
+          # <dir>/index.json and <dir>/latest.json.
+          publish() {
+            local api=$1 dir=$2 first=$3 d days latest
+            mkdir -p "$dir/days"
+            # set -e does not apply inside a function called with ||: check each step.
+            rm -f ../index.json
+            curl -fsS --retry 3 --max-time 30 "$api/v1/stats" -o ../index.json || return 1
+            jq -e '.version == 1 and (.days | type == "array")' ../index.json >/dev/null || return 1
+            for d in $(jq -r '.days[]' ../index.json); do
+              [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad day $d"; return 1; }
+              [[ "$d" < "$first" ]] && continue
+              [ -f "$dir/days/$d.json" ] && [ "$REFRESH" != true ] && continue
+              # One bad day must not block the others; it is tried again tomorrow.
+              if ! curl -fsS --retry 3 --max-time 30 "$api/v1/stats/days/$d" -o "../$d.json" ||
+                 ! jq -e --arg d "$d" '.version == 1 and .date == $d and (.hours | length) == 24' "../$d.json" >/dev/null; then
+                echo "::warning::$dir: day $d skipped"; rm -f "../$d.json"; continue
+              fi
+              mv "../$d.json" "$dir/days/$d.json" || return 1
+              echo "$dir: new day $d"
+            done
+            days=$(ls "$dir/days" | sed -n 's/^\([0-9-]*\)\.json$/\1/p' | sort | awk -v f="$first" '$0 >= f')
+            if [ -z "$days" ]; then
+              # No day from the first day yet: list none and show no earlier day as the latest.
+              jq -nc '{version: 1, latest: "", days: []}' > "$dir/index.json"
+              rm -f "$dir/latest.json"
+            else
+              latest=$(echo "$days" | tail -1)
+              printf '%s\n' $days | jq -R . | jq -sc --arg l "$latest" '{version: 1, latest: $l, days: .}' > "$dir/index.json"
+              cp "$dir/days/$latest.json" "$dir/latest.json"
             fi
-            mv "../$d.json" "v1/days/$d.json"
-            echo "new day $d"
-          done
-      - name: Write index, latest and README
+          }
+          publish "$API" v1 "$FIRST_DAY"
+          # Thessaloniki has its own server; an outage there must not block the Athens days.
+          publish "$API_THESSALONIKI" v1/thessaloniki "$FIRST_DAY_THESSALONIKI" ||
+            echo "::warning::Thessaloniki stats skipped"
+      - name: Write README
         working-directory: pub
         run: |
           set -euo pipefail
-          days=$(ls v1/days | sed -n 's/^\([0-9-]*\)\.json$/\1/p' | sort | awk -v f="$FIRST_DAY" '$0 >= f')
-          if [ -z "$days" ]; then
-            # No day from FIRST_DAY yet: list none and show no earlier day as the latest.
-            jq -nc '{version: 1, latest: "", days: []}' > v1/index.json
-            rm -f v1/latest.json
-          else
-            latest=$(echo "$days" | tail -1)
-            printf '%s\n' $days | jq -R . | jq -sc --arg l "$latest" '{version: 1, latest: $l, days: .}' > v1/index.json
-            cp "v1/days/$latest.json" v1/latest.json
-          fi
           cat > README.md <<'MD'
           # athens-transit-rt daily statistics
 
@@ -87,6 +102,8 @@ jobs:
           - `v1/index.json`: all days from 2026-10-30 (earlier files in `v1/days` are kept but
             not listed: their seen/missed trip counts are not reliable)
           - `v1/days/YYYY-MM-DD.json`: one day
+          - `v1/thessaloniki/`: the same files for the OASTH buses of Thessaloniki, from
+            2026-11-07 (no `start_delay`: it comes from OASA's daily schedule)
 
           Speed (km/h) = `dist_m / time_s * 3.6`. Fields and method: `docs/API.md` on `main`.
           Raw URL: `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/latest.json`
@@ -96,5 +113,5 @@ jobs:
         run: |
           git add -A
           if git diff --cached --quiet; then echo "no change"; exit 0; fi
-          git commit -q -m "stats: $(jq -r .latest v1/index.json)"
+          git commit -q -m "stats: $(jq -r .latest v1/index.json), thessaloniki $(jq -r .latest v1/thessaloniki/index.json 2>/dev/null || echo -)"
           git push -q origin stats
