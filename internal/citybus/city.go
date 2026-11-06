@@ -21,6 +21,9 @@ const maxInflight = 3
 // hotEvery: a watched line's board takes at most one read in this many.
 const hotEvery = 4
 
+// idleWait: with no live line to rotate over, the timetable-only checks run this often.
+var idleWait = 30 * time.Second
+
 // Conf is one citybus.gr site.
 type Conf struct {
 	ID     string `json:"id"`     // the path prefix and the id namespace: /heraklion/..., heraklion:1235
@@ -92,6 +95,7 @@ type City struct {
 	watched     map[string]int64    // line -> watched until (unix s)
 	hotAsked    map[string]int64    // stop -> last read for a watched line (unix s)
 	userAsked   map[string]int64    // stop -> last user read of its board, failed or not (unix s)
+	userWait    map[string]*pending // stop -> the user read in flight, joined by later callers
 	svc         context.Context     // the service: user reads run on it, not on the request
 	lastCycle   cycleStats
 	healthSaved int64
@@ -104,7 +108,7 @@ func newCity(conf Conf, up fetcher, stateDir string, log *slog.Logger) (*City, e
 		return nil, err
 	}
 	c := &City{Conf: conf, up: up, dir: dir, log: log.With("city", conf.ID), now: time.Now,
-		checkProbes: map[string][]string{}, skipped: map[string]bool{}, watched: map[string]int64{}, hotAsked: map[string]int64{}, userAsked: map[string]int64{},
+		checkProbes: map[string][]string{}, skipped: map[string]bool{}, watched: map[string]int64{}, hotAsked: map[string]int64{}, userAsked: map[string]int64{}, userWait: map[string]*pending{},
 		svc: context.Background(), boards: make(chan struct{}, maxInflight)}
 	c.health = loadHealth(filepath.Join(dir, "health.json"), c.unix())
 	return c, nil
@@ -456,14 +460,14 @@ func (c *City) rotate(ctx context.Context) {
 		}
 		// Watched lines take at most one read in hotEvery, so the rotation (and with it every other
 		// line) never starves however many lines users watch.
-		hot := ""
-		if sinceHot >= hotEvery-1 {
-			hot = c.watchedProbe(now)
-		}
 		c.mu.Lock()
 		probes := c.probes
 		nChecks := len(c.checkProbes)
 		c.mu.Unlock()
+		hot := ""
+		if sinceHot >= hotEvery-1 || len(probes) == 0 { // no rotation to starve: no quota
+			hot = c.watchedProbe(now)
+		}
 		// Nothing live to rotate: only the timetable-only checks, every 30 s.
 		if hot == "" && len(probes) == 0 {
 			if nChecks > 0 {
@@ -476,7 +480,7 @@ func (c *City) rotate(ctx context.Context) {
 				c.refreshProbes()
 				c.prune()
 			}
-			sleepCtx(ctx, 30*time.Second)
+			sleepCtx(ctx, idleWait)
 			continue
 		}
 		// Wait for room before the back-off check, as the bridge does.
@@ -587,10 +591,16 @@ func (c *City) watchedProbe(now int64) string {
 // watchLocked marks a line as watched for 10 min (a user opened its vehicles).
 func (c *City) watchLocked(line string) { c.watched[line] = c.unix() + 600 }
 
+// pending is a user read of a stop board in flight; b is set before done closes (nil on failure).
+type pending struct {
+	done chan struct{}
+	b    *Board
+}
+
 // freshBoard: a stop board from the cache when under 15 s old, else one request at user
-// priority; after 8 s the cached one (or none). A stop is asked at most once per 15 s, failed or
-// not. The request runs on the service context (bounded to 20 s), not on the user's request: other
-// callers may share its answer.
+// priority; after 8 s the cached one (or none). A caller joins a read of the same stop that is
+// in flight. A stop is asked at most once per 15 s, failed or not. The request runs on the
+// service context (bounded to 20 s), not on the user's request: other callers share its answer.
 func (c *City) freshBoard(code string) *Board {
 	c.mu.Lock()
 	var cached *Board
@@ -600,30 +610,39 @@ func (c *City) freshBoard(code string) *Board {
 		}
 	}
 	now := c.unix()
-	if (cached != nil && now-cached.At < 15) || now-c.userAsked[code] < 15 {
+	if cached != nil && now-cached.At < 15 {
 		c.mu.Unlock()
 		return cached
 	}
-	c.userAsked[code] = now
-	svc := c.svc
-	c.mu.Unlock()
-	ch := make(chan *Board, 1)
-	go func() {
-		ctx, cancel := context.WithTimeout(svc, 20*time.Second)
-		defer cancel()
-		b, err := c.board(ctx, code, priUser)
-		if err != nil {
-			ch <- nil
-			return
+	p := c.userWait[code]
+	if p == nil {
+		if now-c.userAsked[code] < 15 {
+			c.mu.Unlock()
+			return cached
 		}
-		ch <- &b
-	}()
+		c.userAsked[code] = now
+		p = &pending{done: make(chan struct{})}
+		c.userWait[code] = p
+		svc := c.svc
+		go func() {
+			ctx, cancel := context.WithTimeout(svc, 20*time.Second)
+			defer cancel()
+			if b, err := c.board(ctx, code, priUser); err == nil {
+				p.b = &b
+			}
+			c.mu.Lock()
+			delete(c.userWait, code)
+			c.mu.Unlock()
+			close(p.done)
+		}()
+	}
+	c.mu.Unlock()
 	t := time.NewTimer(8 * time.Second)
 	defer t.Stop()
 	select {
-	case b := <-ch:
-		if b != nil {
-			return b
+	case <-p.done:
+		if p.b != nil {
+			return p.b
 		}
 	case <-t.C:
 	}

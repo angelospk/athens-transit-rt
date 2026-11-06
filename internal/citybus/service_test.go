@@ -770,3 +770,87 @@ func TestFlightWaiterCanGiveUp(t *testing.T) {
 	}
 	close(release)
 }
+
+// ---- review round 2 (Codex) ----
+
+func TestWatchedLineKeepsPollingWithNoRotation(t *testing.T) {
+	old := idleWait
+	idleWait = 5 * time.Millisecond
+	defer func() { idleWait = old }()
+	var mu sync.Mutex
+	var asked []string
+	codes := []string{"1", "2"}
+	f := &fake{answers: answersOf(linesRaw(codes...))}
+	live := regexp.MustCompile(`stops/live/(.+)$`)
+	f.hook = func(path string) (any, bool, error) {
+		if m := live.FindStringSubmatch(path); m != nil {
+			mu.Lock()
+			asked = append(asked, m[1])
+			mu.Unlock()
+			return nil, true, nil
+		}
+		return nil, false, nil
+	}
+	c := testCity(t, f, t.TempDir())
+	now := time.Now().Unix()
+	c.health.Since = now - 8*D
+	c.health.FirstSeen = map[string]int64{"1": now - 8*D, "2": now - 8*D} // both timetable-only: no rotation
+	if err := c.loadStatic(context.Background(), true, priWatched); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.probes) != 0 {
+		t.Fatalf("probes %v", c.probes)
+	}
+	c.mu.Lock()
+	c.watchLocked("1")
+	c.watchLocked("2")
+	c.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { c.rotate(ctx); close(done) }()
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	seen := map[string]bool{}
+	for _, s := range asked {
+		seen[s] = true
+	}
+	if !seen["1D"] || !seen["2D"] {
+		t.Fatalf("both watched lines must be read: %v", asked)
+	}
+}
+
+func TestConcurrentUserReadsShareOneRequest(t *testing.T) {
+	var calls atomic.Int32
+	a := answersOf(lineRaw())
+	f := &fake{answers: a}
+	f.hook = func(path string) (any, bool, error) {
+		if strings.Contains(path, "/stops/live/") {
+			calls.Add(1)
+			time.Sleep(50 * time.Millisecond)
+			return liveAnswer{Vehicles: []LiveRow{}}, true, nil
+		}
+		return nil, false, nil
+	}
+	c := testCity(t, f, t.TempDir())
+	if err := c.loadStatic(context.Background(), true, priWatched); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var nils atomic.Int32
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if c.freshBoard("B") == nil {
+				nils.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if calls.Load() != 1 || nils.Load() != 0 {
+		t.Fatalf("calls %d, callers without the board %d", calls.Load(), nils.Load())
+	}
+}
