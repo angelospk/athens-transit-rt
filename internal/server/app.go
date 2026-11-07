@@ -514,7 +514,9 @@ func (a *App) vehicleView(w *world, r *match.Result) (Vehicle, boardPos) {
 		v.Variant = ptr(f.Shapes[t.Shape].ID)
 	}
 	v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds, along = a.motionOf(w, r, t.Shape)
-	v.AlongM = alongM(v.Variant, along)
+	if !r.Waiting { // waiting at its first stop: it stands there, not on along the shape
+		v.AlongM = alongM(v.Variant, along)
+	}
 	v.TripID = ptr(t.ID)
 	v.TripLabel = ptr(TripLabel(f, t))
 	v.DelayS = ptr(r.Delay)

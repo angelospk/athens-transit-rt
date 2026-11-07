@@ -140,8 +140,9 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
   simplified points are a few metres shorter, so a client may simply walk them.
 - `along_m` (rev 20): whole metres along the shape of `variant` (its static `shape`) at
   `position_at`: where `path` starts. `null` when the vehicle is not placed on that shape: no
-  `variant`, no shape, more than 150 m from it, or the position is ambiguous (a loop or
-  out-and-back passes there twice and history cannot tell which). It is set at the next stop and
+  `variant`, no shape, more than 150 m from it, the position is ambiguous (a loop or
+  out-and-back passes there twice and history cannot tell which), or the vehicle is waiting at its
+  first stop (`at_terminus`: it stands, so keep the rev 4 rule). It is set at the next stop and
   at the shape's end, where `path` is `null`. On a loop or out-and-back shape it says which pass
   the vehicle is on: do not project the GPS point onto the shape yourself. Use: see
   [Along the static shape](#along-the-static-shape-rev-20).

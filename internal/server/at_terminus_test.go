@@ -35,6 +35,10 @@ func TestVehicleAtTerminusFlag(t *testing.T) {
 		if !strings.Contains(string(body), `"at_terminus":`) || lr.Vehicles[0].AtTerminus != c.want {
 			t.Fatalf("%s: v1 at_terminus want %v: %s", c.name, c.want, body)
 		}
+		// along_m (rev 20) is null while waiting: a client must not drive the bus off along its shape.
+		if (lr.Vehicles[0].AlongM == nil) != c.want {
+			t.Fatalf("%s: along_m %v", c.name, lr.Vehicles[0].AlongM)
+		}
 		var lv struct{ Vehicles []model.Vehicle }
 		v2get(t, a, "/v2/lines/"+esc("oasa:L")+"/vehicles", &lv)
 		if len(lv.Vehicles) != 1 || lv.Vehicles[0].AtTerminus != c.want {

@@ -2033,7 +2033,7 @@ components:
             Rev 20: whole metres along the static shape of `variant` at `position_at` (where
             `path` starts), in the unit of the variant's `length_m` in
             `/static/v1/lines/{line_id}.json`. `null` when the vehicle is not placed on that shape
-            (no variant, more than 150 m from it, ambiguous position on a loop). Clients move the
+            (no variant, more than 150 m from it, ambiguous position on a loop, waiting at its first stop). Clients move the
             marker along the static shape from here (CONTRACT.md, "Along the static shape").
 
     VehicleBase:
