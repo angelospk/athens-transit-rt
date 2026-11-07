@@ -18,7 +18,7 @@ func (a *App) handleStaticLines(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, minMaxAge, map[string]string{"error": "warming_up"})
 		return
 	}
-	out := staticsite.LinesFile{GTFSVersion: wd.feed.Version(), Lines: []staticsite.Line{}}
+	out := staticsite.LinesFile{GTFSVersion: worldVersion(wd), Lines: []staticsite.Line{}}
 	tel := a.meta.Snapshot().Lines
 	for _, id := range wd.feed.Lines() {
 		out.Lines = append(out.Lines, staticsite.LineInfo(wd.feed, tel, id))

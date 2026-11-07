@@ -16,6 +16,8 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   `start_delay_s` ([#72](https://github.com/angelospk/athens-transit-rt/issues/72)).
 
 ### Live API
+- `/static/v1/lines.json` of an instance gives the same `gtfs_version` as `/v1/status`. A feed
+  from data.gov.gr (Thessaloniki) has its version only in the manifest, and the file said `""`.
 - Vehicles of `/v1/lines/{id}`, `/v1/vehicles` and `z` 13 tiles get `along_m` (contract rev 20):
   whole metres along the static shape of their `variant`, and each variant of
   `static/v1/lines/{line}.json` gets `length_m`. Clients can then move a marker along the whole
