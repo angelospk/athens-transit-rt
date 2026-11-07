@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: athens-transit-rt
+  title: staseis-rt
   version: "1 (contract rev 20)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
@@ -466,7 +466,7 @@ paths:
       description: |
         Each finished day (Europe/Athens, 00:00-24:00) is summed about 4-5 h after midnight. The
         same files are on the `stats` branch of the repository; prefer them:
-        `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/index.json`.
+        `https://raw.githubusercontent.com/angelospk/staseis-rt/stats/v1/index.json`.
         Only days from 2026-10-30 are listed: the seen/missed trip counts of earlier days are
         not reliable. `Cache-Control: public, max-age=600`.
       responses:
@@ -925,7 +925,7 @@ paths:
 
   /static/v1/lines.json:
     servers:
-      - url: https://angelospk.github.io/athens-transit-rt
+      - url: https://angelospk.github.io/staseis-rt
         description: GitHub Pages
     get:
       tags: [Static data]
@@ -946,7 +946,7 @@ paths:
 
   /static/v1/lines/{line_id}.json:
     servers:
-      - url: https://angelospk.github.io/athens-transit-rt
+      - url: https://angelospk.github.io/staseis-rt
         description: GitHub Pages
     get:
       tags: [Static data]

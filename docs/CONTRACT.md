@@ -40,8 +40,8 @@ rev 11: `/v2/stops/{id}` bus Arrivals include OASA's own predictions; rev 10: li
 | Host | Served by | Content |
 |---|---|---|
 | `https://transit.haroldpoi.dev` | Home machine → Cloudflare Tunnel → Cloudflare cache | Live data (small, changes every ~30 s) |
-| `https://angelospk.github.io/athens-transit-rt/static/v1/` | GitHub Pages of the backend repo | Static map data (changes only when OASA publishes a new GTFS) |
-| `https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/` | `stats` branch of the backend repo, copied daily from `/v1/stats` | Daily network statistics ([API.md](API.md#daily-statistics)) |
+| `https://angelospk.github.io/staseis-rt/static/v1/` | GitHub Pages of the backend repo | Static map data (changes only when OASA publishes a new GTFS) |
+| `https://raw.githubusercontent.com/angelospk/staseis-rt/stats/v1/` | `stats` branch of the backend repo, copied daily from `/v1/stats` | Daily network statistics ([API.md](API.md#daily-statistics)) |
 | `https://bus.haroldpoi.dev` | GitHub Pages of the frontend repo | The map app |
 
 All JSON is UTF-8. Line ids are the OASA telematics `LineID` in Greek uppercase

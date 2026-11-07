@@ -1,7 +1,7 @@
-# athens-transit-rt API
+# staseis-rt API
 
 Live positions and GTFS-Realtime for OASA buses and trolleys in Athens. Free to use, no key.
-This page is for external users. Interactive reference: <https://angelospk.github.io/athens-transit-rt/>
+This page is for external users. Interactive reference: <https://angelospk.github.io/staseis-rt/>
 (source: [`openapi/openapi.yaml`](openapi/openapi.yaml)). Full field rules: [`CONTRACT.md`](CONTRACT.md).
 
 > **Ελληνικά, σύντομα.** Δημόσιο API χωρίς κλειδί. GTFS-Realtime για όλο το δίκτυο στο
@@ -18,7 +18,7 @@ instance (see [Self-hosting](../README.md#self-hosting-docker)).
 
 The list of endpoints, their parameters and response schemas is the OpenAPI 3.1 spec
 [`openapi/openapi.yaml`](openapi/openapi.yaml), with an interactive reference ("try it") at
-<https://angelospk.github.io/athens-transit-rt/>. This page has usage notes and examples.
+<https://angelospk.github.io/staseis-rt/>. This page has usage notes and examples.
 
 Live: `/v1/lines/{line_id}`, `/v1/lines/{line_id}/schedule`, `/v1/vehicles`,
 `/v1/vehicles/tiles/{z}/{x}/{y}`, `/v1/gtfs-rt/{vehicle_positions,trip_updates}.{pb,json}`,
@@ -29,7 +29,7 @@ Live: `/v1/lines/{line_id}`, `/v1/lines/{line_id}/schedule`, `/v1/vehicles`,
 `/v1/rail/suburban/trains/{no}`, `/healthz`; the unified model for every mode under `/v2`
 ([below](#one-model-for-every-mode-v2)). Static
 data (line list, shapes, stops) is on GitHub Pages:
-`https://angelospk.github.io/athens-transit-rt/static/v1/lines.json` and
+`https://angelospk.github.io/staseis-rt/static/v1/lines.json` and
 `.../static/v1/lines/{line_id}.json`.
 
 All responses are UTF-8, send `Access-Control-Allow-Origin: *`, and are gzip-compressed when
@@ -427,7 +427,7 @@ Only days from 2026-10-30 are listed and served (`404` before it): the seen/miss
 of earlier days are not reliable (no daily OASA schedule, seen-flag bugs).
 The same files are on the `stats` branch of this repository; prefer them (its `v1/days` keeps
 the earlier files, but `index.json` and `latest.json` skip them):
-`https://raw.githubusercontent.com/angelospk/athens-transit-rt/stats/v1/latest.json`,
+`https://raw.githubusercontent.com/angelospk/staseis-rt/stats/v1/latest.json`,
 `.../stats/v1/index.json`, `.../stats/v1/days/{date}.json`.
 
 | Field | Meaning |

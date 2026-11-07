@@ -4,7 +4,7 @@ The public instance (`https://transit.haroldpoi.dev`) runs `main`; a push to `ma
 Version tags (`v*`) build an image with that version (`ghcr.io/angelospk/athens-transit-rt:<version>`)
 for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 [docs/openapi/openapi.yaml](docs/openapi/openapi.yaml), viewer with try-it:
-<https://angelospk.github.io/athens-transit-rt/>. Contract for clients: [docs/CONTRACT.md](docs/CONTRACT.md).
+<https://angelospk.github.io/staseis-rt/>. Contract for clients: [docs/CONTRACT.md](docs/CONTRACT.md).
 
 ## Unreleased
 
