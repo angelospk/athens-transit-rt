@@ -113,7 +113,7 @@ func TestVehicleTiles(t *testing.T) {
 					for k, v := range want {
 						_, has := got[k]
 						switch k {
-						case "path", "path_beyond", "path_stops", "path_speeds":
+						case "path", "path_beyond", "path_stops", "path_speeds", "along_m":
 							if has {
 								t.Fatalf("%s: %s has %s", p, vid, k)
 							}
@@ -123,7 +123,7 @@ func TestVehicleTiles(t *testing.T) {
 							}
 						}
 					}
-					if len(got) != len(want)-4 {
+					if len(got) != len(want)-5 {
 						t.Fatalf("%s: keys %v", p, got)
 					}
 				}

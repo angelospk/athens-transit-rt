@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -486,6 +487,7 @@ type Vehicle struct {
 	PathStops  []int        `json:"path_stops"`  // rev 4: metres along path + path_beyond of each stop
 	PathSpeeds []*float64   `json:"path_speeds"` // rev 6: typical m/s per 200 m step ahead; rev 7: with today's traffic
 	AtTerminus bool         `json:"at_terminus"` // matched and waiting at the first stop of its trip
+	AlongM     *int         `json:"along_m"`     // rev 20: whole metres along the variant's shape at position_at
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -504,19 +506,30 @@ func (a *App) vehicleView(w *world, r *match.Result) (Vehicle, boardPos) {
 			v.Variant = ptr(f.Shapes[s].ID)
 		}
 		v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds, along = a.motionOf(w, r, s)
+		v.AlongM = alongM(v.Variant, along)
 		return v, boardPosOf(w, r, s, along, v.Speed)
 	}
 	t := f.Trip(r.Trip)
 	if t.Shape >= 0 {
 		v.Variant = ptr(f.Shapes[t.Shape].ID)
 	}
-	v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds, _ = a.motionOf(w, r, t.Shape)
+	v.Speed, v.Path, v.PathBeyond, v.PathStops, v.PathSpeeds, along = a.motionOf(w, r, t.Shape)
+	v.AlongM = alongM(v.Variant, along)
 	v.TripID = ptr(t.ID)
 	v.TripLabel = ptr(TripLabel(f, t))
 	v.DelayS = ptr(r.Delay)
 	v.NextStopID = ptr(f.Stops[feed.NextStop(f, r).Stop].ID)
 	v.AtTerminus = r.Waiting
 	return v, boardPosOf(w, r, t.Shape, r.Along, v.Speed)
+}
+
+// alongM is the contract's along_m: whole metres along the variant's shape, nil when the vehicle
+// has no variant or is not placed on it (along < 0).
+func alongM(variant *string, along float64) *int {
+	if variant == nil || along < 0 {
+		return nil
+	}
+	return ptr(int(math.Round(along)))
 }
 
 // motionOf records the vehicle's position along its shape and returns its speed, the path

@@ -16,6 +16,13 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
   `start_delay_s` ([#72](https://github.com/angelospk/athens-transit-rt/issues/72)).
 
 ### Live API
+- Vehicles of `/v1/lines/{id}`, `/v1/vehicles` and `z` 13 tiles get `along_m` (contract rev 20):
+  whole metres along the static shape of their `variant`, and each variant of
+  `static/v1/lines/{line}.json` gets `length_m`. Clients can then move a marker along the whole
+  shape between fixes instead of stopping at the end of `path_beyond`; they scale `along_m` by
+  their own shape length / `length_m` (within ~15 m on every Athens shape). About +5 % gzip on
+  `/v1/vehicles`. `path` and `path_beyond` are unchanged
+  ([#108](https://github.com/angelospk/athens-transit-rt/issues/108)).
 - `/v2/stops/{id}` and `/v1/stops/{stop_id}` get `usual` (contract rev 19): per OASA line and headsign, how often a bus
   usually passes in this hour of this kind of day, and, when the past weeks agree (≥ 3 days,
   waits within 3 min) and today's timetable has a run near it, the usual time of the next pass.

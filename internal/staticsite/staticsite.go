@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/angelospk/athens-transit-rt/internal/geo"
 	"github.com/angelospk/athens-transit-rt/internal/gtfs"
 	"github.com/angelospk/athens-transit-rt/internal/telematics"
 )
@@ -31,6 +32,7 @@ type Variant struct {
 	Headsign  string       `json:"headsign"`
 	Direction int          `json:"direction"`
 	Shape     [][2]float64 `json:"shape"`
+	LengthM   int          `json:"length_m"` // rev 20: the shape's length in the server's metres (as along_m)
 	Stops     []string     `json:"stops"`
 }
 
@@ -173,9 +175,12 @@ func lineFile(f *gtfs.Feed, id string, trips []int32) LineFile {
 	for _, s := range shapeOrder {
 		a := byShape[s]
 		v := Variant{Headsign: f.Headsigns[mostCommon(a.headsOrder, a.heads)], Direction: a.dir}
-		for _, p := range f.Shapes[s].Points {
+		xy := make([][2]float64, len(f.Shapes[s].Points))
+		for i, p := range f.Shapes[s].Points {
 			v.Shape = append(v.Shape, [2]float64{round5(p[0]), round5(p[1])})
+			xy[i] = geo.XY(p[0], p[1])
 		}
+		v.LengthM = int(math.Round(geo.NewPolyline(xy).Length()))
 		for _, st := range f.Patterns[mostCommon(a.patOrder, a.pats)].Stops {
 			stop := &f.Stops[st]
 			v.Stops = append(v.Stops, stop.ID)

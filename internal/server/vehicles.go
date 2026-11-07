@@ -35,6 +35,7 @@ type CityVehicle struct {
 	PathBeyond [][2]float64 `json:"path_beyond"`
 	PathStops  []int        `json:"path_stops"`
 	PathSpeeds []*float64   `json:"path_speeds"`
+	AlongM     *int         `json:"along_m"` // rev 20
 }
 
 type VehiclesResponse struct {
@@ -96,7 +97,7 @@ func (a *App) collectVehicles(now time.Time) []CityVehicle {
 			}
 			c := CityVehicle{Line: id, ID: v.ID, Lat: round5(v.Lat), Lon: round5(v.Lon), Bearing: v.Bearing,
 				PositionAt: v.PositionAt, Variant: v.Variant, DelayS: v.DelayS, Speed: v.Speed, Path: v.Path,
-				PathBeyond: v.PathBeyond, PathStops: v.PathStops, PathSpeeds: v.PathSpeeds}
+				PathBeyond: v.PathBeyond, PathStops: v.PathStops, PathSpeeds: v.PathSpeeds, AlongM: v.AlongM}
 			if j, ok := at[v.ID]; !ok {
 				at[v.ID] = len(out)
 				out = append(out, c)

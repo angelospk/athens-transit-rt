@@ -218,10 +218,14 @@ func TestLineMotion(t *testing.T) {
 	if len(v.PathStops) != 2 || math.Abs(float64(v.PathStops[0])-(877.6-300)) > 3 || math.Abs(float64(v.PathStops[1])-(2*877.6-300)) > 3 {
 		t.Fatalf("path_stops %v", v.PathStops)
 	}
+	// along_m (rev 20): metres along the variant's shape (it starts at 23.70) at position_at.
+	if v.AlongM == nil || math.Abs(float64(*v.AlongM)-(2*877.6+300)) > 3 {
+		t.Fatalf("along_m %v", v.AlongM)
+	}
 	_, body = get(t, a, "/v1/vehicles")
 	c := decodeVehicles(t, body).Vehicles[0]
 	if *c.Speed != *v.Speed || len(c.Path) != 2 || c.Line != "L" || !slices.Equal(c.PathStops, v.PathStops) ||
-		len(c.PathBeyond) != 2 {
+		len(c.PathBeyond) != 2 || c.AlongM == nil || *c.AlongM != *v.AlongM {
 		t.Fatalf("/v1/vehicles %s", body)
 	}
 	// Far from the shape: no motion.
@@ -231,7 +235,7 @@ func TestLineMotion(t *testing.T) {
 	}})
 	_, body = get(t, a, "/v1/lines/L")
 	json.Unmarshal(body, &lr)
-	if w := lr.Vehicles[0]; w.Speed != nil || w.Path != nil {
+	if w := lr.Vehicles[0]; w.Speed != nil || w.Path != nil || w.AlongM != nil {
 		t.Fatalf("1.1 km off the shape: %s", body)
 	}
 }

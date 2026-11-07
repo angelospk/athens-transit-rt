@@ -30,7 +30,7 @@ func TestWrite(t *testing.T) {
 	read(t, filepath.Join(dir, "static/v1/lines/L.json"), &lf)
 	v := lf.Variants["SH"]
 	if lf.ID != "L" || v.Headsign != "EAST" || v.Direction != 0 || !reflect.DeepEqual(v.Stops, []string{"S0", "S1", "S2"}) ||
-		len(v.Shape) != 3 || v.Shape[1] != [2]float64{37.98, 23.71} {
+		len(v.Shape) != 3 || v.Shape[1] != [2]float64{37.98, 23.71} || v.LengthM != 1753 { // 2 x 876.4 m (0.01° of lon), the server's metres
 		t.Fatalf("line file %+v", lf)
 	}
 	if s := lf.Stops["S1"]; s.Name != "STOP 1" || s.Lat != 37.98 || s.Lon != 23.71 {

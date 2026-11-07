@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: athens-transit-rt
-  version: "1 (contract rev 11)"
+  version: "1 (contract rev 20)"
   summary: Live positions and GTFS-Realtime for OASA buses and trolleys in Athens.
   description: |
     Free public API, no key. Live data comes from `https://transit.haroldpoi.dev`; the static map
@@ -115,6 +115,7 @@ paths:
                     path_beyond: [[37.94611, 23.65972], [37.94769, 23.6573], [37.9482, 23.65584], [37.94876, 23.65289], [37.94878, 23.65119], [37.94803, 23.65064]]
                     path_stops: [574, 840]
                     path_speeds: [5.9, 6.2, 6.7, 7.3, 7.3, 7.2, 7.2, 6.7]
+                    along_m: 12873
         "404":
           description: Unknown line (`unknown_line`), or a path that is not clean (`not_found`).
           content:
@@ -180,6 +181,7 @@ paths:
                     path_beyond: [[37.94611, 23.65972], [37.94769, 23.6573], [37.9482, 23.65584], [37.94876, 23.65289], [37.94878, 23.65119], [37.94803, 23.65064]]
                     path_stops: [574, 840]
                     path_speeds: [5.9, 6.2, 6.7, 7.3, 7.3, 7.2, 7.2, 6.7]
+                    along_m: 12873
                   - line: "115"
                     id: "98911"
                     lat: 37.84023
@@ -193,6 +195,7 @@ paths:
                     path_beyond: null
                     path_stops: null
                     path_speeds: null
+                    along_m: null
         "304":
           description: Not modified (the request had a matching `If-None-Match`).
         "429":
@@ -210,7 +213,7 @@ paths:
 
         | `z` | tile size | content | for MapLibre zoom |
         |---|---|---|---|
-        | `9` | ~62 km | vehicles without `path`, `path_beyond`, `path_stops`, `path_speeds` (keys absent) | < 13 |
+        | `9` | ~62 km | vehicles without `path`, `path_beyond`, `path_stops`, `path_speeds`, `along_m` (keys absent) | < 13 |
         | `13` | ~3.9 km | the same entries as `/v1/vehicles` | ≥ 13 |
 
         Tiles exist for lat 37.5..38.5, lon 22.9..24.5: `z` 9 x 288..290, y 196..198; `z` 13
@@ -280,6 +283,7 @@ paths:
                         path_beyond: [[37.98917, 23.73072], [37.99708, 23.73271]]
                         path_stops: [87, 572, 984]
                         path_speeds: [3.5, 3.5, 3.7, 3.9, 4.3, 3.6, 3.9, 4.2]
+                        along_m: 3150
                 z9:
                   summary: z 9 (no paths)
                   value:
@@ -2022,6 +2026,15 @@ components:
             Typical speed ahead in m/s for consecutive 200 m steps (step `i` covers metres
             `200·i` to `200·(i+1)`), from the last 14 days of fixes on the same shape, day type
             and local hour. A step with no history is `null`. `null` when unmatched or unknown.
+        along_m:
+          type: [integer, "null"]
+          minimum: 0
+          description: |
+            Rev 20: whole metres along the static shape of `variant` at `position_at` (where
+            `path` starts), in the unit of the variant's `length_m` in
+            `/static/v1/lines/{line_id}.json`. `null` when the vehicle is not placed on that shape
+            (no variant, more than 150 m from it, ambiguous position on a loop). Clients move the
+            marker along the static shape from here (CONTRACT.md, "Along the static shape").
 
     VehicleBase:
       type: object
@@ -2060,7 +2073,7 @@ components:
         - $ref: "#/components/schemas/VehicleBase"
         - $ref: "#/components/schemas/Motion"
         - type: object
-          required: [route_code, trip_id, trip_label, next_stop_id, speed, path, path_beyond, path_stops, path_speeds]
+          required: [route_code, trip_id, trip_label, next_stop_id, speed, path, path_beyond, path_stops, path_speeds, along_m]
           properties:
             route_code:
               type: string
@@ -2086,14 +2099,14 @@ components:
         - $ref: "#/components/schemas/VehicleBase"
         - $ref: "#/components/schemas/Motion"
         - type: object
-          required: [line, speed, path, path_beyond, path_stops, path_speeds]
+          required: [line, speed, path, path_beyond, path_stops, path_speeds, along_m]
           properties:
             line:
               type: string
               description: Line id.
 
     CityVehicleLite:
-      description: A vehicle of a `z` 9 tile. The keys `path`, `path_beyond`, `path_stops`, `path_speeds` are absent.
+      description: A vehicle of a `z` 9 tile. The keys `path`, `path_beyond`, `path_stops`, `path_speeds`, `along_m` are absent.
       allOf:
         - $ref: "#/components/schemas/VehicleBase"
         - type: object

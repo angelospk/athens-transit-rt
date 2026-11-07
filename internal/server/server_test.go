@@ -119,13 +119,14 @@ func TestLineLifecycle(t *testing.T) {
 	// 2.5 stops along at 10:19:50: T00 is 440 s late (cost 440), T01 160 s early (cost 3x160).
 	if v.TripID == nil || *v.TripID != "T00" || v.Variant == nil || *v.Variant != "SH" || v.NextStopID == nil ||
 		*v.NextStopID != "S3" || v.TripLabel == nil || *v.TripLabel != "10:00 STOP 0 → STOP 4" || v.DelayS == nil || *v.DelayS != 440 ||
-		v.Bearing == nil || *v.Bearing != 90 || v.PositionAt != monday1020.Unix()-10 {
+		v.Bearing == nil || *v.Bearing != 90 || v.PositionAt != monday1020.Unix()-10 ||
+		v.AlongM == nil || *v.AlongM != 2191 { // 2.5 x 876.4 m along SH (0.01° of lon)
 		b, _ := json.Marshal(v)
 		t.Fatalf("matched vehicle %s", b)
 	}
 	u := lr.Vehicles[1]
 	if u.TripID != nil || u.DelayS != nil || u.TripLabel != nil || u.NextStopID != nil || u.Bearing != nil ||
-		u.Variant == nil || *u.Variant != "SH" {
+		u.Variant == nil || *u.Variant != "SH" || u.AlongM != nil { // 58 km off its shape: not placed
 		b, _ := json.Marshal(u)
 		t.Fatalf("unmatched vehicle %s", b)
 	}

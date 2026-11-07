@@ -14,9 +14,14 @@ Source of truth: `athens-transit-rt/docs/CONTRACT.md`. The frontend keeps a copy
   frontend repo by whoever made it (backend thread opens the copy as a commit or
   issue on the frontend repo).
 
-Revision: 19 (2026-11-04): `/v2/stops/{id}` and `/v1/stops/{stop_id}` get `usual`, the usual
-service of each OASA line and headsign at the stop, learnt from the past weeks
-(rev 18: `GET /v2/municipal`, the municipal bus routes and stops of OpenStreetMap;
+Revision: 20 (2026-11-07): vehicles of `/v1/lines/{line_id}`, `/v1/vehicles` and its `z` 13 tiles
+get `along_m`, their metres along the static shape of their `variant`, and each variant of
+`static/v1/lines/{line_id}.json` gets `length_m`, so a client can move a marker along the whole
+shape instead of stopping at the end of `path_beyond`
+([client rule](#along-the-static-shape-rev-20))
+(rev 19: `/v2/stops/{id}` and `/v1/stops/{stop_id}` get `usual`, the usual
+service of each OASA line and headsign at the stop, learnt from the past weeks;
+rev 18: `GET /v2/municipal`, the municipal bus routes and stops of OpenStreetMap;
 rev 17: the daily statistics files (`/v1/stats/days/{date}`, the `stats`
 branch) get `start_delay`, how late each line's runs of OASA's daily schedule left their first
 stop ([API.md](API.md#start-delays-start_delay)); days without it are as before;
@@ -76,7 +81,8 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
       "path": [[37.9755, 23.7348], [37.97601, 23.73502], [37.9781, 23.7356]],
       "path_beyond": [[37.9781, 23.7356], [37.98145, 23.73668], [37.98466, 23.73771]],
       "path_stops": [298, 682, 1050],
-      "path_speeds": [6.2, 3.1, 4.8, 5.5, null, 7.0, 6.1, 5.9]
+      "path_speeds": [6.2, 3.1, 4.8, 5.5, null, 7.0, 6.1, 5.9],
+      "along_m": 4210
     }
   ]
 }
@@ -132,6 +138,13 @@ The frontend combines lines in the browser. Max 5 lines per client (enforced in 
   the step speeds (a `null` step at `speed`, or 1.5 m/s without one), instead of the stop
   waits; stop at the end of the points, as before. Metres are along the shape; the 5 m
   simplified points are a few metres shorter, so a client may simply walk them.
+- `along_m` (rev 20): whole metres along the shape of `variant` (its static `shape`) at
+  `position_at`: where `path` starts. `null` when the vehicle is not placed on that shape: no
+  `variant`, no shape, more than 150 m from it, or the position is ambiguous (a loop or
+  out-and-back passes there twice and history cannot tell which). It is set at the next stop and
+  at the shape's end, where `path` is `null`. On a loop or out-and-back shape it says which pass
+  the vehicle is on: do not project the GPS point onto the shape yourself. Use: see
+  [Along the static shape](#along-the-static-shape-rev-20).
 - Headers: `Cache-Control: public, max-age=<seconds until next_update_at, min 5, max 300>`.
   The frontend refetches a line at `next_update_at + 1..3 s` (random jitter), never faster
   than every 5 s, and at most every 60 s while the tab is hidden.
@@ -165,13 +178,14 @@ to ~2.5 min staler than `/v1/lines/{id}` for lines nobody watches.
       "path": [[37.9755, 23.7348], [37.9781, 23.7356]],
       "path_beyond": [[37.9781, 23.7356], [37.98466, 23.73771]],
       "path_stops": [297, 1049],
-      "path_speeds": [6.2, 3.1, 4.8, null]
+      "path_speeds": [6.2, 3.1, 4.8, null],
+      "along_m": 4210
     }
   ]
 }
 ```
 
-- Same field meanings as `/v1/lines/{id}`; `line` is the line id. Coordinates are rounded
+- Same field meanings as `/v1/lines/{id}` (`along_m` too); `line` is the line id. Coordinates are rounded
   to 5 decimals. No `route_code`, `trip_id`, `trip_label`, `next_stop_id`: fetch
   `/v1/lines/{line}` when the user selects a vehicle.
 - Vehicles with a GPS fix older than 5 min are left out. A vehicle seen on two lines
@@ -193,7 +207,7 @@ Example: `/v1/vehicles/tiles/13/4636/3160` (around Syntagma).
 
 | `z` | tile size (Athens) | content | use at MapLibre zoom |
 |---|---|---|---|
-| `9` | ~62 km | vehicles without `path`, `path_beyond`, `path_stops`, `path_speeds` (the keys are absent) | < 13 |
+| `9` | ~62 km | vehicles without `path`, `path_beyond`, `path_stops`, `path_speeds`, `along_m` (the keys are absent) | < 13 |
 | `13` | ~3.9 km | the same vehicle entries as `/v1/vehicles` | ≥ 13 |
 
 ```json
@@ -368,7 +382,31 @@ Published by GitHub Actions in the backend repo when OASA publishes a new GTFS.
 }
 ```
 
-`shape` is `[lat, lon]` pairs, rounded to 5 decimals. `variants[*].stops` is ordered.
+`shape` is `[lat, lon]` pairs, rounded to 5 decimals (not simplified). `variants[*].stops` is ordered.
+`length_m` (rev 20): the length of `shape` in the server's metres, the unit of a vehicle's
+`along_m`, whole metres. Files built before rev 20 lack it.
+
+#### Along the static shape (rev 20)
+
+How a client moves a vehicle with `along_m` (rev 20). It replaces the rev 4/6 rule (drive `path`
+then `path_beyond`) when the client has the vehicle's variant shape; else keep that rule.
+
+1. Load `lines/{line}.json` for the lines of the vehicles in view only, once per
+   `gtfs_version` of `lines.json` (one line is 2-3 KB gzipped; the files change only with the
+   GTFS). A vehicle whose `variant` is not in the file: use the rev 4/6 rule.
+2. Scale: the server measures metres on its own projection, a client on its own (haversine, an
+   ellipsoid), so lengths differ by up to ~0.1 % (≈ 70 m on a 50 km shape). Use
+   `s = along_m × L / length_m`, where `L` is the shape's length as the client measures it
+   (`L / length_m = 1` when `length_m` is missing). Then a point is within ~15 m of the server's
+   (measured on all 515 Athens shapes, 2026-11-07). Scale `path_stops` and the 200 m steps of
+   `path_speeds` by the same factor.
+3. Move from `s` at `position_at` along the shape at `path_speeds` (step `i` covers
+   `s + 200·i` to `s + 200·(i+1)`; a `null` step and everything after the last step at `speed`,
+   or 1.5 m/s without one), or without `path_speeds` at `speed` slowing down and waiting at
+   `path_stops` (and the variant's later stops); stop at the shape's end. No 1.5 km limit.
+4. A new fix with the same `variant`: glide from the shown point to the new `s`; never jump
+   backwards for a small step back (GPS noise, a few metres). A new `variant` or trip (or
+   `along_m` far behind): treat it as a new plan, as for a new `path`.
 
 ## Unified API `/v2` (rev 8)
 
@@ -557,6 +595,7 @@ and compare them; they never parse them.
   move along (standing with no Run, no geometry).
   - `path`, `path_beyond`, `path_stops`, `speed`, `path_speeds`: the rev 3-7 meanings, unchanged
     for buses (1.5 km caps included); for suburban they run along the rail geometry of §2.
+    `/v2` Vehicles have no `along_m` (rev 20): they name no shape (no `variant`) to measure it on.
   - For **estimates** (metro/tram) the 1.5 km caps do not apply: `path` runs to the next Stop
     and `path_beyond` to the third Stop ahead, whatever the distance.
   - `knots` (new, estimates only; `null` for GPS vehicles): `[metres along path + path_beyond,

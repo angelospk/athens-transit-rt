@@ -15,7 +15,8 @@
    "path": [[37.95614, 23.7161], [37.95804, 23.71853]],
    "path_beyond": null,
    "path_stops": [300],
-   "path_speeds": [6.2, 4.1, null]
+   "path_speeds": [6.2, 4.1, null],
+   "along_m": 13369
   },
   {
    "line": "040",
@@ -30,7 +31,8 @@
    "path": [[37.97062, 23.73269], [37.97084, 23.73297], [37.9734, 23.73516], [37.97465, 23.73548]],
    "path_beyond": null,
    "path_stops": [520],
-   "path_speeds": [6.2, 4.1, null]
+   "path_speeds": [6.2, 4.1, null],
+   "along_m": 15590
   },
   {
    "line": "040",
@@ -45,7 +47,8 @@
    "path": null,
    "path_beyond": null,
    "path_stops": null,
-   "path_speeds": null
+   "path_speeds": null,
+   "along_m": 0
   },
   {
    "line": "Α1",
@@ -60,7 +63,8 @@
    "path": [[37.98712, 23.73105], [37.98594, 23.72998], [37.98551, 23.72901]],
    "path_beyond": null,
    "path_stops": null,
-   "path_speeds": null
+   "path_speeds": null,
+   "along_m": 4120
   }
  ]
 }
