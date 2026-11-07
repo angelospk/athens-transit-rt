@@ -398,7 +398,7 @@ then `path_beyond`) when the client has the vehicle's variant shape; else keep t
 2. Scale: the server measures metres on its own projection, a client on its own (haversine, an
    ellipsoid), so lengths differ by up to ~0.1 % (≈ 70 m on a 50 km shape). Use
    `s = along_m × L / length_m`, where `L` is the shape's length as the client measures it
-   (`L / length_m = 1` when `length_m` is missing). Then a point is within ~15 m of the server's
+   (factor 1 when `length_m` is missing or not above 0). Then a point is within ~15 m of the server's
    (measured on all 515 Athens shapes, 2026-11-07). Scale `path_stops` and the 200 m steps of
    `path_speeds` by the same factor.
 3. Move from `s` at `position_at` along the shape at `path_speeds` (step `i` covers
