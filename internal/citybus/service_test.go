@@ -414,6 +414,10 @@ func TestTokenReadOnceAndRenewedOnceOn401(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/broken") {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
 		io.WriteString(w, `{"ok":1}`)
 	}))
 	defer srv.Close()
@@ -453,8 +457,14 @@ func TestTokenReadOnceAndRenewedOnceOn401(t *testing.T) {
 		t.Fatalf("404: %q %v", b, err)
 	}
 	st := c.statsNow()
-	if st.Errors != 0 || st.ByStatus["404"] != 1 || st.ByStatus["401"] < 1 {
+	if st.Errors != 0 || st.ByStatus["404"] != 1 || st.ByStatus["401"] < 1 || st.LastError != "" {
 		t.Fatalf("stats %+v", st)
+	}
+	if _, err := c.get(context.Background(), "/broken", priBackground); err == nil {
+		t.Fatal("502: no error")
+	}
+	if st = c.statsNow(); st.Errors != 1 || !strings.HasSuffix(st.LastError, " HTTP 502") {
+		t.Fatalf("after 502: %+v", st)
 	}
 }
 

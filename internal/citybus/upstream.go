@@ -173,6 +173,8 @@ type Stats struct {
 	Requests int64            `json:"requests"`
 	Errors   int64            `json:"errors"`
 	ByStatus map[string]int64 `json:"byStatus"`
+	// LastError is the latest failed request (network error or bad status), for diagnosis.
+	LastError string `json:"last_error,omitempty"`
 }
 
 // fetcher is what a city needs from citybus.gr (a fake in tests).
@@ -212,14 +214,14 @@ func (c *client) pacer() *pacer { return c.p }
 func (c *client) statsNow() Stats {
 	c.stMu.Lock()
 	defer c.stMu.Unlock()
-	s := Stats{Requests: c.stats.Requests, Errors: c.stats.Errors, ByStatus: map[string]int64{}}
+	s := Stats{Requests: c.stats.Requests, Errors: c.stats.Errors, ByStatus: map[string]int64{}, LastError: c.stats.LastError}
 	for k, v := range c.stats.ByStatus {
 		s.ByStatus[k] = v
 	}
 	return s
 }
 
-func (c *client) count(status int, isErr bool) {
+func (c *client) count(status int, err error, isErr bool) {
 	c.stMu.Lock()
 	defer c.stMu.Unlock()
 	c.stats.Requests++
@@ -228,6 +230,11 @@ func (c *client) count(status int, isErr bool) {
 	}
 	if isErr {
 		c.stats.Errors++
+		msg := fmt.Sprintf("HTTP %d", status)
+		if err != nil {
+			msg = err.Error()
+		}
+		c.stats.LastError = time.Now().Format(time.RFC3339) + " " + msg
 	}
 }
 
@@ -255,7 +262,7 @@ func (c *client) getToken(ctx context.Context) (string, error) {
 			return nil, err
 		}
 		body, status, err := c.do(ctx, c.pageURL, "")
-		c.count(status, err != nil || status != http.StatusOK)
+		c.count(status, err, err != nil || status != http.StatusOK)
 		if err != nil {
 			return nil, err
 		}
@@ -320,7 +327,7 @@ func (c *client) fetch(ctx context.Context, path string, pri Priority, retried b
 	}
 	body, status, err := c.do(ctx, c.rest+path, token)
 	bad := err != nil || (status != http.StatusOK && status != http.StatusNotFound && status != http.StatusUnauthorized)
-	c.count(status, bad)
+	c.count(status, err, bad)
 	switch {
 	case err != nil:
 		return nil, err
