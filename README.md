@@ -1,6 +1,23 @@
-# athens-transit-rt
+# staseis-rt
 
-Live positions and GTFS-Realtime for OASA buses and trolleys in Athens, in Go.
+Live bus positions, arrival times and GTFS-Realtime for Greek cities, in Go. It is the backend of
+[staseis.gr](https://staseis.gr) (web: [athens-transit-map](https://github.com/angelospk/athens-transit-map),
+Android: [athens-transit-app](https://github.com/angelospk/athens-transit-app)). Until 2026-11 the repo was
+named `athens-transit-rt`; the Go module path and the image name `ghcr.io/angelospk/athens-transit-rt` keep that name.
+
+## Cities
+
+One binary (`atrt`) serves every city. Each large city runs as its own instance (`atrt serve --city <id>`), so a
+problem in one city never stops another. Adding a city: an entry in `internal/server/city.go`, plus a source
+adapter only when its live API is of a new kind.
+
+| City | `--city` | Live sources | Public instance |
+| --- | --- | --- | --- |
+| Athens | `athens` (default) | OASA telematics (buses, trolleys), STASY timetable (metro, tram), railway.gov.gr (Proastiakos) | `https://transit.haroldpoi.dev` |
+| Thessaloniki | `thessaloniki` | OASTH telematics (primary), OSETH (second vehicle source); GTFS from data.gov.gr | `https://transit-thess.haroldpoi.dev` |
+| 28 citybus.gr cities | `citybus` (one process, one path per city) | citybus.gr stop boards | not public yet ([#106](https://github.com/angelospk/athens-transit-rt/pull/106)) |
+
+The rest of this page describes the Athens instance, the first and largest one.
 
 **Public API, no key:** `https://transit.haroldpoi.dev`. **API reference (try it in the browser):**
 <https://angelospk.github.io/athens-transit-rt/> (short link: [bus.haroldpoi.dev/api](https://bus.haroldpoi.dev/api);
@@ -11,7 +28,8 @@ by Foivos Proestakis (MIT). The matching logic, constants and tools follow upstr
 ported upstream commit is in [`UPSTREAM.md`](UPSTREAM.md). Upstream's HTML viewer and `/events`
 stream are not ported: the map lives in [athens-transit-map](https://github.com/angelospk/athens-transit-map).
 
-> **Ελληνικά, σύντομα.** Ένα Go binary (`atrt`) ρωτά το API τηλεματικής του ΟΑΣΑ για όλο το
+> **Ελληνικά, σύντομα.** Το backend του staseis.gr για Αθήνα, Θεσσαλονίκη και (σύντομα) τις πόλεις του
+> citybus.gr: ένα instance ανά μεγάλη πόλη. Για την Αθήνα, ένα Go binary (`atrt`) ρωτά το API τηλεματικής του ΟΑΣΑ για όλο το
 > δίκτυο, με ένα κοινό όριο αιτημάτων (6/s, max 6), αντιστοιχίζει κάθε όχημα σε δρομολόγιο του
 > GTFS και δίνει JSON ανά γραμμή (`/v1/lines/040`) και GTFS-Realtime. Οι χρήστες δεν φτάνουν
 > ποτέ στον ΟΑΣΑ: το Cloudflare κρατά κάθε απάντηση ακριβώς μέχρι την επόμενη ανανέωση της

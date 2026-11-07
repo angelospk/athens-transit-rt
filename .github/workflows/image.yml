@@ -22,7 +22,9 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          # Fixed name, not github.repository: the repo was renamed to staseis-rt, and both VPS deploy
+          # scripts pull ghcr.io/angelospk/athens-transit-rt:latest.
+          images: ghcr.io/angelospk/athens-transit-rt
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
