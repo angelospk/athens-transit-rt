@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/angelospk/athens-transit-rt/internal/citybus"
 	"github.com/angelospk/athens-transit-rt/internal/match"
 	"github.com/angelospk/athens-transit-rt/internal/oseth"
 	"github.com/angelospk/athens-transit-rt/internal/sched"
@@ -38,8 +39,13 @@ func serve(args []string) error {
 	hist := fs.Bool("history", false, "keep every new GPS fix in <state>/history (hourly CSV, gzipped)")
 	histMB := fs.Int64("history-max-mb", 500, "fix history: delete the oldest hours above this size")
 	histDays := fs.Int("history-days", 30, "fix history: delete hours older than this")
-	cityID := fs.String("city", "athens", "athens or thessaloniki")
+	cityID := fs.String("city", "athens", "athens, thessaloniki or citybus")
+	cities := fs.String("cities", "all", "citybus only: \"all\" or ids separated by commas (agrinio,heraklion,...)")
 	fs.Parse(args)
+
+	if *cityID == "citybus" {
+		return serveCitybus(*listen, *state, *cities)
+	}
 
 	city, err := server.CityByID(*cityID)
 	if err != nil {
@@ -89,4 +95,20 @@ func serve(args []string) error {
 		return nil
 	}
 	return err
+}
+
+// serveCitybus runs every citybus.gr city given in one process: /{city}/v1/..., /{city}/v2/...
+func serveCitybus(listen, state, cities string) error {
+	ids, err := citybus.ParseCities(cities)
+	if err != nil {
+		return fmt.Errorf("bad --cities: %w", err)
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	svc, err := citybus.New(citybus.Config{StateDir: state, Cities: ids}, log)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return svc.Run(ctx, listen)
 }

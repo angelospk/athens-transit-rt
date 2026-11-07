@@ -8,6 +8,13 @@ for self-hosting. API reference: [docs/API.md](docs/API.md), OpenAPI 3.1:
 
 ## Unreleased
 
+### citybus.gr cities
+- `atrt serve --city citybus --cities all|<list>`: one process serves the 28 cities of citybus.gr,
+  one path per city (`/heraklion/v2/lines`), with ids namespaced per city (`heraklion:1235`). Go port
+  of the citybus-bridge prototype: a paced stop-board rotation per city (about 1 req/s each), no
+  position older than 120 s, line health per city (`/{city}/v1/health`). Staging only; see
+  [docs/citybus.md](docs/citybus.md) ([#103](https://github.com/angelospk/athens-transit-rt/issues/103)).
+
 ### Statistics
 - Daily stats files get `start_delay` (contract rev 17): per line, how late the runs of OASA's
   daily schedule left their first stop (runs measured, mean, p90, and a minute histogram so
